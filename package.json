@@ -12,6 +12,9 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@txikijs/types": "^24.6.0",
+    "@workers/typed-event-target": "npm:@jsr/workers__typed-event-target@^1.0.0",
+    "@workers/v8-value-serializer": "npm:@jsr/workers__v8-value-serializer@^0.3.8",
     "abab": "^2.0.6",
     "abortcontroller-polyfill": "^1.7.5",
     "compression-streams-polyfill": "^0.1.7",
@@ -32,6 +35,7 @@
     "uuid": "10.0.0",
     "web-streams-polyfill": "^4.0.0",
     "whatwg-fetch": "^3.6.20",
+    "whatwg-stream-to-async-iter": "^0.6.2",
     "whatwg-url": "^14.0.0"
   },
   "devDependencies": {
