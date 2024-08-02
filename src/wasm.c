@@ -231,17 +231,17 @@ static JSValue tjs_wasm_callfunction(JSContext *ctx, JSValue this_val, int argc,
     }
 }
 
-static JSValue tjs_wasm_linkwasi(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
-    TJSWasmInstance *i = tjs_wasm_instance_get(ctx, this_val);
-    if (!i)
-        return JS_EXCEPTION;
+// static JSValue tjs_wasm_linkwasi(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+//     TJSWasmInstance *i = tjs_wasm_instance_get(ctx, this_val);
+//     if (!i)
+//         return JS_EXCEPTION;
 
-    M3Result r = m3_LinkWASI(i->module);
-    if (r)
-        return tjs_throw_wasm_error(ctx, "LinkError", r);
+//     M3Result r = m3_LinkWASI(i->module);
+//     if (r)
+//         return tjs_throw_wasm_error(ctx, "LinkError", r);
 
-    return JS_UNDEFINED;
-}
+//     return JS_UNDEFINED;
+// }
 
 static JSValue tjs_wasm_buildinstance(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSWasmModule *m = tjs_wasm_module_get(ctx, argv[0]);
@@ -360,7 +360,7 @@ static const JSCFunctionListEntry tjs_wasm_funcs[] = {
 
 static const JSCFunctionListEntry tjs_wasm_instance_funcs[] = {
     TJS_CFUNC_DEF("callFunction", 1, tjs_wasm_callfunction),
-    TJS_CFUNC_DEF("linkWasi", 0, tjs_wasm_linkwasi),
+    // TJS_CFUNC_DEF("linkWasi", 0, tjs_wasm_linkwasi),
 };
 
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns) {

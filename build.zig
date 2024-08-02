@@ -16,10 +16,10 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    // const dep_wasm3 = b.dependency("wasm3", .{
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
+    const dep_wasm3 = b.dependency("wasm3", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     // const build_with_mimalloc = b.option(bool, "build-with-mimalloc", "If true (default), build with mimalloc") orelse true;
     // const use_external_ffi = b.option(bool, "use-external-ffi", "Specify to use external ffi dependency") orelse false;
@@ -33,15 +33,19 @@ pub fn build(b: *std.Build) !void {
     const art_dep_quickjs = dep_quickjs.artifact("qjs");
     const art_dep_libuv = dep_libuv.artifact("uv_a");
     const art_dep_sqlite3 = dep_sqlite3.artifact("sqlite3");
-    // TODO: wasm3, libffi, curl
+    const art_dep_wasm3 = dep_wasm3.artifact("m3");
+
+    // TODO: libffi, curl
 
     lib.linkLibrary(art_dep_quickjs);
     lib.linkLibrary(art_dep_libuv);
     lib.linkLibrary(art_dep_sqlite3);
+    lib.linkLibrary(art_dep_wasm3);
 
     lib.installLibraryHeaders(art_dep_quickjs);
     lib.installLibraryHeaders(art_dep_libuv);
     lib.installLibraryHeaders(art_dep_sqlite3);
+    lib.installLibraryHeaders(art_dep_wasm3);
 
     if (target.result.os.tag != .windows and !target.result.isAndroid()) {
         lib.linkSystemLibrary("pthread");
@@ -94,7 +98,7 @@ pub fn build(b: *std.Build) !void {
             "src/utils.c",
             "src/version.c",
             "src/vm.c",
-            // "src/wasm.c",
+            "src/wasm.c",
             "src/worker.c",
             // "src/ws.c",
             // "src/xhr.c",

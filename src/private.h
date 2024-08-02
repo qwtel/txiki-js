@@ -27,7 +27,7 @@
 
 #include "../deps/quickjs/cutils.h"
 #include "tjs.h"
-// #include "wasm.h"
+#include "wasm.h"
 
 // #include <curl/curl.h>
 #include <quickjs.h>
@@ -54,9 +54,9 @@ struct TJSRuntime {
     //     CURLM *curlm_h;
     //     uv_timer_t timer;
     // } curl_ctx;
-    // struct {
-    //     IM3Environment env;
-    // } wasm_ctx;
+    struct {
+        IM3Environment env;
+    } wasm_ctx;
     struct {
         TJSTimer *timers;
         int64_t next_timer;
@@ -81,7 +81,7 @@ void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
 void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
-// void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
+void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
 void tjs__mod_worker_init(JSContext *ctx, JSValue ns);
 void tjs__mod_ws_init(JSContext *ctx, JSValue ns);
 void tjs__mod_xhr_init(JSContext *ctx, JSValue ns);
