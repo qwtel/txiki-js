@@ -1,9 +1,13 @@
 .vscode
 .idea
 .DS_Store
+.cache
+.zig-cache
+zig-out
 
 build/
 src/bundles/js/
+src/bundles/c/
 src/js/core.js
 src/js/std.js
 src/version.h

@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#include "curl-utils.h"
+// #include "curl-utils.h"
 #include "private.h"
 #include "tjs.h"
 #include "utils.h"
@@ -30,46 +30,46 @@
 #include <string.h>
 
 
-JSModuleDef *tjs__load_http(JSContext *ctx, const char *url) {
-    JSModuleDef *m;
-    DynBuf dbuf;
+// JSModuleDef *tjs__load_http(JSContext *ctx, const char *url) {
+//     JSModuleDef *m;
+//     DynBuf dbuf;
 
-    tjs_dbuf_init(ctx, &dbuf);
+//     tjs_dbuf_init(ctx, &dbuf);
 
-    int r = tjs_curl_load_http(&dbuf, url);
-    if (r != 200) {
-        m = NULL;
-        if (r < 0) {
-            /* curl error */
-            JS_ThrowReferenceError(ctx, "could not load '%s': %s", url, curl_easy_strerror(-r));
-        } else {
-            /* http error */
-            JS_ThrowReferenceError(ctx, "could not load '%s': %d", url, r);
-        }
-        goto end;
-    }
+//     int r = tjs_curl_load_http(&dbuf, url);
+//     if (r != 200) {
+//         m = NULL;
+//         if (r < 0) {
+//             /* curl error */
+//             JS_ThrowReferenceError(ctx, "could not load '%s': %s", url, curl_easy_strerror(-r));
+//         } else {
+//             /* http error */
+//             JS_ThrowReferenceError(ctx, "could not load '%s': %d", url, r);
+//         }
+//         goto end;
+//     }
 
-    /* compile the module */
-    JSValue func_val =
-        JS_Eval(ctx, (char *) dbuf.buf, dbuf.size - 1, url, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-    if (JS_IsException(func_val)) {
-        JS_FreeValue(ctx, func_val);
-        m = NULL;
-        goto end;
-    }
+//     /* compile the module */
+//     JSValue func_val =
+//         JS_Eval(ctx, (char *) dbuf.buf, dbuf.size - 1, url, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+//     if (JS_IsException(func_val)) {
+//         JS_FreeValue(ctx, func_val);
+//         m = NULL;
+//         goto end;
+//     }
 
-    /* XXX: could propagate the exception */
-    js_module_set_import_meta(ctx, func_val, FALSE, FALSE);
-    /* the module is already referenced, so we must free it */
-    m = JS_VALUE_GET_PTR(func_val);
-    JS_FreeValue(ctx, func_val);
+//     /* XXX: could propagate the exception */
+//     js_module_set_import_meta(ctx, func_val, FALSE, FALSE);
+//     /* the module is already referenced, so we must free it */
+//     m = JS_VALUE_GET_PTR(func_val);
+//     JS_FreeValue(ctx, func_val);
 
-end:
-    /* free the memory we allocated */
-    dbuf_free(&dbuf);
+// end:
+//     /* free the memory we allocated */
+//     dbuf_free(&dbuf);
 
-    return m;
-}
+//     return m;
+// }
 
 JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque) {
     static const char http[] = "http://";
@@ -88,7 +88,9 @@ JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *op
     }
 
     if (strncmp(http, module_name, strlen(http)) == 0 || strncmp(https, module_name, strlen(https)) == 0) {
-        return tjs__load_http(ctx, module_name);
+        // return tjs__load_http(ctx, module_name);
+        JS_ThrowPlainError(ctx, "HTTP(S) module loading is not supported");
+        return NULL;
     }
 
     tjs_dbuf_init(ctx, &dbuf);

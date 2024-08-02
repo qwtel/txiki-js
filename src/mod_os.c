@@ -24,9 +24,9 @@
 
 #include "private.h"
 #include "utils.h"
-#include "wasm.h"
+// #include "wasm.h"
 
-#include <curl/curl.h>
+// #include <curl/curl.h>
 #include <string.h>
 #include <unistd.h>
 

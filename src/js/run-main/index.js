@@ -149,13 +149,14 @@ if (options.help) {
         const ext = path.extname(filename).toLowerCase();
 
         if (ext === '.wasm') {
-            const bytes = await tjs.readFile(filename);
-            const module = new WebAssembly.Module(bytes);
-            const wasi = new WebAssembly.WASI({ args: subargv.slice(1) });
-            const importObject = { wasi_unstable: wasi.wasiImport };
-            const instance = new WebAssembly.Instance(module, importObject);
+            // const bytes = await tjs.readFile(filename);
+            // const module = new WebAssembly.Module(bytes);
+            // const wasi = new WebAssembly.WASI({ args: subargv.slice(1) });
+            // const importObject = { wasi_unstable: wasi.wasiImport };
+            // const instance = new WebAssembly.Instance(module, importObject);
 
-            wasi.start(instance);
+            // wasi.start(instance);
+            throw Error("Not implemented")
         } else {
             await core.evalFile(filename);
         }

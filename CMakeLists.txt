@@ -54,8 +54,8 @@ add_subdirectory(deps/libuv EXCLUDE_FROM_ALL)
 
 add_subdirectory(deps/sqlite3 EXCLUDE_FROM_ALL)
 
-set(BUILD_WASI "simple" CACHE STRING "WASI implementation")
-add_subdirectory(deps/wasm3 EXCLUDE_FROM_ALL)
+# set(BUILD_WASI "simple" CACHE STRING "WASI implementation")
+# add_subdirectory(deps/wasm3 EXCLUDE_FROM_ALL)
 
 if(BUILD_WITH_MIMALLOC)
     option(MI_OVERRIDE "" OFF)
@@ -66,12 +66,12 @@ if(BUILD_WITH_MIMALLOC)
     add_subdirectory(deps/mimalloc EXCLUDE_FROM_ALL)
 endif()
 
-find_package(CURL REQUIRED)
+# find_package(CURL REQUIRED)
 
 add_library(tjs STATIC
     src/builtins.c
-    src/curl-utils.c
-    src/curl-websocket.c
+    # src/curl-utils.c
+    # src/curl-websocket.c
     src/error.c
     src/eval.c
     src/mem.c
@@ -82,13 +82,13 @@ add_library(tjs STATIC
     src/utils.c
     src/version.c
     src/vm.c
-    src/wasm.c
+    # src/wasm.c
     src/worker.c
-    src/ws.c
-    src/xhr.c
+    # src/ws.c
+    # src/xhr.c
     src/mod_dns.c
     src/mod_engine.c
-    src/mod_ffi.c
+    # src/mod_ffi.c
     src/mod_fs.c
     src/mod_fswatch.c
     src/mod_os.c
@@ -153,7 +153,9 @@ string(TOLOWER ${CMAKE_SYSTEM_NAME} TJS_PLATFORM)
 target_compile_options(tjs PRIVATE ${tjs_cflags})
 target_compile_definitions(tjs PRIVATE TJS__PLATFORM="${TJS_PLATFORM}")
 target_include_directories(tjs PUBLIC src)
-target_link_libraries(tjs qjs uv_a m3 sqlite3 m pthread CURL::libcurl)
+# target_link_libraries(tjs qjs uv_a m3 sqlite3 m pthread CURL::libcurl)
+# target_link_libraries(tjs qjs uv_a sqlite3 m pthread CURL::libcurl)
+target_link_libraries(tjs qjs uv_a sqlite3 m pthread)
 
 if (BUILD_WITH_MIMALLOC)
     target_compile_definitions(tjs PRIVATE TJS__HAS_MIMALLOC)
