@@ -76,7 +76,6 @@ pub fn build(b: *std.Build) !void {
     if (optimize == .Debug) {
         try tjs_cflags.appendSlice(&.{
             "-ggdb",
-            // "-O0",
             "-fno-omit-frame-pointer",
         });
     }
