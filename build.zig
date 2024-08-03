@@ -49,32 +49,30 @@ pub fn build(b: *std.Build) !void {
 
     if (target.result.os.tag != .windows and !target.result.isAndroid()) {
         lib.linkSystemLibrary("pthread");
-        lib.linkSystemLibrary("m"); // XXX: ???
     }
 
     // XXX: Duplicate from deps/quickjs/build.zig
-    lib.defineCMacro("_GNU_SOURCE", "1"); // XXX: can we just set that optimistically?
+    if (target.result.os.tag == .linux) {
+        lib.defineCMacro("_GNU_SOURCE", "1");
+    }
     if (target.result.os.tag == .windows) {
-        lib.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
-        lib.defineCMacro("_WIN32_WINNT", "0x0602");
-        if (target.result.abi != .msvc) {
-            lib.defineCMacro("_MSC_VER", "1900"); // HACK: Setting fake MSC version to trigger the right code paths in cutils
-            lib.linkSystemLibrary("kernel32"); // XXX: why does this not work when abi is msvc?
-        } else { // XXX: abi == .msvc
-            // TODO: make this work
-        }
+        // XXX: These seem like they should be necessary, but apparently not 🤷‍♂️
+        // lib.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
+        // lib.defineCMacro("_WIN32_WINNT", "0x0602");
+        // XXX: when using this here, it breaks the windows build for some reason (but necessary in quickjs)
+        // lib.defineCMacro("_MSC_VER", "1900");
     }
 
-    var tjs_cflags = std.ArrayList([]const u8).init(b.allocator);
-    defer tjs_cflags.deinit();
+    var cflags = std.ArrayList([]const u8).init(b.allocator);
+    defer cflags.deinit();
 
-    try tjs_cflags.appendSlice(&.{
+    try cflags.appendSlice(&.{
         "-std=c11",
         "-Wall",
         "-g",
     });
     if (optimize == .Debug) {
-        try tjs_cflags.appendSlice(&.{
+        try cflags.appendSlice(&.{
             "-ggdb",
             "-fno-omit-frame-pointer",
         });
@@ -117,14 +115,14 @@ pub fn build(b: *std.Build) !void {
             "src/bundles/c/core/run-main.c",
             "src/bundles/c/core/run-repl.c",
             "src/bundles/c/core/worker-bootstrap.c",
-            "deps/quickjs/cutils.c",
+            // "deps/quickjs/cutils.c",
         },
-        .flags = tjs_cflags.items,
+        .flags = cflags.items,
     });
     if (target.result.os.tag == .linux or target.result.isBSD()) {
         lib.addCSourceFiles(.{
             .files = &.{"src/mod_posix-socket.c"},
-            .flags = tjs_cflags.items,
+            .flags = cflags.items,
         });
     }
 
