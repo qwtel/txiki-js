@@ -47,15 +47,11 @@ pub fn build(b: *std.Build) !void {
     }
 
     // XXX: Duplicate from deps/quickjs/build.zig
-    if (target.result.os.tag == .linux) {
-        lib.defineCMacro("_GNU_SOURCE", "1");
-    }
+    lib.defineCMacro("_GNU_SOURCE", "1");
     if (target.result.os.tag == .windows) {
         // XXX: These seem like they should be necessary, but apparently not 🤷‍♂️
-        // lib.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
-        // lib.defineCMacro("_WIN32_WINNT", "0x0602");
-        // XXX: when using this here, it breaks the windows build for some reason (but necessary in quickjs)
-        // lib.defineCMacro("_MSC_VER", "1900");
+        lib.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
+        lib.defineCMacro("_WIN32_WINNT", "0x0602");
     }
 
     var cflags = std.ArrayList([]const u8).init(b.allocator);
@@ -110,7 +106,7 @@ pub fn build(b: *std.Build) !void {
             "src/bundles/c/core/run-main.c",
             "src/bundles/c/core/run-repl.c",
             "src/bundles/c/core/worker-bootstrap.c",
-            // "deps/quickjs/cutils.c",
+            "deps/quickjs/cutils.c",
         },
         .flags = cflags.items,
     });
@@ -138,7 +134,10 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     tjs.linkLibrary(lib);
-    tjs.addCSourceFile(.{ .file = b.path("src/cli.c") });
+    tjs.addCSourceFile(.{
+        .file = b.path("src/cli.c"),
+        .flags = cflags.items,
+    });
 
     tjs.linkLibC();
 
@@ -150,7 +149,10 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     tjsc.linkLibrary(dep_quickjs.artifact("qjs"));
-    tjsc.addCSourceFile(.{ .file = b.path("src/qjsc.c") });
+    tjsc.addCSourceFile(.{
+        .file = b.path("src/qjsc.c"),
+        .flags = cflags.items,
+    });
 
     tjsc.linkLibC();
 
