@@ -13,7 +13,6 @@ pub fn build(b: *std.Build) !void {
     lib.addIncludePath(b.path("."));
 
     const common_flags: []const []const u8 = &.{
-        "-std=c99",
         "-DHAVE_INT16_T=1",
         "-DHAVE_INT32_T=1",
         "-DHAVE_INT8_T=1",

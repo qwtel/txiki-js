@@ -58,9 +58,7 @@ pub fn build(b: *std.Build) !void {
     defer cflags.deinit();
 
     try cflags.appendSlice(&.{
-        "-std=c11",
         "-Wall",
-        "-g",
     });
     if (optimize == .Debug) {
         try cflags.appendSlice(&.{
