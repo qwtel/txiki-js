@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    // TODO: libffi, curl
 
     // const build_with_mimalloc = b.option(bool, "build-with-mimalloc", "If true (default), build with mimalloc") orelse true;
     // const use_external_ffi = b.option(bool, "use-external-ffi", "Specify to use external ffi dependency") orelse false;
@@ -30,22 +31,15 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const art_dep_quickjs = dep_quickjs.artifact("qjs");
-    const art_dep_libuv = dep_libuv.artifact("uv_a");
-    const art_dep_sqlite3 = dep_sqlite3.artifact("sqlite3");
-    const art_dep_wasm3 = dep_wasm3.artifact("m3");
+    lib.linkLibrary(dep_quickjs.artifact("qjs"));
+    lib.linkLibrary(dep_libuv.artifact("uv_a"));
+    lib.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+    lib.linkLibrary(dep_wasm3.artifact("m3"));
 
-    // TODO: libffi, curl
-
-    lib.linkLibrary(art_dep_quickjs);
-    lib.linkLibrary(art_dep_libuv);
-    lib.linkLibrary(art_dep_sqlite3);
-    lib.linkLibrary(art_dep_wasm3);
-
-    lib.installLibraryHeaders(art_dep_quickjs);
-    lib.installLibraryHeaders(art_dep_libuv);
-    lib.installLibraryHeaders(art_dep_sqlite3);
-    lib.installLibraryHeaders(art_dep_wasm3);
+    lib.installLibraryHeaders(dep_quickjs.artifact("qjs"));
+    lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+    lib.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
+    lib.installLibraryHeaders(dep_wasm3.artifact("m3"));
 
     if (target.result.os.tag != .windows and !target.result.isAndroid()) {
         lib.linkSystemLibrary("pthread");
@@ -137,15 +131,27 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(lib);
 
-    const exe = b.addExecutable(.{
+    const tjs = b.addExecutable(.{
         .name = "tjs",
         .target = target,
         .optimize = optimize,
     });
-    exe.linkLibrary(lib);
-    exe.addCSourceFile(.{ .file = b.path("src/cli.c") });
+    tjs.linkLibrary(lib);
+    tjs.addCSourceFile(.{ .file = b.path("src/cli.c") });
 
-    exe.linkLibC();
+    tjs.linkLibC();
 
-    b.installArtifact(exe);
+    b.installArtifact(tjs);
+
+    const tjsc = b.addExecutable(.{
+        .name = "tjsc",
+        .target = target,
+        .optimize = optimize,
+    });
+    tjsc.linkLibrary(dep_quickjs.artifact("qjs"));
+    tjsc.addCSourceFile(.{ .file = b.path("src/qjsc.c") });
+
+    tjsc.linkLibC();
+
+    b.installArtifact(tjsc);
 }
