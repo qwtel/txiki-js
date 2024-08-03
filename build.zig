@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) !void {
     const dep_wasm3 = b.dependency("wasm3", .{
         .target = target,
         .optimize = optimize,
+        .libm3 = true,
     });
     // TODO: libffi, curl
 
