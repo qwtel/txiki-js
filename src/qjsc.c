@@ -23,7 +23,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "cutils.h"
+#include "../deps/quickjs/cutils.h"
 #include "quickjs.h"
 
 #include <assert.h>

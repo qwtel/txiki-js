@@ -25,7 +25,7 @@
 #ifndef TJS_UTILS_H
 #define TJS_UTILS_H
 
-#include "cutils.h"
+#include "../deps/quickjs/cutils.h"
 
 #include <quickjs.h>
 #include <stdbool.h>
