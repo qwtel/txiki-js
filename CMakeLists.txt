@@ -70,14 +70,14 @@ add_subdirectory(deps/sqlite3 EXCLUDE_FROM_ALL)
 # set(BUILD_WASI "simple" CACHE STRING "WASI implementation")
 # add_subdirectory(deps/wasm3 EXCLUDE_FROM_ALL)
 
-# if(BUILD_WITH_MIMALLOC)
-#     option(MI_OVERRIDE "" OFF)
-#     option(MI_BUILD_SHARED "" OFF)
-#     option(MI_BUILD_STATIC "" ON)
-#     option(MI_BUILD_OBJECT "" OFF)
-#     option(MI_BUILD_TESTS "" OFF)
-#     add_subdirectory(deps/mimalloc EXCLUDE_FROM_ALL)
-# endif()
+if(BUILD_WITH_MIMALLOC)
+    option(MI_OVERRIDE "" OFF)
+    option(MI_BUILD_SHARED "" OFF)
+    option(MI_BUILD_STATIC "" ON)
+    option(MI_BUILD_OBJECT "" OFF)
+    option(MI_BUILD_TESTS "" OFF)
+    add_subdirectory(deps/mimalloc EXCLUDE_FROM_ALL)
+endif()
 
 # find_package(CURL REQUIRED)
 
@@ -175,10 +175,10 @@ if (UNIX)
     target_link_libraries(m)
 endif()
 
-# if (BUILD_WITH_MIMALLOC)
-#     target_compile_definitions(tjs PRIVATE TJS__HAS_MIMALLOC)
-#     target_link_libraries(tjs mimalloc-static)
-# endif()
+if (BUILD_WITH_MIMALLOC)
+    target_compile_definitions(tjs PRIVATE TJS__HAS_MIMALLOC)
+    target_link_libraries(tjs mimalloc-static)
+endif()
 
 add_executable(tjs-cli
     src/cli.c
