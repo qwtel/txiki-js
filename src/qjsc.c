@@ -33,7 +33,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _MSC_VER
+#include <getopt_compat.h>
+#else
 #include <unistd.h>
+#endif
 
 /* BEGIN: copied over from quickjs-libc to avoid dependency. */
 
@@ -201,7 +206,11 @@ static void output_object_code(JSContext *ctx,
 
     namelist_add(&cname_list, c_name, NULL, load_only);
 
-    fprintf(fo, "const uint32_t %s%s_size = %u;\n\n", prefix, c_name, (unsigned int) out_buf_len);
+    fprintf(fo, "#ifdef _MSC_VER\n");
+    fprintf(fo, "enum { %s%s_size = %u };\n", prefix, c_name, (unsigned int) out_buf_len);
+    fprintf(fo, "#else\n");
+    fprintf(fo, "const uint32_t %s%s_size = %u;\n", prefix, c_name, (unsigned int) out_buf_len);
+    fprintf(fo, "#endif\n\n");
     fprintf(fo, "const uint8_t %s%s[%u] = {\n", prefix, c_name, (unsigned int) out_buf_len);
     dump_hex(fo, out_buf, out_buf_len);
     fprintf(fo, "};\n\n");

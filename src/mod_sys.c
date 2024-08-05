@@ -26,13 +26,6 @@
 #include "version.h"
 
 #include <string.h>
-#if defined(_WIN32)
-#define STDIN_FILENO _fileno(stdin)
-#define STDOUT_FILENO _fileno(stdout)
-#define STDERR_FILENO _fileno(stderr)
-#else
-#include <unistd.h>
-#endif
 #include <uv.h>
 
 extern const uint8_t tjs__run_repl[];

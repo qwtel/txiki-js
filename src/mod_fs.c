@@ -28,6 +28,9 @@
 #include <string.h>
 #include <uv.h>
 
+#ifdef _MSC_VER
+#include <dirent_compat.h>
+#endif
 
 static JSClassID tjs_file_class_id;
 
@@ -695,8 +698,7 @@ static JSValue tjs_stat_isblockdevice(JSContext *ctx, JSValue this_val) {
     if (!sr)
         return JS_EXCEPTION;
 
-    // return JS_NewBool(ctx, (sr->st_mode & S_IFMT) == S_IFBLK);
-    return JS_NewBool(ctx, false);
+    return JS_NewBool(ctx, (sr->st_mode & S_IFMT) == S_IFBLK);
 }
 
 static JSValue tjs_stat_ischaracterdevice(JSContext *ctx, JSValue this_val) {

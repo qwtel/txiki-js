@@ -28,7 +28,11 @@
 
 // #include <curl/curl.h>
 #include <string.h>
-#if !defined(_WIN32)
+#if defined(_MSC_VER)
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+#else
 #include <unistd.h>
 #endif
 
@@ -477,21 +481,13 @@ static JSValue tjs_availableParallelism(JSContext *ctx, JSValue this_val, int ar
     return JS_NewUint32(ctx, uv_available_parallelism());
 }
 
-#if defined(_WIN32)
-#define STDIN_FILENO _fileno(stdin)
-#define STDOUT_FILENO _fileno(stdout)
-#define STDERR_FILENO _fileno(stderr)
-#else
-#include <unistd.h>
-#endif
-
 static const JSCFunctionListEntry tjs_os_funcs[] = {
     TJS_CONST(AF_INET),
     TJS_CONST(AF_INET6),
     TJS_CONST(AF_UNSPEC),
-    // TJS_CONST(STDIN_FILENO),
-    // TJS_CONST(STDOUT_FILENO),
-    // TJS_CONST(STDERR_FILENO),
+    TJS_CONST(STDIN_FILENO),
+    TJS_CONST(STDOUT_FILENO),
+    TJS_CONST(STDERR_FILENO),
     TJS_CFUNC_DEF("exit", 1, tjs_exit),
     TJS_CFUNC_DEF("uname", 0, tjs_uname),
     TJS_CFUNC_DEF("uptime", 0, tjs_uptime),
@@ -518,8 +514,7 @@ static const JSCFunctionListEntry tjs_os_funcs[] = {
 
 void tjs__mod_os_init(JSContext *ctx, JSValue ns) {
     JS_SetPropertyFunctionList(ctx, ns, tjs_os_funcs, countof(tjs_os_funcs));
-    JS_DefinePropertyValueStr(ctx, ns, "STDIN_FILENO", JS_NewInt32(ctx, STDIN_FILENO), JS_PROP_ENUMERABLE);
-    JS_DefinePropertyValueStr(ctx, ns, "STDOUT_FILENO", JS_NewInt32(ctx, STDOUT_FILENO), JS_PROP_ENUMERABLE);
-    JS_DefinePropertyValueStr(ctx, ns, "STDERR_FILENO", JS_NewInt32(ctx, STDERR_FILENO), JS_PROP_ENUMERABLE);
-    // printf("We here? %i %i, %i\n", STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO);
+    //JS_DefinePropertyValueStr(ctx, ns, "STDIN_FILENO", JS_NewInt32(ctx, STDIN_FILENO), JS_PROP_ENUMERABLE);
+    //JS_DefinePropertyValueStr(ctx, ns, "STDOUT_FILENO", JS_NewInt32(ctx, STDOUT_FILENO), JS_PROP_ENUMERABLE);
+    //JS_DefinePropertyValueStr(ctx, ns, "STDERR_FILENO", JS_NewInt32(ctx, STDERR_FILENO), JS_PROP_ENUMERABLE);
 }

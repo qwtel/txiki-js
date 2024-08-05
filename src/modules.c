@@ -136,8 +136,7 @@ JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *op
 #if defined(_WIN32)
 #define TJS__PATHSEP     '\\'
 #define TJS__PATHSEP_STR "\\"
-#include <windows.h>
-#define PATH_MAX MAX_PATH
+#include <dirent_compat.h>
 #else
 #define TJS__PATHSEP     '/'
 #define TJS__PATHSEP_STR "/"
