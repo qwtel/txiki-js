@@ -24,6 +24,7 @@
 
 #include "wasm.h"
 
+#include "mem.h"
 #include "private.h"
 #include "tjs.h"
 #include "utils.h"
@@ -187,7 +188,7 @@ static JSValue tjs_wasm_callfunction(JSContext *ctx, JSValue this_val, int argc,
     if (nargs == 0) {
         r = m3_Call(func, 0, NULL);
     } else {
-        const char *m3_argv[nargs + 1];
+        const char **m3_argv = (const char **)tjs__malloc((nargs + 1) * sizeof(char *));
         for (int i = 0; i < nargs; i++) {
             m3_argv[i] = JS_ToCString(ctx, argv[i + 1]);
         }
