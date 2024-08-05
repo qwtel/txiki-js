@@ -67,8 +67,8 @@ add_subdirectory(deps/libuv EXCLUDE_FROM_ALL)
 
 add_subdirectory(deps/sqlite3 EXCLUDE_FROM_ALL)
 
-set(BUILD_WASI "simple" CACHE STRING "WASI implementation")
-add_subdirectory(deps/wasm3 EXCLUDE_FROM_ALL)
+# set(BUILD_WASI "simple" CACHE STRING "WASI implementation")
+# add_subdirectory(deps/wasm3 EXCLUDE_FROM_ALL)
 
 if(BUILD_WITH_MIMALLOC)
     option(MI_OVERRIDE "" OFF)
@@ -95,7 +95,7 @@ add_library(tjs STATIC
     src/utils.c
     src/version.c
     src/vm.c
-    src/wasm.c
+    # src/wasm.c
     src/worker.c
     # src/ws.c
     # src/xhr.c
@@ -167,7 +167,7 @@ target_compile_definitions(tjs PRIVATE TJS__PLATFORM="${TJS_PLATFORM}")
 target_compile_definitions(tjs PRIVATE ${tjs_defines})
 target_include_directories(tjs PUBLIC src)
 # target_link_libraries(tjs qjs uv_a m3 sqlite3 m pthread CURL::libcurl)
-target_link_libraries(tjs qjs uv_a m3 sqlite3)
+target_link_libraries(tjs qjs uv_a sqlite3)
 find_package(Threads)
 list(APPEND qjs_libs ${CMAKE_THREAD_LIBS_INIT})
 if (UNIX)
