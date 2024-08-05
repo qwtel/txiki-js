@@ -3,6 +3,7 @@
 #include <inttypes.h>
 
 const uint32_t tjs__ffi_size = 16104;
+enum { tjs__ffi_size = 16104 };
 
 const uint8_t tjs__ffi[16104] = {
  0x0c, 0x9b, 0x02, 0x0e, 0x74, 0x6a, 0x73, 0x3a,

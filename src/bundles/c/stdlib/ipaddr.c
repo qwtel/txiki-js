@@ -2,7 +2,8 @@
 
 #include <inttypes.h>
 
-const uint32_t tjs__ipaddr_size = 14947;
+// const uint32_t tjs__ipaddr_size = 14947;
+enum { tjs__ipaddr_size = 14947 };
 
 const uint8_t tjs__ipaddr[14947] = {
  0x0c, 0xa8, 0x01, 0x14, 0x74, 0x6a, 0x73, 0x3a,

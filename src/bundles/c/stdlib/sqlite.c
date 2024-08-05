@@ -2,7 +2,8 @@
 
 #include <inttypes.h>
 
-const uint32_t tjs__sqlite_size = 2919;
+// const uint32_t tjs__sqlite_size = 2919;
+enum { tjs__sqlite_size = 2919 };
 
 const uint8_t tjs__sqlite[2919] = {
  0x0c, 0x44, 0x14, 0x74, 0x6a, 0x73, 0x3a, 0x73,

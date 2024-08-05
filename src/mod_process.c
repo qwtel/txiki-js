@@ -27,8 +27,13 @@
 #include "utils.h"
 
 #include <string.h>
+#if defined(_WIN32)
+#define STDIN_FILENO _fileno(stdin)
+#define STDOUT_FILENO _fileno(stdout)
+#define STDERR_FILENO _fileno(stderr)
+#else
 #include <unistd.h>
-
+#endif
 
 static JSClassID tjs_process_class_id;
 
