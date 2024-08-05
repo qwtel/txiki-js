@@ -24,7 +24,7 @@
 
 #include "mem.h"
 
-#include "../deps/quickjs/cutils.h"
+#include "cutils.h"
 
 #include <stdlib.h>
 
