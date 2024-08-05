@@ -25,7 +25,7 @@
 #ifndef TJS_PRIVATE_H
 #define TJS_PRIVATE_H
 
-#include "../deps/quickjs/cutils.h"
+#include "cutils.h"
 #include "tjs.h"
 #include "wasm.h"
 

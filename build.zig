@@ -106,7 +106,6 @@ pub fn build(b: *std.Build) !void {
             "src/bundles/c/core/run-main.c",
             "src/bundles/c/core/run-repl.c",
             "src/bundles/c/core/worker-bootstrap.c",
-            "deps/quickjs/cutils.c",
         },
         .flags = cflags.items,
     });
