@@ -28,7 +28,7 @@
 #include <string.h>
 #include <uv.h>
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #include <dirent_compat.h>
 #endif
 

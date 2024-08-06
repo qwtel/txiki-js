@@ -49,7 +49,6 @@ pub fn build(b: *std.Build) !void {
     // XXX: Duplicate from deps/quickjs/build.zig
     lib.defineCMacro("_GNU_SOURCE", "1");
     if (target.result.os.tag == .windows) {
-        // XXX: These seem like they should be necessary, but apparently not 🤷‍♂️
         lib.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
         lib.defineCMacro("_WIN32_WINNT", "0x0602");
     }
@@ -59,6 +58,7 @@ pub fn build(b: *std.Build) !void {
 
     try cflags.appendSlice(&.{
         "-std=c11",
+        "-funsigned-char",
         "-Wall",
         "-g",
     });
@@ -86,7 +86,7 @@ pub fn build(b: *std.Build) !void {
             "src/utils.c",
             "src/version.c",
             "src/vm.c",
-            "src/wasm.c",
+            // "src/wasm.c",
             "src/worker.c",
             // "src/ws.c",
             // "src/xhr.c",

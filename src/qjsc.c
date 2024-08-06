@@ -34,7 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #include <getopt_compat.h>
 #else
 #include <unistd.h>
