@@ -197,6 +197,7 @@ static JSValue tjs_wasm_callfunction(JSContext *ctx, JSValue this_val, int argc,
         for (int i = 0; i < nargs; i++) {
             JS_FreeCString(ctx, m3_argv[i]);
         }
+        tjs__free(m3_argv);
     }
 
     if (r)
