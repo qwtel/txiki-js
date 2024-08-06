@@ -18,22 +18,16 @@ set(CMAKE_C_STANDARD 11)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if (NOT MSVC)
-    list(APPEND tjs_cflags -Wall -g)
-    if (CMAKE_BUILD_TYPE MATCHES "Debug")
-        list(APPEND tjs_cflags -ggdb -O0 -fno-omit-frame-pointer)
-    endif()
+list(APPEND tjs_cflags -Wall -g)
+if (CMAKE_BUILD_TYPE MATCHES "Debug")
+    list(APPEND tjs_cflags -ggdb -O0 -fno-omit-frame-pointer)
 endif()
 
-if (MSVC)
-    list(APPEND tjs_cflags /J /experimental:c11atomics)
-else()
-    list(APPEND tjs_cflags -funsigned-char)
-endif()
-
-list(APPEND tjs_defines _GNU_SOURCE)
 if(WIN32)
     list(APPEND tjs_defines WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0602)
+    if (MSVC)
+        list(APPEND tjs_cflags /experimental:c11atomics)
+    endif()
 endif()
 
 set(TJS__VERSION_MAJOR 24)
