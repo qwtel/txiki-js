@@ -1,4 +1,5 @@
-/* global tjs */
+/// <reference path="../../../types/src/index.d.ts" />
+// @ts-check
 
 const pathModule = globalThis[Symbol.for('tjs.internal.modules.path')];
 
@@ -39,6 +40,7 @@ class Test {
         this._stdout = this._slurpStdio(this._proc.stdout);
         this._stderr = this._slurpStdio(this._proc.stderr);
         this._timer = setTimeout(() => {
+            // @ts-ignore
             this._proc.kill('SIGKILL');
             this._timeout = true;
         }, TIMEOUT);
@@ -50,7 +52,14 @@ class Test {
 
     async wait() {
         const [ status_, stdout, stderr ] = await Promise.allSettled([ this._proc_exit, this._stdout, this._stderr ]);
+        if (status_.status === 'rejected' || status_.value == null) {
+            throw Error('failed to read exit status');
+        }
         const status = status_.value;
+
+        if (stdout.status === 'rejected' || stderr.status === 'rejected') {
+            throw Error('failed to slurp stdout/stderr');
+        }
 
         return {
             name: pathModule.basename(this._fileName),
@@ -127,7 +136,7 @@ export async function runTests(d) {
             break;
         }
 
-        const n = testConcurrency - running.size;
+        const n = Number(testConcurrency) - running.size;
         const willRun = tests.splice(0, n);
 
         for (const test of willRun) {

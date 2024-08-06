@@ -1,4 +1,5 @@
-/* global tjs */
+/// <reference path="../../../types/src/index.d.ts" />
+// @ts-check
 
 import getopts from 'tjs:getopts';
 import path from 'tjs:path';
@@ -95,6 +96,7 @@ const options = getopts(tjs.args.slice(1), {
     boolean: [ 'h', 'v' ],
     string: [ 'e' ],
     stopEarly: true,
+    // @ts-ignore
     unknown: option => {
         if (![ 'memory-limit', 'stack-size' ].includes(option)) {
             console.log(`${exeName}: unrecognized option: ${option}`);
@@ -177,7 +179,7 @@ if (options.help) {
         const bytecode = tjs.engine.serialize(tjs.engine.compile(data, infilePath.base));
         const exe = await tjs.readFile(tjs.exePath);
         const exeSize = exe.length;
-        const newBuffer = exe.buffer.transfer(exeSize + bytecode.length + Trailer.Size);
+        const newBuffer = /** @type {any} */(exe.buffer).transfer(exeSize + bytecode.length + Trailer.Size);
         const newExe = new Uint8Array(newBuffer);
 
         newExe.set(bytecode, exeSize);
