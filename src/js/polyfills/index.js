@@ -25,7 +25,7 @@ import './console.js';
 import './crypto.js';
 import './performance.js';
 import './storage.js';
-// import './wasm.js';
+import './wasm.js';
 import './worker.js';
 // import './ws.js';
 
