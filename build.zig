@@ -94,7 +94,7 @@ pub fn build(b: *std.Build) !void {
             "src/utils.c",
             "src/version.c",
             "src/vm.c",
-            // "src/wasm.c",
+            "src/wasm.c",
             "src/worker.c",
             // "src/ws.c",
             // "src/xhr.c",

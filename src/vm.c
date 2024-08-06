@@ -354,7 +354,7 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     JS_FreeValue(ctx, global_obj);
 
     /* WASM */
-    // qrt->wasm_ctx.env = m3_NewEnvironment();
+    qrt->wasm_ctx.env = m3_NewEnvironment();
 
     /* Timers */
     qrt->timers.timers = NULL;
