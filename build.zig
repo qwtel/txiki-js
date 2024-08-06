@@ -66,7 +66,6 @@ pub fn build(b: *std.Build) !void {
     defer cflags.deinit();
 
     try cflags.appendSlice(&.{
-        "-std=c11",
         "-funsigned-char",
         "-Wall",
     });
