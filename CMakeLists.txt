@@ -171,7 +171,7 @@ target_link_libraries(tjs qjs uv_a sqlite3)
 find_package(Threads)
 list(APPEND qjs_libs ${CMAKE_THREAD_LIBS_INIT})
 if (UNIX)
-    target_link_libraries(m)
+    target_link_libraries(tjs m)
 endif()
 
 if (BUILD_WITH_MIMALLOC)
@@ -191,4 +191,8 @@ set_target_properties(tjs-cli
 add_executable(tjsc EXCLUDE_FROM_ALL
     src/qjsc.c
 )
-target_link_libraries(tjsc qjs m)
+target_compile_definitions(tjsc PRIVATE ${tjs_defines})
+target_link_libraries(tjsc qjs)
+if (UNIX)
+    target_link_libraries(tjsc m)
+endif()
