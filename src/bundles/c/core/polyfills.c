@@ -2,7 +2,11 @@
 
 #include <inttypes.h>
 
+#ifdef _MSC_VER
+enum { tjs__polyfills_size = 239615 };
+#else
 const uint32_t tjs__polyfills_size = 239615;
+#endif
 
 const uint8_t tjs__polyfills[239615] = {
  0x0c, 0xb3, 0x10, 0x18, 0x70, 0x6f, 0x6c, 0x79,

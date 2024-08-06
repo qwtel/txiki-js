@@ -2,7 +2,11 @@
 
 #include <inttypes.h>
 
+#ifdef _MSC_VER
+enum { tjs__worker_bootstrap_size = 640 };
+#else
 const uint32_t tjs__worker_bootstrap_size = 640;
+#endif
 
 const uint8_t tjs__worker_bootstrap[640] = {
  0x0c, 0x10, 0x16, 0x6d, 0x65, 0x73, 0x73, 0x61,
