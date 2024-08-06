@@ -21,9 +21,12 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .libm3 = true,
     });
-    // TODO: libffi, curl
+    const dep_mimalloc = b.dependency("mimalloc", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
-    // const build_with_mimalloc = b.option(bool, "build-with-mimalloc", "If true (default), build with mimalloc") orelse true;
+    const build_with_mimalloc = b.option(bool, "build-with-mimalloc", "If true (default), build with mimalloc") orelse true;
     // const use_external_ffi = b.option(bool, "use-external-ffi", "Specify to use external ffi dependency") orelse false;
 
     const lib = b.addStaticLibrary(.{
@@ -36,11 +39,17 @@ pub fn build(b: *std.Build) !void {
     lib.linkLibrary(dep_libuv.artifact("uv_a"));
     lib.linkLibrary(dep_sqlite3.artifact("sqlite3"));
     lib.linkLibrary(dep_wasm3.artifact("m3"));
+    if (build_with_mimalloc) {
+        lib.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
+    }
 
     lib.installLibraryHeaders(dep_quickjs.artifact("qjs"));
     lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
     lib.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
     lib.installLibraryHeaders(dep_wasm3.artifact("m3"));
+    if (build_with_mimalloc) {
+        lib.installLibraryHeaders(dep_mimalloc.artifact("mimalloc-static"));
+    }
 
     if (target.result.os.tag != .windows and !target.result.isAndroid()) {
         lib.linkSystemLibrary("pthread");
@@ -49,7 +58,6 @@ pub fn build(b: *std.Build) !void {
     // XXX: Duplicate from deps/quickjs/build.zig
     lib.defineCMacro("_GNU_SOURCE", "1");
     if (target.result.os.tag == .windows) {
-        // XXX: These seem like they should be necessary, but apparently not 🤷‍♂️
         lib.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
         lib.defineCMacro("_WIN32_WINNT", "0x0602");
     }
@@ -58,6 +66,7 @@ pub fn build(b: *std.Build) !void {
     defer cflags.deinit();
 
     try cflags.appendSlice(&.{
+        "-std=c11",
         "-Wall",
     });
     if (optimize == .Debug) {
@@ -117,6 +126,10 @@ pub fn build(b: *std.Build) !void {
 
     const tjs_platform = try std.fmt.allocPrint(b.allocator, "\"{s}\"", .{@tagName(target.result.os.tag)});
     lib.defineCMacro("TJS__PLATFORM", tjs_platform);
+
+    if (build_with_mimalloc) {
+        lib.defineCMacro("TJS__HAS_MIMALLOC", "1");
+    }
 
     lib.linkLibC();
 

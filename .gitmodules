@@ -14,4 +14,4 @@
 	url = git@github.com:qwtel/zig-build-quickjs.git
 [submodule "deps/mimalloc"]
 	path = deps/mimalloc
-	url = git@github.com:microsoft/mimalloc.git
+	url = git@github.com:qwtel/zig-build-mimalloc.git
