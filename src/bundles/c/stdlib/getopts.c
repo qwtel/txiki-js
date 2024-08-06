@@ -2,7 +2,8 @@
 
 #include <inttypes.h>
 
-const uint32_t tjs__getopts_size = 2888;
+// const uint32_t tjs__getopts_size = 2888;
+enum { tjs__getopts_size = 2888 };
 
 const uint8_t tjs__getopts[2888] = {
  0x0c, 0x28, 0x16, 0x74, 0x6a, 0x73, 0x3a, 0x67,

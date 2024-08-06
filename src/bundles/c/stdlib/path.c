@@ -2,7 +2,8 @@
 
 #include <inttypes.h>
 
-const uint32_t tjs__path_size = 119;
+// const uint32_t tjs__path_size = 119;
+enum { tjs__path_size = 119 };
 
 const uint8_t tjs__path[119] = {
  0x0c, 0x04, 0x10, 0x74, 0x6a, 0x73, 0x3a, 0x70,

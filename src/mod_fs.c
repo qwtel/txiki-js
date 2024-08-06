@@ -28,6 +28,9 @@
 #include <string.h>
 #include <uv.h>
 
+#if defined(_MSC_VER)
+#include <dirent_compat.h>
+#endif
 
 static JSClassID tjs_file_class_id;
 

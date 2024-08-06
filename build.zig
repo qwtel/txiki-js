@@ -67,6 +67,7 @@ pub fn build(b: *std.Build) !void {
 
     try cflags.appendSlice(&.{
         "-std=c11",
+        "-funsigned-char",
         "-Wall",
     });
     if (optimize == .Debug) {
@@ -93,7 +94,7 @@ pub fn build(b: *std.Build) !void {
             "src/utils.c",
             "src/version.c",
             "src/vm.c",
-            "src/wasm.c",
+            // "src/wasm.c",
             "src/worker.c",
             // "src/ws.c",
             // "src/xhr.c",
@@ -113,7 +114,6 @@ pub fn build(b: *std.Build) !void {
             "src/bundles/c/core/run-main.c",
             "src/bundles/c/core/run-repl.c",
             "src/bundles/c/core/worker-bootstrap.c",
-            "deps/quickjs/cutils.c",
         },
         .flags = cflags.items,
     });

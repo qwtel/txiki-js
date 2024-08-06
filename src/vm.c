@@ -170,7 +170,7 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_sys_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
     tjs__mod_udp_init(ctx, ns);
-    tjs__mod_wasm_init(ctx, ns);
+    // tjs__mod_wasm_init(ctx, ns);
     tjs__mod_worker_init(ctx, ns);
     // tjs__mod_ws_init(ctx, ns);
     // tjs__mod_xhr_init(ctx, ns);
@@ -413,8 +413,8 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     // }
 
     /* Destroy WASM runtime. */
-    m3_FreeEnvironment(qrt->wasm_ctx.env);
-    qrt->wasm_ctx.env = NULL;
+    // m3_FreeEnvironment(qrt->wasm_ctx.env);
+    // qrt->wasm_ctx.env = NULL;
 
     tjs__free(qrt);
 }

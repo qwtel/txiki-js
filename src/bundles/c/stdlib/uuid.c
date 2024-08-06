@@ -2,7 +2,8 @@
 
 #include <inttypes.h>
 
-const uint32_t tjs__uuid_size = 12479;
+// const uint32_t tjs__uuid_size = 12479;
+enum { tjs__uuid_size = 12479 };
 
 const uint8_t tjs__uuid[12479] = {
  0x0c, 0x9c, 0x01, 0x10, 0x74, 0x6a, 0x73, 0x3a,

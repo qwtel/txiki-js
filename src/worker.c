@@ -27,7 +27,12 @@
 #include "tjs.h"
 
 #include <string.h>
+#if defined(_MSC_VER)
+#include <io.h>
+#define close _close
+#else
 #include <unistd.h>
+#endif
 
 extern const uint8_t tjs__worker_bootstrap[];
 extern const uint32_t tjs__worker_bootstrap_size;

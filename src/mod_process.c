@@ -27,8 +27,13 @@
 #include "utils.h"
 
 #include <string.h>
+#if defined(_MSC_VER)
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+#else
 #include <unistd.h>
-
+#endif
 
 static JSClassID tjs_process_class_id;
 

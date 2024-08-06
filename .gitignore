@@ -1,11 +1,13 @@
+.vs
 .vscode
 .idea
 .DS_Store
 .cache
 .zig-cache
-zig-out
+CMakeSettings.json
 
 build/
+zig-out/
 src/bundles/js/
 src/bundles/c/
 src/js/core.js
