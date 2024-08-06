@@ -55,13 +55,6 @@ pub fn build(b: *std.Build) !void {
         lib.linkSystemLibrary("pthread");
     }
 
-    // XXX: Duplicate from deps/quickjs/build.zig
-    lib.defineCMacro("_GNU_SOURCE", "1");
-    if (target.result.os.tag == .windows) {
-        lib.defineCMacro("WIN32_LEAN_AND_MEAN", "1");
-        lib.defineCMacro("_WIN32_WINNT", "0x0602");
-    }
-
     var cflags = std.ArrayList([]const u8).init(b.allocator);
     defer cflags.deinit();
 

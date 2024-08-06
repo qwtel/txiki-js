@@ -96,14 +96,13 @@ const options = getopts(tjs.args.slice(1), {
     boolean: [ 'h', 'v' ],
     string: [ 'e' ],
     stopEarly: true,
-    // @ts-ignore
     unknown: option => {
         if (![ 'memory-limit', 'stack-size' ].includes(option)) {
             console.log(`${exeName}: unrecognized option: ${option}`);
             tjs.exit(1);
         }
 
-        return option;
+        return !!option;
     }
 });
 
