@@ -29,6 +29,7 @@
 // #include <curl/curl.h>
 #include <string.h>
 #if defined(_MSC_VER)
+// It should be safe to define these as 0,1,2 even when compiling with msvc:
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
@@ -514,7 +515,4 @@ static const JSCFunctionListEntry tjs_os_funcs[] = {
 
 void tjs__mod_os_init(JSContext *ctx, JSValue ns) {
     JS_SetPropertyFunctionList(ctx, ns, tjs_os_funcs, countof(tjs_os_funcs));
-    //JS_DefinePropertyValueStr(ctx, ns, "STDIN_FILENO", JS_NewInt32(ctx, STDIN_FILENO), JS_PROP_ENUMERABLE);
-    //JS_DefinePropertyValueStr(ctx, ns, "STDOUT_FILENO", JS_NewInt32(ctx, STDOUT_FILENO), JS_PROP_ENUMERABLE);
-    //JS_DefinePropertyValueStr(ctx, ns, "STDERR_FILENO", JS_NewInt32(ctx, STDERR_FILENO), JS_PROP_ENUMERABLE);
 }
