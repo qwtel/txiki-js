@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__run_main_size_enum = 6795 };
 const uint32_t tjs__run_main_size = 6795;
 
 const uint8_t tjs__run_main[6795] = {

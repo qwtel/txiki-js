@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__polyfills_size_enum = 239615 };
 const uint32_t tjs__polyfills_size = 239615;
 
 const uint8_t tjs__polyfills[239615] = {
