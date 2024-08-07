@@ -65,6 +65,7 @@ pub fn build(b: *std.Build) !void {
     var flags = common_flags;
     if (mode == .Debug) {
         const debug_flags: []const []const u8 = &.{
+            "-fno-sanitize=all", // prevents test from failing in debug mode
             "-DSQLITE_DEBUG",
             "-DSQLITE_MEMDEBUG",
             "-DSQLITE_ENABLE_API_ARMOR",

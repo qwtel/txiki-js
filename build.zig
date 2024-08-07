@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const build_with_mimalloc = b.option(bool, "build-with-mimalloc", "If true (default), build with mimalloc") orelse true;
+    const build_with_mimalloc = b.option(bool, "with-mimalloc", "If true (default), build with mimalloc") orelse true;
     // const use_external_ffi = b.option(bool, "use-external-ffi", "Specify to use external ffi dependency") orelse false;
 
     const lib = b.addStaticLibrary(.{
@@ -161,4 +161,14 @@ pub fn build(b: *std.Build) !void {
     tjsc.linkLibC();
 
     b.installArtifact(tjsc);
+
+    const run_tests = b.option(bool, "test", "Combine with 'run' to run tests") orelse false;
+    const run_exe = b.addRunArtifact(tjs);
+    if (run_tests) {
+        run_exe.addArg("test");
+        run_exe.addDirectoryArg(b.path("tests"));
+    }
+
+    const run_step = b.step("run", "Run the application");
+    run_step.dependOn(&run_exe.step);
 }
