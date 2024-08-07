@@ -16,3 +16,4 @@ src/version.h
 node_modules/
 types/api/
 test_dir*/
+_tests
