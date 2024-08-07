@@ -1,4 +1,5 @@
 /// <reference path="../../../types/src/index.d.ts" />
+/* global tjs */
 // @ts-check
 
 export async function evalStdin() {

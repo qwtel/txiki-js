@@ -1,4 +1,5 @@
 /// <reference path="../../../types/src/index.d.ts" />
+/* global tjs */
 // @ts-check
 
 const pathModule = globalThis[Symbol.for('tjs.internal.modules.path')];
@@ -51,9 +52,11 @@ class Test {
 
     async wait() {
         const [ status_, stdout, stderr ] = await Promise.allSettled([ this._proc_exit, this._stdout, this._stderr ]);
+
         if (status_.status === 'rejected' || status_.value == null) {
             throw Error('failed to read exit status');
         }
+
         const status = status_.value;
 
         if (stdout.status === 'rejected' || stderr.status === 'rejected') {

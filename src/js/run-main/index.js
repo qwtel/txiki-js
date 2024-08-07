@@ -1,4 +1,5 @@
 /// <reference path="../../../types/src/index.d.ts" />
+/* global tjs */
 // @ts-check
 
 import getopts from 'tjs:getopts';
@@ -170,7 +171,7 @@ if (options.help) {
             // const instance = new WebAssembly.Instance(module, importObject);
 
             // wasi.start(instance);
-            throw Error("Not implemented")
+            throw new Error('Not implemented');
         } else {
             await core.evalFile(filename);
         }
@@ -189,6 +190,7 @@ if (options.help) {
             unknown: option => {
                 tjs.stdout.write(encode(`${exeName} compile: unrecognized option: ${option}`));
                 tjs.exit(1);
+
                 return !!option;
             }
         });

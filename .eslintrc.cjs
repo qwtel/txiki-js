@@ -29,7 +29,7 @@ module.exports = {
         'block-spacing': [ 'error', 'always' ],
         'brace-style': 'error',
         'curly': 'error',
-        'eqeqeq': 'error',
+        'eqeqeq': [ 'error', 'smart' ],
         'import/no-duplicates': 'error',
         'import/order': [ 'error', {
             'alphabetize': {
@@ -63,6 +63,6 @@ module.exports = {
         'quotes': [ 'error', 'single' ],
         'semi': [ 'error', 'always' ],
         'space-before-blocks': 'error',
-        'spaced-comment': 'error',
+        'spaced-comment': [ 'error', 'always', { 'markers': [ '/' ] } ],
     }
 };
