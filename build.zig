@@ -1,8 +1,23 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) !void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+const targets: []const std.Target.Query = &.{
+    // .{ .cpu_arch = .aarch64, .os_tag = .macos },
+    .{ .cpu_arch = .aarch64, .os_tag = .windows },
+    .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .gnu },
+    .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },
+    // .{ .cpu_arch = .x86_64, .os_tag = .macos },
+    .{ .cpu_arch = .x86_64, .os_tag = .windows },
+    .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
+    .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+};
+
+fn build2(
+    b: *std.Build,
+    query: std.Target.Query,
+    optimize: std.builtin.OptimizeMode,
+    with_mimalloc: bool,
+) ![2]*std.Build.Step.Compile {
+    const target = b.resolveTargetQuery(query);
 
     const dep_sqlite3 = b.dependency("sqlite3", .{
         .target = target,
@@ -26,9 +41,6 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    const build_with_mimalloc = b.option(bool, "with-mimalloc", "If true (default), build with mimalloc") orelse true;
-    // const use_external_ffi = b.option(bool, "use-external-ffi", "Specify to use external ffi dependency") orelse false;
-
     const lib = b.addStaticLibrary(.{
         .name = "tjs",
         .target = target,
@@ -39,7 +51,7 @@ pub fn build(b: *std.Build) !void {
     lib.linkLibrary(dep_libuv.artifact("uv_a"));
     lib.linkLibrary(dep_sqlite3.artifact("sqlite3"));
     lib.linkLibrary(dep_wasm3.artifact("m3"));
-    if (build_with_mimalloc) {
+    if (with_mimalloc) {
         lib.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
     }
 
@@ -47,7 +59,7 @@ pub fn build(b: *std.Build) !void {
     lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
     lib.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
     lib.installLibraryHeaders(dep_wasm3.artifact("m3"));
-    if (build_with_mimalloc) {
+    if (with_mimalloc) {
         lib.installLibraryHeaders(dep_mimalloc.artifact("mimalloc-static"));
     }
 
@@ -124,13 +136,11 @@ pub fn build(b: *std.Build) !void {
     );
     lib.defineCMacro("TJS__PLATFORM", tjs_platform);
 
-    if (build_with_mimalloc) {
+    if (with_mimalloc) {
         lib.defineCMacro("TJS__HAS_MIMALLOC", "1");
     }
 
     lib.linkLibC();
-
-    b.installArtifact(lib);
 
     const tjs = b.addExecutable(.{
         .name = "tjs",
@@ -145,8 +155,6 @@ pub fn build(b: *std.Build) !void {
 
     tjs.linkLibC();
 
-    b.installArtifact(tjs);
-
     const tjsc = b.addExecutable(.{
         .name = "tjsc",
         .target = target,
@@ -160,11 +168,50 @@ pub fn build(b: *std.Build) !void {
 
     tjsc.linkLibC();
 
+    return .{ tjs, tjsc };
+}
+
+pub fn build(b: *std.Build) !void {
+    const std_query = b.standardTargetOptionsQueryOnly(.{});
+    const std_optimize = b.standardOptimizeOption(.{});
+
+    const opt_matrix = b.option(bool, "matrix", "Cross-compile for known targets") orelse false;
+    const opt_with_mimalloc = b.option(bool, "with-mimalloc", "If true (default), build with mimalloc") orelse true;
+    // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
+
+    if (opt_matrix) {
+        for (targets) |q| {
+            const tjs, const tjsc = try build2(b, q, std_optimize, opt_with_mimalloc);
+
+            const tjs_output = b.addInstallArtifact(tjs, .{
+                .dest_dir = .{
+                    .override = .{
+                        .custom = try q.zigTriple(b.allocator),
+                    },
+                },
+            });
+            const tjsc_output = b.addInstallArtifact(tjsc, .{
+                .dest_dir = .{
+                    .override = .{
+                        .custom = try q.zigTriple(b.allocator),
+                    },
+                },
+            });
+
+            b.getInstallStep().dependOn(&tjs_output.step);
+            b.getInstallStep().dependOn(&tjsc_output.step);
+        }
+        return;
+    }
+
+    const tjs, const tjsc = try build2(b, std_query, std_optimize, opt_with_mimalloc);
+
+    b.installArtifact(tjs);
     b.installArtifact(tjsc);
 
-    const run_tests = b.option(bool, "test", "Combine with 'run' to run tests") orelse false;
+    const opt_test = b.option(bool, "test", "Combine with 'run' to run tests") orelse false;
     const run_exe = b.addRunArtifact(tjs);
-    if (run_tests) {
+    if (opt_test) {
         run_exe.addArg("test");
         run_exe.addDirectoryArg(b.path("tests"));
     }
