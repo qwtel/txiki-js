@@ -58,6 +58,17 @@ const helpEval = `Usage: ${exeName} eval EXPRESSION`;
 
 const helpRun = `Usage: ${exeName} run FILE`;
 
+const helpCompile = `Usage: ${exeName} compile [options] infile [outfile]
+
+Options:
+  -x, --exePath
+        Path to the tjs executable to bundle with the compiled file.
+        Defaults to the current executable. This is likely to be useful when cross-compiling.
+
+  -h, --help
+        Print help
+`;
+
 // First, let's check if this is a standalone binary.
 await (async () => {
     const exef = await tjs.open(tjs.exePath, 'rb');
@@ -166,17 +177,31 @@ if (options.help) {
 
         runTests(dir);
     } else if (command === 'compile') {
-        const [ infile, outfile ] = subargv;
+        const compOpts = getopts(subargv, {
+            alias: {
+                exePath: 'x',
+                help: 'h',
+            },
+            string: [ 'x', 'h' ],
+            stopEarly: true,
+            unknown: option => {
+                console.log(`${exeName} compile: unrecognized option: ${option}`);
+                tjs.exit(1);
+                return !!option;
+            }
+        });
 
-        if (!infile) {
-            console.log(help);
+        const [ infile, outfile ] = compOpts._;
+
+        if (!infile || compOpts.help) {
+            console.log(helpCompile);
             tjs.exit(1);
         }
 
         const infilePath = path.parse(infile);
         const data = await tjs.readFile(infile);
         const bytecode = tjs.engine.serialize(tjs.engine.compile(data, infilePath.base));
-        const exe = await tjs.readFile(tjs.exePath);
+        const exe = await tjs.readFile(compOpts.exePath || tjs.exePath);
         const exeSize = exe.length;
         const newBuffer = /** @type {any} */(exe.buffer).transfer(exeSize + bytecode.length + Trailer.Size);
         const newExe = new Uint8Array(newBuffer);
