@@ -117,7 +117,11 @@ pub fn build(b: *std.Build) !void {
         });
     }
 
-    const tjs_platform = try std.fmt.allocPrint(b.allocator, "\"{s}\"", .{@tagName(target.result.os.tag)});
+    const tjs_platform = try std.fmt.allocPrint(
+        b.allocator,
+        "\"{s}\"",
+        .{if (target.result.isDarwin()) "darwin" else @tagName(target.result.os.tag)},
+    );
     lib.defineCMacro("TJS__PLATFORM", tjs_platform);
 
     if (build_with_mimalloc) {
