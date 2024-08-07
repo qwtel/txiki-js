@@ -25,6 +25,8 @@ const Trailer = {
 
 const core = globalThis[Symbol.for('tjs.internal.core')];
 
+const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
+
 const exeName = path.basename(tjs.args[0]);
 const help = `Usage: ${exeName} [options] [subcommand]
 
@@ -109,7 +111,7 @@ const options = getopts(tjs.args.slice(1), {
     stopEarly: true,
     unknown: option => {
         if (![ 'memory-limit', 'stack-size' ].includes(option)) {
-            console.log(`${exeName}: unrecognized option: ${option}`);
+            tjs.stdout.write(encode(`${exeName}: unrecognized option: ${option}`));
             tjs.exit(1);
         }
 
@@ -118,9 +120,9 @@ const options = getopts(tjs.args.slice(1), {
 });
 
 if (options.help) {
-    console.log(help);
+    tjs.stdout.write(encode(help));
 } else if (options.version) {
-    console.log(`v${tjs.version}`);
+    tjs.stdout.write(encode(`v${tjs.version}`));
 } else {
     const memoryLimit = options['memory-limit'];
     const stackSize = options['stack-size'];
@@ -145,7 +147,7 @@ if (options.help) {
         const [ expr ] = subargv;
 
         if (!expr) {
-            console.log(helpEval);
+            tjs.stdout.write(encode(helpEval));
             tjs.exit(1);
         }
 
@@ -154,7 +156,7 @@ if (options.help) {
         const [ filename ] = subargv;
 
         if (!filename) {
-            console.log(helpRun);
+            tjs.stdout.write(encode(helpRun));
             tjs.exit(1);
         }
 
@@ -185,7 +187,7 @@ if (options.help) {
             string: [ 'x', 'h' ],
             stopEarly: true,
             unknown: option => {
-                console.log(`${exeName} compile: unrecognized option: ${option}`);
+                tjs.stdout.write(encode(`${exeName} compile: unrecognized option: ${option}`));
                 tjs.exit(1);
                 return !!option;
             }
@@ -194,7 +196,7 @@ if (options.help) {
         const [ infile, outfile ] = compOpts._;
 
         if (!infile || compOpts.help) {
-            console.log(helpCompile);
+            tjs.stdout.write(encode(helpCompile));
             tjs.exit(1);
         }
 
@@ -221,7 +223,7 @@ if (options.help) {
 
         try {
             await tjs.stat(newFileName);
-            console.log('Target file exists already');
+            tjs.stdout.write(encode('Target file exists already'));
             tjs.exit(1);
         } catch (_) {
             // Ignore.
@@ -233,7 +235,7 @@ if (options.help) {
         await newFile.chmod(0o755);
         await newFile.close();
     } else {
-        console.log(help);
+        tjs.stdout.write(encode(help));
         tjs.exit(1);
     }
 }
