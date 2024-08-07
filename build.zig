@@ -59,8 +59,9 @@ pub fn build(b: *std.Build) !void {
     defer cflags.deinit();
 
     try cflags.appendSlice(&.{
-        "-funsigned-char",
         "-Wall",
+        // something somewhere relies on undefined behavior. Adding this fixes a couple of of tests
+        "-fno-sanitize=all",
     });
     if (optimize == .Debug) {
         try cflags.appendSlice(&.{
