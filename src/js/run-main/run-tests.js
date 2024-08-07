@@ -40,8 +40,7 @@ class Test {
         this._stdout = this._slurpStdio(this._proc.stdout);
         this._stderr = this._slurpStdio(this._proc.stderr);
         this._timer = setTimeout(() => {
-            // @ts-ignore
-            this._proc.kill('SIGKILL');
+            /** @type {tjs.Process} */(this._proc).kill('SIGKILL');
             this._timeout = true;
         }, TIMEOUT);
         this._proc_exit = this._proc.wait();
