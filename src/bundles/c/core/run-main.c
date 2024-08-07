@@ -2,11 +2,7 @@
 
 #include <inttypes.h>
 
-#ifdef _MSC_VER
-enum { tjs__run_main_size = 6795 };
-#else
 const uint32_t tjs__run_main_size = 6795;
-#endif
 
 const uint8_t tjs__run_main[6795] = {
  0x0c, 0xc2, 0x01, 0x16, 0x72, 0x75, 0x6e, 0x2d,
