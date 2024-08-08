@@ -21,14 +21,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-zig-cache-
       - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
-      - uses: actions/upload-artifact@v4
+      - name: Prepare artifacts
+        run: |
+          for dir in zig-out/ ; do
+            dir_name=$(basename "$dir")
+            echo "dir_name=$dir_name" >> $GITHUB_OUTPUT
+            echo "dir=$dir" >> $GITHUB_OUTPUT
+          done
+        id: directories
+      - uses: actions/upload-artifact@v3
         with:
-          name: artifacts
-          path: zig-out/*/*
-      # - uses: actions/upload-artifact@v4
-      #   with:
-      #     name: txiki-macos
-      #     path: txiki-macos
+          name: ${{ steps.directories.outputs.dir_name }}
+          path: ${{ steps.directories.outputs.dir }}
 
   # release:
   #   needs: [build]
