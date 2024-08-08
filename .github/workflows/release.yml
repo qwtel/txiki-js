@@ -25,30 +25,3 @@ jobs:
         with:
           name: zig-out
           path: zig-out/*/*
-
-  # release:
-  #   needs: [build]
-  #   name: release
-  #   runs-on: ubuntu-latest
-  #   if: startsWith(github.ref, 'refs/tags/')
-  #   permissions:
-  #     contents: write
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-
-  #     - uses: actions/download-artifact@v4
-  #       with:
-  #         path: dist
-  #         pattern: txiki-*
-  #         merge-multiple: false
-
-  #     - name: compress
-  #       run: |
-  #         cd dist
-  #         for dir in */; do zip -r "${dir%/}.zip" "$dir"; done
-
-  #     - name: Release
-  #       uses: softprops/action-gh-release@v2
-  #       with:
-  #         files: "dist/*.zip"
