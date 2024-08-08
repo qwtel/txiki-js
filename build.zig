@@ -1,11 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const targets: []const std.Target.Query = &.{
-    // .{ .cpu_arch = .aarch64, .os_tag = .macos },
+    .{ .cpu_arch = .aarch64, .os_tag = .macos },
     .{ .cpu_arch = .aarch64, .os_tag = .windows },
     .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },
-    // .{ .cpu_arch = .x86_64, .os_tag = .macos },
+    .{ .cpu_arch = .x86_64, .os_tag = .macos },
     .{ .cpu_arch = .x86_64, .os_tag = .windows },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
@@ -16,7 +17,7 @@ fn build2(
     query: std.Target.Query,
     optimize: std.builtin.OptimizeMode,
     with_mimalloc: bool,
-) ![2]*std.Build.Step.Compile {
+) ![2]?*std.Build.Step.Compile {
     const target = b.resolveTargetQuery(query);
 
     const dep_sqlite3 = b.dependency("sqlite3", .{
@@ -140,8 +141,6 @@ fn build2(
         lib.defineCMacro("TJS__HAS_MIMALLOC", "1");
     }
 
-    lib.linkLibC();
-
     const tjs = b.addExecutable(.{
         .name = "tjs",
         .target = target,
@@ -152,8 +151,6 @@ fn build2(
         .file = b.path("src/cli.c"),
         .flags = cflags.items,
     });
-
-    tjs.linkLibC();
 
     const tjsc = b.addExecutable(.{
         .name = "tjsc",
@@ -166,7 +163,19 @@ fn build2(
         .flags = cflags.items,
     });
 
-    tjsc.linkLibC();
+    // XXX: Workaround for outdated libc in Zig for macOS Sonoma. Hopefully this will get fixed sometime. Can only be used on macOS.
+    // Need to create new `zig libc > macos-libc.ini` and then replace `include_dir` and `sys_include_dir`
+    // with output from `xcrun --show-sdk-path --sdk macosx` ++ `/usr/include`.
+    if (target.result.isDarwin()) {
+        if (builtin.os.tag == .macos) {
+            tjs.setLibCFile(b.path("macos-libc.ini"));
+            tjsc.setLibCFile(b.path("macos-libc.ini"));
+        } else {
+            return .{ null, null };
+        }
+    } else {
+        lib.linkLibC();
+    }
 
     return .{ tjs, tjsc };
 }
@@ -175,7 +184,7 @@ pub fn build(b: *std.Build) !void {
     const std_query = b.standardTargetOptionsQueryOnly(.{});
     const std_optimize = b.standardOptimizeOption(.{});
 
-    const opt_matrix = b.option(bool, "matrix", "Cross-compile for known targets") orelse false;
+    const opt_matrix = b.option(bool, "matrix", "Cross-compile to all targets that are known to work") orelse false;
     const opt_with_mimalloc = b.option(bool, "with-mimalloc", "If true (default), build with mimalloc") orelse true;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
@@ -183,14 +192,18 @@ pub fn build(b: *std.Build) !void {
         for (targets) |q| {
             const tjs, const tjsc = try build2(b, q, std_optimize, opt_with_mimalloc);
 
-            const tjs_output = b.addInstallArtifact(tjs, .{
+            if (tjs == null or tjsc == null) {
+                continue;
+            }
+
+            const tjs_output = b.addInstallArtifact(tjs.?, .{
                 .dest_dir = .{
                     .override = .{
                         .custom = try q.zigTriple(b.allocator),
                     },
                 },
             });
-            const tjsc_output = b.addInstallArtifact(tjsc, .{
+            const tjsc_output = b.addInstallArtifact(tjsc.?, .{
                 .dest_dir = .{
                     .override = .{
                         .custom = try q.zigTriple(b.allocator),
@@ -201,21 +214,22 @@ pub fn build(b: *std.Build) !void {
             b.getInstallStep().dependOn(&tjs_output.step);
             b.getInstallStep().dependOn(&tjsc_output.step);
         }
+
         return;
     }
 
     const tjs, const tjsc = try build2(b, std_query, std_optimize, opt_with_mimalloc);
 
-    b.installArtifact(tjs);
-    b.installArtifact(tjsc);
+    b.installArtifact(tjs.?);
+    b.installArtifact(tjsc.?);
 
-    const opt_test = b.option(bool, "test", "Combine with 'run' to run tests") orelse false;
-    const run_exe = b.addRunArtifact(tjs);
+    const opt_test = b.option(bool, "test", "Combine with run to run tests after compilation") orelse false;
+    const art_run = b.addRunArtifact(tjs.?);
     if (opt_test) {
-        run_exe.addArg("test");
-        run_exe.addDirectoryArg(b.path("tests"));
+        art_run.addArg("test");
+        art_run.addDirectoryArg(b.path("tests"));
     }
 
     const run_step = b.step("run", "Run the application");
-    run_step.dependOn(&run_exe.step);
+    run_step.dependOn(&art_run.step);
 }
