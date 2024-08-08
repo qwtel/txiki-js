@@ -12,13 +12,20 @@ const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .x86_64, .os_tag = .windows },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+    // .{ .cpu_arch = .arm, .os_tag = .macos, .abi = .gnueabihf }, // linux-armhf
+};
+
+const BuildOpts = struct {
+    with_mimalloc: bool,
+    with_wasm: bool,
+    with_sqlite: bool,
 };
 
 fn build2(
     b: *std.Build,
     query: std.Target.Query,
     optimize: std.builtin.OptimizeMode,
-    with_mimalloc: bool,
+    opts: BuildOpts,
 ) ![2]?*std.Build.Step.Compile {
     const target = b.resolveTargetQuery(query);
 
@@ -51,18 +58,23 @@ fn build2(
     });
 
     lib.linkLibrary(dep_quickjs.artifact("qjs"));
+    lib.installLibraryHeaders(dep_quickjs.artifact("qjs"));
+
     lib.linkLibrary(dep_libuv.artifact("uv_a"));
-    lib.linkLibrary(dep_sqlite3.artifact("sqlite3"));
-    lib.linkLibrary(dep_wasm3.artifact("m3"));
-    if (with_mimalloc) {
-        lib.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
+    lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+
+    if (opts.with_sqlite) {
+        lib.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        lib.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
     }
 
-    lib.installLibraryHeaders(dep_quickjs.artifact("qjs"));
-    lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
-    lib.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
-    lib.installLibraryHeaders(dep_wasm3.artifact("m3"));
-    if (with_mimalloc) {
+    if (opts.with_wasm) {
+        lib.linkLibrary(dep_wasm3.artifact("m3"));
+        lib.installLibraryHeaders(dep_wasm3.artifact("m3"));
+    }
+
+    if (opts.with_mimalloc) {
+        lib.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
         lib.installLibraryHeaders(dep_mimalloc.artifact("mimalloc-static"));
     }
 
@@ -137,9 +149,15 @@ fn build2(
         "\"{s}\"",
         .{if (target.result.isDarwin()) "darwin" else @tagName(target.result.os.tag)},
     );
-    lib.defineCMacro("TJS__PLATFORM", tjs_platform);
 
-    if (with_mimalloc) {
+    lib.defineCMacro("TJS__PLATFORM", tjs_platform);
+    if (opts.with_sqlite) {
+        lib.defineCMacro("TJS__HAS_SQLITE", "1");
+    }
+    if (opts.with_wasm) {
+        lib.defineCMacro("TJS__HAS_WASM", "1");
+    }
+    if (opts.with_mimalloc) {
         lib.defineCMacro("TJS__HAS_MIMALLOC", "1");
     }
 
@@ -192,6 +210,8 @@ pub fn build(b: *std.Build) !void {
 
     const opt_matrix = b.option(bool, "matrix", "Cross-compile to all targets that are known to work") orelse false;
     const opt_with_mimalloc = b.option(bool, "with-mimalloc", "If true (default), build with mimalloc") orelse true;
+    const opt_with_wasm = b.option(bool, "with-wasm", "If true (default), build with wasm3") orelse true;
+    const opt_with_sqlite = b.option(bool, "with-sqlite", "If true (default), build with sqlite3") orelse true;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
     {
@@ -208,7 +228,11 @@ pub fn build(b: *std.Build) !void {
 
     if (opt_matrix) {
         for (targets) |q| {
-            const tjs, const tjsc = try build2(b, q, std_optimize, opt_with_mimalloc);
+            const tjs, const tjsc = try build2(b, q, std_optimize, .{
+                .with_mimalloc = opt_with_mimalloc,
+                .with_wasm = opt_with_wasm,
+                .with_sqlite = opt_with_sqlite,
+            });
 
             if (tjs == null or tjsc == null) {
                 continue;
@@ -236,7 +260,11 @@ pub fn build(b: *std.Build) !void {
         return;
     }
 
-    const tjs, const tjsc = try build2(b, std_query, std_optimize, opt_with_mimalloc);
+    const tjs, const tjsc = try build2(b, std_query, std_optimize, .{
+        .with_mimalloc = opt_with_mimalloc,
+        .with_wasm = opt_with_wasm,
+        .with_sqlite = opt_with_sqlite,
+    });
 
     b.installArtifact(tjs.?);
     b.installArtifact(tjsc.?);

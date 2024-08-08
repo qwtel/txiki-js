@@ -29,7 +29,9 @@
 #include "bundles/c/stdlib/ipaddr.c"
 #include "bundles/c/stdlib/path.c"
 #include "bundles/c/stdlib/posix-socket.c"
+#ifdef TJS__HAS_SQLITE
 #include "bundles/c/stdlib/sqlite.c"
+#endif
 #include "bundles/c/stdlib/uuid.c"
 #include "private.h"
 
@@ -48,7 +50,9 @@ static tjs_builtin_t builtins[] = {
     { "tjs:ipaddr", tjs__ipaddr, tjs__ipaddr_size_enum },
     { "tjs:path", tjs__path, tjs__path_size_enum },
     { "tjs:posix-socket", tjs__posix_socket, tjs__posix_socket_size_enum },
+#ifdef TJS__HAS_SQLITE
     { "tjs:sqlite", tjs__sqlite, tjs__sqlite_size_enum },
+#endif
     { "tjs:uuid", tjs__uuid, tjs__uuid_size_enum },
     { NULL, NULL, 0 },
 };

@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_WASM
 #ifndef TJS_WASM_H
 #define TJS_WASM_H
 
@@ -30,4 +31,5 @@
 // XXX: Needed for enumerating a module's functions
 #include <m3_env.h>
 
+#endif
 #endif
