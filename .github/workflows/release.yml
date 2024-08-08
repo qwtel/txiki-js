@@ -13,7 +13,7 @@ jobs:
         with:
           submodules: true
       - run: brew install zig
-      - run: zig build -Dmatrix --summary all
+      - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
       # - uses: actions/upload-artifact@v4
       #   with:
       #     name: txiki-macos

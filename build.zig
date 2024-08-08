@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const tjs_version: std.SemanticVersion = .{ .major = 24, .minor = 6, .patch = 0, .pre = "" };
+
 const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .aarch64, .os_tag = .macos },
     .{ .cpu_arch = .aarch64, .os_tag = .windows },
@@ -180,6 +182,10 @@ fn build2(
     return .{ tjs, tjsc };
 }
 
+fn usizeToStr(allocator: std.mem.Allocator, value: usize) ![]const u8 {
+    return std.fmt.allocPrint(allocator, "{}", .{value});
+}
+
 pub fn build(b: *std.Build) !void {
     const std_query = b.standardTargetOptionsQueryOnly(.{});
     const std_optimize = b.standardOptimizeOption(.{});
@@ -187,6 +193,18 @@ pub fn build(b: *std.Build) !void {
     const opt_matrix = b.option(bool, "matrix", "Cross-compile to all targets that are known to work") orelse false;
     const opt_with_mimalloc = b.option(bool, "with-mimalloc", "If true (default), build with mimalloc") orelse true;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
+
+    {
+        const ac = b.allocator;
+        var buf0 = try std.fs.cwd().readFileAlloc(ac, b.path("src/version.h.in").getPath(b), 4096 * 4);
+        var buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_MAJOR@", try usizeToStr(ac, tjs_version.major));
+        buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_MINOR@", try usizeToStr(ac, tjs_version.minor));
+        buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_PATCH@", try usizeToStr(ac, tjs_version.patch));
+        buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_SUFFIX@", tjs_version.pre orelse "");
+        const f = try std.fs.cwd().createFile(b.path("src/version.h").getPath(b), .{ .truncate = true });
+        defer f.close();
+        try f.writeAll(buf0);
+    }
 
     if (opt_matrix) {
         for (targets) |q| {
