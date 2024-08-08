@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const tjs_version: std.SemanticVersion = .{ .major = 24, .minor = 6, .patch = 0, .pre = "" };
+const tjs_version: std.SemanticVersion = .{ .major = 24, .minor = 6, .patch = 1, .pre = "" };
 
 const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .aarch64, .os_tag = .macos },

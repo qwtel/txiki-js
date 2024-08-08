@@ -19,6 +19,10 @@ jobs:
           path: .zig-cache
           key: ${{ runner.os }}-zig-cache
       - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: zig-out/*/*
       # - uses: actions/upload-artifact@v4
       #   with:
       #     name: txiki-macos
