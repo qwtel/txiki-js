@@ -19,6 +19,7 @@ const BuildOpts = struct {
     with_mimalloc: bool,
     with_wasm: bool,
     with_sqlite: bool,
+    matrix: bool,
 };
 
 fn build2(
@@ -143,6 +144,21 @@ fn build2(
         });
     }
 
+    if (opts.with_sqlite and !opts.matrix) {
+        const sqlite_ext_test = b.addSharedLibrary(.{
+            .name = "sqlite-test",
+            .target = target,
+            .optimize = optimize,
+        });
+        sqlite_ext_test.addCSourceFile(.{ .file = b.path("tests/fixtures/sqlite-test-ext.c") });
+        sqlite_ext_test.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        b.getInstallStep().dependOn(&b.addInstallArtifact(sqlite_ext_test, .{
+            .dest_dir = .{
+                .override = .{ .custom = "../build/" },
+            },
+        }).step);
+    }
+
     const tjs_platform = try std.fmt.allocPrint(
         b.allocator,
         "\"{s}\"",
@@ -231,6 +247,7 @@ pub fn build(b: *std.Build) !void {
                 .with_mimalloc = !opt_no_mimalloc,
                 .with_wasm = !opt_no_wasm,
                 .with_sqlite = !opt_no_sqlite,
+                .matrix = true,
             });
 
             if (tjs == null or tjsc == null) {
@@ -263,6 +280,7 @@ pub fn build(b: *std.Build) !void {
         .with_mimalloc = !opt_no_mimalloc,
         .with_wasm = !opt_no_wasm,
         .with_sqlite = !opt_no_sqlite,
+        .matrix = false,
     });
 
     b.installArtifact(tjs.?);
