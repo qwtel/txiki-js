@@ -6,8 +6,24 @@ on:
     - master
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo snap install zig --classic --beta
+      - uses: actions/cache@v4
+        id: zig-cache
+        with:
+          path: .zig-cache
+          key: macOS-zig-cache-${{ github.sha }}
+          restore-keys: |
+            macOS-zig-cache-
+      - run: zig build -Doptimize=ReleaseSmall -Dtest run
   build:
     runs-on: macos-14
+    needs: test
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,9 +33,9 @@ jobs:
         id: zig-cache
         with:
           path: .zig-cache
-          key: ${{ runner.os }}-zig-cache-${{ github.sha }}
+          key: macOS-zig-cache-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-zig-cache-
+            macOS-zig-cache-
       - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
       - uses: actions/upload-artifact@v4
         with:
