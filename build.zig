@@ -144,21 +144,6 @@ fn build2(
         });
     }
 
-    if (opts.with_sqlite and !opts.matrix) {
-        const sqlite_ext_test = b.addSharedLibrary(.{
-            .name = "sqlite-test",
-            .target = target,
-            .optimize = optimize,
-        });
-        sqlite_ext_test.addCSourceFile(.{ .file = b.path("tests/fixtures/sqlite-test-ext.c") });
-        sqlite_ext_test.linkLibrary(dep_sqlite3.artifact("sqlite3"));
-        b.getInstallStep().dependOn(&b.addInstallArtifact(sqlite_ext_test, .{
-            .dest_dir = .{
-                .override = .{ .custom = "../build/" },
-            },
-        }).step);
-    }
-
     const tjs_platform = try std.fmt.allocPrint(
         b.allocator,
         "\"{s}\"",
@@ -210,6 +195,22 @@ fn build2(
         }
     } else {
         lib.linkLibC();
+    }
+
+    if (opts.with_sqlite and !opts.matrix) {
+        const sqlite_ext_test = b.addSharedLibrary(.{
+            .name = "sqlite-test",
+            .target = target,
+            .optimize = optimize,
+        });
+        sqlite_ext_test.addCSourceFile(.{ .file = b.path("tests/fixtures/sqlite-test-ext.c") });
+        sqlite_ext_test.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        const art = b.addInstallArtifact(sqlite_ext_test, .{
+            .dest_dir = .{
+                .override = .{ .custom = "../build/" },
+            },
+        });
+        tjs.step.dependOn(&art.step);
     }
 
     return .{ tjs, tjsc };

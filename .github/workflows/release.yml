@@ -17,10 +17,10 @@ jobs:
         id: zig-cache
         with:
           path: .zig-cache
-          key: macOS-zig-cache-${{ github.sha }}
+          key: ${{ runner.os }}-zig-cache-${{ github.sha }}
           restore-keys: |
-            macOS-zig-cache-
-      - run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSmall --summary all
+            ${{ runner.os }}-zig-cache-
+      - run: zig build -Doptimize=ReleaseSmall --summary all
       - run: zig-out/bin/tjs test tests
   build:
     runs-on: macos-14
@@ -34,9 +34,9 @@ jobs:
         id: zig-cache
         with:
           path: .zig-cache
-          key: macOS-zig-cache-${{ github.sha }}
+          key: ${{ runner.os }}-zig-cache-${{ github.sha }}
           restore-keys: |
-            macOS-zig-cache-
+            ${{ runner.os }}-zig-cache-
       - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
       - uses: actions/upload-artifact@v4
         with:
