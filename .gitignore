@@ -4,7 +4,6 @@
 .DS_Store
 .cache
 .zig-cache
-CMakeSettings.json
 
 build/
 zig-out/
