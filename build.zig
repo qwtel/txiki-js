@@ -83,17 +83,16 @@ fn build2(
     }
 
     var cflags = std.ArrayList([]const u8).init(b.allocator);
-    defer cflags.deinit();
 
     try cflags.appendSlice(&.{
         "-Wall",
-        // something somewhere relies on undefined behavior. Adding this fixes a couple of of tests
-        "-fno-sanitize=all",
     });
     if (optimize == .Debug) {
         try cflags.appendSlice(&.{
             "-ggdb",
             "-fno-omit-frame-pointer",
+            // something somewhere relies on undefined behavior. Adding this fixes a couple of of tests
+            "-fno-sanitize=undefined",
         });
     }
 
@@ -209,9 +208,9 @@ pub fn build(b: *std.Build) !void {
     const std_optimize = b.standardOptimizeOption(.{});
 
     const opt_matrix = b.option(bool, "matrix", "Cross-compile to all targets that are known to work") orelse false;
-    const opt_with_mimalloc = b.option(bool, "with-mimalloc", "If true (default), build with mimalloc") orelse true;
-    const opt_with_wasm = b.option(bool, "with-wasm", "If true (default), build with wasm3") orelse true;
-    const opt_with_sqlite = b.option(bool, "with-sqlite", "If true (default), build with sqlite3") orelse true;
+    const opt_no_mimalloc = b.option(bool, "no-mimalloc", "If set, build without mimalloc") orelse false;
+    const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without wasm3") orelse false;
+    const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build with sqlite3") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
     {
@@ -229,9 +228,9 @@ pub fn build(b: *std.Build) !void {
     if (opt_matrix) {
         for (targets) |q| {
             const tjs, const tjsc = try build2(b, q, std_optimize, .{
-                .with_mimalloc = opt_with_mimalloc,
-                .with_wasm = opt_with_wasm,
-                .with_sqlite = opt_with_sqlite,
+                .with_mimalloc = !opt_no_mimalloc,
+                .with_wasm = !opt_no_wasm,
+                .with_sqlite = !opt_no_sqlite,
             });
 
             if (tjs == null or tjsc == null) {
@@ -261,16 +260,17 @@ pub fn build(b: *std.Build) !void {
     }
 
     const tjs, const tjsc = try build2(b, std_query, std_optimize, .{
-        .with_mimalloc = opt_with_mimalloc,
-        .with_wasm = opt_with_wasm,
-        .with_sqlite = opt_with_sqlite,
+        .with_mimalloc = !opt_no_mimalloc,
+        .with_wasm = !opt_no_wasm,
+        .with_sqlite = !opt_no_sqlite,
     });
 
     b.installArtifact(tjs.?);
     b.installArtifact(tjsc.?);
 
-    const opt_test = b.option(bool, "test", "Combine with run to run tests after compilation") orelse false;
     const art_run = b.addRunArtifact(tjs.?);
+
+    const opt_test = b.option(bool, "test", "Combine with run to run tests after compilation") orelse false;
     if (opt_test) {
         art_run.addArg("test");
         art_run.addDirectoryArg(b.path("tests"));
