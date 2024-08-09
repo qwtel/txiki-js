@@ -20,9 +20,8 @@ jobs:
           key: macOS-zig-cache-${{ github.sha }}
           restore-keys: |
             macOS-zig-cache-
-      - run: zig build -Doptimize=ReleaseSmall
-      - run: ls ./build
-      - run: ./zig-out/bin/tjs test tests
+      - run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSmall --summary all
+      - run: zig-out/bin/tjs test tests
   build:
     runs-on: macos-14
     needs: test
