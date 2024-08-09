@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,9 +22,10 @@ jobs:
             ${{ runner.os }}-zig-cache-
       - run: zig build -Doptimize=ReleaseSmall --summary all
       - run: zig-out/bin/tjs test tests
-  build:
+  artifacts:
     runs-on: macos-14
     needs: test
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
         with:
