@@ -3,9 +3,9 @@ const builtin = @import("builtin");
 
 const tjs_version: std.SemanticVersion = .{
     .major = 24,
-    .minor = 6,
-    .patch = 6,
-    .pre = "",
+    .minor = 7,
+    .patch = 0,
+    .pre = "-zig.0",
 };
 
 const targets: []const std.Target.Query = &.{
