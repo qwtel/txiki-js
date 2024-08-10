@@ -1,6 +1,6 @@
 .{
     .name = "tjs",
-    .version = "24.6.1",
+    .version = "24.6.2",
     .dependencies = .{
         .sqlite3 = .{
             .path = "deps/sqlite3/",
@@ -19,4 +19,5 @@
         },
     },
     .paths = .{""},
+    .minimum_zig_version = "0.13.0",
 }
