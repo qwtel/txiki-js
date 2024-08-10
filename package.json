@@ -1,6 +1,6 @@
 {
   "name": "txiki.js",
-  "version": "24.6.2-pre.0",
+  "version": "24.6.2",
   "description": "Utilities for txiki.js",
   "private": true,
   "scripts": {
