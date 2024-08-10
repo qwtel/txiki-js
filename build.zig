@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const tjs_version: std.SemanticVersion = .{
     .major = 24,
     .minor = 6,
-    .patch = 2,
+    .patch = 3,
     .pre = "",
 };
 
