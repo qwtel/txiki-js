@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const tjs_version: std.SemanticVersion = .{
     .major = 24,
     .minor = 6,
-    .patch = 4,
+    .patch = 5,
     .pre = "",
 };
 
@@ -17,7 +17,7 @@ const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .x86_64, .os_tag = .windows },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
-    // .{ .cpu_arch = .arm, .os_tag = .macos, .abi = .gnueabihf }, // linux-armhf
+    // .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .gnueabihf }, // XXX: only works when wasm is disabled
 };
 
 const BuildOpts = struct {
@@ -188,9 +188,10 @@ fn build2(
         .flags = cflags.items,
     });
 
-    // XXX: Workaround for outdated libc in Zig for macOS Sonoma. Hopefully this will get fixed sometime. Can only be used on macOS.
-    // Need to create new `zig libc > macos-libc.ini` and then replace `include_dir` and `sys_include_dir`
-    // with output from `xcrun --show-sdk-path --sdk macosx` ++ `/usr/include`.
+    // XXX: Workaround for outdated libc in Zig for macOS Sonoma. Hopefully this will get fixed sometime in the future.
+    // Can only build for macOS on macOS right now, and is skipped otherwise.
+    // `macos-libc.ini` is checked into the repo, but can create with `zig libc > macos-libc.ini` and then
+    // replace `include_dir` and `sys_include_dir` with output from `xcrun --show-sdk-path --sdk macosx` + `/usr/include`
     if (target.result.isDarwin()) {
         if (builtin.os.tag == .macos) {
             tjs.setLibCFile(b.path("macos-libc.ini"));
