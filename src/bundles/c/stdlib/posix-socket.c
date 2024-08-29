@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__posix_socket_size_enum = 3072 };
 const uint32_t tjs__posix_socket_size = 3072;
 
 const uint8_t tjs__posix_socket[3072] = {

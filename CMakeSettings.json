@@ -1,0 +1,26 @@
+﻿{
+  "configurations": [
+    {
+      "name": "x64",
+      "generator": "Ninja",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\out\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "configurationType": "Release"
+    },
+    {
+      "name": "ARM",
+      "generator": "Ninja",
+      "inheritEnvironments": [ "msvc_arm64_arm64" ],
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\out\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "configurationType": "Release"
+    }
+  ]
+}

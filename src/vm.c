@@ -30,6 +30,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 #define TJS__DEFAULT_STACK_SIZE 10 * 1024 * 1024  // 10 MB
 
@@ -158,21 +159,25 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_dns_init(ctx, ns);
     tjs__mod_engine_init(ctx, ns);
     tjs__mod_error_init(ctx, ns);
-    tjs__mod_ffi_init(ctx, ns);
+    // tjs__mod_ffi_init(ctx, ns);
     tjs__mod_fs_init(ctx, ns);
     tjs__mod_fswatch_init(ctx, ns);
     tjs__mod_os_init(ctx, ns);
     tjs__mod_process_init(ctx, ns);
     tjs__mod_signals_init(ctx, ns);
+#ifdef TJS__HAS_SQLITE
     tjs__mod_sqlite3_init(ctx, ns);
+#endif
     tjs__mod_streams_init(ctx, ns);
     tjs__mod_sys_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
     tjs__mod_udp_init(ctx, ns);
+#ifdef TJS__HAS_WASM
     tjs__mod_wasm_init(ctx, ns);
+#endif
     tjs__mod_worker_init(ctx, ns);
-    tjs__mod_ws_init(ctx, ns);
-    tjs__mod_xhr_init(ctx, ns);
+    // tjs__mod_ws_init(ctx, ns);
+    // tjs__mod_xhr_init(ctx, ns);
 #ifndef _WIN32
     tjs__mod_posix_socket_init(ctx, ns);
 #endif
@@ -352,8 +357,10 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     JS_FreeValue(ctx, core_sym);
     JS_FreeValue(ctx, global_obj);
 
+#ifdef TJS__HAS_WASM
     /* WASM */
     qrt->wasm_ctx.env = m3_NewEnvironment();
+#endif
 
     /* Timers */
     qrt->timers.timers = NULL;
@@ -373,9 +380,9 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     uv_close((uv_handle_t *) &qrt->jobs.idle, NULL);
     uv_close((uv_handle_t *) &qrt->jobs.check, NULL);
     uv_close((uv_handle_t *) &qrt->stop, NULL);
-    if (qrt->curl_ctx.curlm_h) {
-        uv_close((uv_handle_t *) &qrt->curl_ctx.timer, NULL);
-    }
+    // if (qrt->curl_ctx.curlm_h) {
+    //     uv_close((uv_handle_t *) &qrt->curl_ctx.timer, NULL);
+    // }
 
     /* Destroy all timers */
     tjs__destroy_timers(qrt);
@@ -406,20 +413,22 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
 #endif
 
     /* Destroy CURLM handle. */
-    if (qrt->curl_ctx.curlm_h) {
-        curl_multi_cleanup(qrt->curl_ctx.curlm_h);
-        qrt->curl_ctx.curlm_h = NULL;
-    }
+    // if (qrt->curl_ctx.curlm_h) {
+    //     curl_multi_cleanup(qrt->curl_ctx.curlm_h);
+    //     qrt->curl_ctx.curlm_h = NULL;
+    // }
 
+#ifdef TJS__HAS_WASM
     /* Destroy WASM runtime. */
     m3_FreeEnvironment(qrt->wasm_ctx.env);
     qrt->wasm_ctx.env = NULL;
+#endif
 
     tjs__free(qrt);
 }
 
 void TJS_Initialize(int argc, char **argv) {
-    curl_global_init(CURL_GLOBAL_ALL);
+    // curl_global_init(CURL_GLOBAL_ALL);
 
     CHECK_EQ(0, uv_replace_allocator(tjs__malloc, tjs__realloc, tjs__calloc, tjs__free));
 

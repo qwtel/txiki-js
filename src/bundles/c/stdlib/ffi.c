@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__ffi_size_enum = 16104 };
 const uint32_t tjs__ffi_size = 16104;
 
 const uint8_t tjs__ffi[16104] = {

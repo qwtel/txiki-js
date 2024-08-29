@@ -13,21 +13,30 @@ import './url.js';
 
 import './navigator.js';
 
-import './xhr.js';
+// import './xhr.js';
 import './blob.js';
 import './file.js';
 import './file-reader.js';
 import 'abortcontroller-polyfill/dist/abortcontroller-polyfill-only';
-import 'whatwg-fetch';
+// import 'whatwg-fetch';
 import './form-data.js';
 
 import './console.js';
 import './crypto.js';
 import './performance.js';
-import './storage.js';
-import './wasm.js';
 import './worker.js';
-import './ws.js';
+// import './ws.js';
 
 import 'web-streams-polyfill/polyfill';
 import 'compression-streams-polyfill';
+
+// XXX: Could remove it form the build entirely by using --define in esbuild.
+// But since it's only a couples LoCs it's not really worth it.
+const core = globalThis[Symbol.for('tjs.internal.core')];
+if ('sqlite3' in core) {
+    await import('./storage.js');
+}
+
+if ('wasm' in core) {
+    await import('./wasm.js');
+}

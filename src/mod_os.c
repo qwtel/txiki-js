@@ -24,11 +24,20 @@
 
 #include "private.h"
 #include "utils.h"
+#ifdef TJS__HAS_WASM
 #include "wasm.h"
+#endif
 
-#include <curl/curl.h>
+// #include <curl/curl.h>
 #include <string.h>
+#if defined(_MSC_VER)
+// It should be safe to define these as 0,1,2 even when compiling with msvc:
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+#else
 #include <unistd.h>
+#endif
 
 
 static JSValue tjs_exit(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {

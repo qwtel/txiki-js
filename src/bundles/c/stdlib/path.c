@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__path_size_enum = 119 };
 const uint32_t tjs__path_size = 119;
 
 const uint8_t tjs__path[119] = {

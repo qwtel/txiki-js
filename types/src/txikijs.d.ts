@@ -116,7 +116,7 @@ declare global {
              * @param code The code to be compiled.
              * @returns The compiled code.
              */
-            compile: (code: Uint8Array) => CompiledCode;
+            compile: (code: Uint8Array, name?: string) => CompiledCode;
 
             /**
              * Serializes the compiled code into something that can be easily written to a file.

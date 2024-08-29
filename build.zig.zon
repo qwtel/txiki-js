@@ -1,0 +1,23 @@
+.{
+    .name = "tjs",
+    .version = "0.0.0",
+    .dependencies = .{
+        .sqlite3 = .{
+            .path = "deps/sqlite3/",
+        },
+        .quickjs = .{
+            .path = "deps/quickjs/",
+        },
+        .libuv = .{
+            .path = "deps/libuv/",
+        },
+        .wasm3 = .{
+            .path = "deps/wasm3/",
+        },
+        .mimalloc = .{
+            .path = "deps/mimalloc/",
+        },
+    },
+    .paths = .{""},
+    .minimum_zig_version = "0.13.0",
+}

@@ -22,8 +22,10 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_WASM
 #include "wasm.h"
 
+#include "mem.h"
 #include "private.h"
 #include "tjs.h"
 #include "utils.h"
@@ -187,7 +189,7 @@ static JSValue tjs_wasm_callfunction(JSContext *ctx, JSValue this_val, int argc,
     if (nargs == 0) {
         r = m3_Call(func, 0, NULL);
     } else {
-        const char *m3_argv[nargs + 1];
+        const char **m3_argv = (const char **)tjs__malloc((nargs + 1) * sizeof(char *));
         for (int i = 0; i < nargs; i++) {
             m3_argv[i] = JS_ToCString(ctx, argv[i + 1]);
         }
@@ -196,6 +198,7 @@ static JSValue tjs_wasm_callfunction(JSContext *ctx, JSValue this_val, int argc,
         for (int i = 0; i < nargs; i++) {
             JS_FreeCString(ctx, m3_argv[i]);
         }
+        tjs__free(m3_argv);
     }
 
     if (r)
@@ -231,17 +234,17 @@ static JSValue tjs_wasm_callfunction(JSContext *ctx, JSValue this_val, int argc,
     }
 }
 
-static JSValue tjs_wasm_linkwasi(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
-    TJSWasmInstance *i = tjs_wasm_instance_get(ctx, this_val);
-    if (!i)
-        return JS_EXCEPTION;
+// static JSValue tjs_wasm_linkwasi(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+//     TJSWasmInstance *i = tjs_wasm_instance_get(ctx, this_val);
+//     if (!i)
+//         return JS_EXCEPTION;
 
-    M3Result r = m3_LinkWASI(i->module);
-    if (r)
-        return tjs_throw_wasm_error(ctx, "LinkError", r);
+//     M3Result r = m3_LinkWASI(i->module);
+//     if (r)
+//         return tjs_throw_wasm_error(ctx, "LinkError", r);
 
-    return JS_UNDEFINED;
-}
+//     return JS_UNDEFINED;
+// }
 
 static JSValue tjs_wasm_buildinstance(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSWasmModule *m = tjs_wasm_module_get(ctx, argv[0]);
@@ -360,7 +363,7 @@ static const JSCFunctionListEntry tjs_wasm_funcs[] = {
 
 static const JSCFunctionListEntry tjs_wasm_instance_funcs[] = {
     TJS_CFUNC_DEF("callFunction", 1, tjs_wasm_callfunction),
-    TJS_CFUNC_DEF("linkWasi", 0, tjs_wasm_linkwasi),
+    // TJS_CFUNC_DEF("linkWasi", 0, tjs_wasm_linkwasi),
 };
 
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns) {
@@ -383,3 +386,4 @@ void tjs__mod_wasm_init(JSContext *ctx, JSValue ns) {
 
     JS_DefinePropertyValueStr(ctx, ns, "wasm", obj, JS_PROP_C_W_E);
 }
+#endif

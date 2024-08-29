@@ -23,13 +23,15 @@
  */
 
 #include "bundles/c/stdlib/assert.c"
-#include "bundles/c/stdlib/ffi.c"
+// #include "bundles/c/stdlib/ffi.c"
 #include "bundles/c/stdlib/getopts.c"
 #include "bundles/c/stdlib/hashing.c"
 #include "bundles/c/stdlib/ipaddr.c"
 #include "bundles/c/stdlib/path.c"
 #include "bundles/c/stdlib/posix-socket.c"
+#ifdef TJS__HAS_SQLITE
 #include "bundles/c/stdlib/sqlite.c"
+#endif
 #include "bundles/c/stdlib/uuid.c"
 #include "private.h"
 
@@ -41,15 +43,17 @@ typedef struct {
 } tjs_builtin_t;
 
 static tjs_builtin_t builtins[] = {
-    { "tjs:assert", tjs__assert, tjs__assert_size },
-    { "tjs:ffi", tjs__ffi, tjs__ffi_size },
-    { "tjs:getopts", tjs__getopts, tjs__getopts_size },
-    { "tjs:hashing", tjs__hashing, tjs__hashing_size },
-    { "tjs:ipaddr", tjs__ipaddr, tjs__ipaddr_size },
-    { "tjs:path", tjs__path, tjs__path_size },
-    { "tjs:posix-socket", tjs__posix_socket, tjs__posix_socket_size },
-    { "tjs:sqlite", tjs__sqlite, tjs__sqlite_size },
-    { "tjs:uuid", tjs__uuid, tjs__uuid_size },
+    { "tjs:assert", tjs__assert, tjs__assert_size_enum },
+    // { "tjs:ffi", tjs__ffi, tjs__ffi_size },
+    { "tjs:getopts", tjs__getopts, tjs__getopts_size_enum },
+    { "tjs:hashing", tjs__hashing, tjs__hashing_size_enum },
+    { "tjs:ipaddr", tjs__ipaddr, tjs__ipaddr_size_enum },
+    { "tjs:path", tjs__path, tjs__path_size_enum },
+    { "tjs:posix-socket", tjs__posix_socket, tjs__posix_socket_size_enum },
+#ifdef TJS__HAS_SQLITE
+    { "tjs:sqlite", tjs__sqlite, tjs__sqlite_size_enum },
+#endif
+    { "tjs:uuid", tjs__uuid, tjs__uuid_size_enum },
     { NULL, NULL, 0 },
 };
 

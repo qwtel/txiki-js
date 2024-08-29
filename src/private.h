@@ -25,13 +25,17 @@
 #ifndef TJS_PRIVATE_H
 #define TJS_PRIVATE_H
 
-#include "../deps/quickjs/cutils.h"
+#include "cutils.h"
 #include "tjs.h"
+#ifdef TJS__HAS_WASM
 #include "wasm.h"
+#endif
 
-#include <curl/curl.h>
+// #include <curl/curl.h>
 #include <quickjs.h>
+#ifdef TJS__HAS_SQLITE
 #include <sqlite3.h>
+#endif
 #include <stdbool.h>
 #include <uv.h>
 
@@ -50,13 +54,15 @@ struct TJSRuntime {
     uv_async_t stop;
     bool is_worker;
     bool freeing;
-    struct {
-        CURLM *curlm_h;
-        uv_timer_t timer;
-    } curl_ctx;
+    // struct {
+    //     CURLM *curlm_h;
+    //     uv_timer_t timer;
+    // } curl_ctx;
+#ifdef TJS__HAS_WASM
     struct {
         IM3Environment env;
     } wasm_ctx;
+#endif
     struct {
         TJSTimer *timers;
         int64_t next_timer;
@@ -70,18 +76,22 @@ struct TJSRuntime {
 void tjs__mod_dns_init(JSContext *ctx, JSValue ns);
 void tjs__mod_engine_init(JSContext *ctx, JSValue ns);
 void tjs__mod_error_init(JSContext *ctx, JSValue ns);
-void tjs__mod_ffi_init(JSContext *ctx, JSValue ns);
+// void tjs__mod_ffi_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fs_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fswatch_init(JSContext *ctx, JSValue ns);
 void tjs__mod_os_init(JSContext *ctx, JSValue ns);
 void tjs__mod_process_init(JSContext *ctx, JSValue ns);
 void tjs__mod_signals_init(JSContext *ctx, JSValue ns);
+#ifdef TJS__HAS_SQLITE
 void tjs__mod_sqlite3_init(JSContext *ctx, JSValue ns);
+#endif
 void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
 void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
+#ifdef TJS__HAS_WASM
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
+#endif
 void tjs__mod_worker_init(JSContext *ctx, JSValue ns);
 void tjs__mod_ws_init(JSContext *ctx, JSValue ns);
 void tjs__mod_xhr_init(JSContext *ctx, JSValue ns);

@@ -1,0 +1,179 @@
+name: CI
+
+on: [pull_request]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+    - name: Install dependencies
+      run: |
+        npm install
+        sudo apt update
+        sudo apt install -y clang-format
+        clang-format --version
+    - name: Run the linter
+      run: npm run lint
+    - name: Run the formatter
+      run: clang-format -i src/*.{c,h}
+    - name: Check if the tree is dirty
+      run: $(exit $(git status --porcelain --untracked-files=no | head -255 | wc -l)) || (echo "Dirty git tree"; git diff; exit 1)
+  codegen:
+    name: Codegen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: Install dependencies
+        run: |
+          npm install
+          sudo apt update
+          sudo apt install -y libcurl4-openssl-dev
+      - name: Build it
+        run: |
+          make js
+      - name: Check if the git repository is clean
+        run: $(exit $(git status --porcelain --untracked-files=no | head -255 | wc -l)) || (echo "Dirty git tree"; git diff; exit 1)
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+    - name: Install dependencies
+      run: npm install
+    - name: Run the linter
+      run: npm run api-docs
+  build-linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        buildType: [Debug, Release]
+        compiler: [gcc, clang]
+    env:
+      BUILDTYPE: ${{ matrix.buildType }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+    - name: Dependencies
+      env:
+        ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true'
+      run: |
+        sudo apt update
+        sudo apt install -y libcurl4-openssl-dev
+        if [ "${{ matrix.compiler }}" = "clang" ]; then
+          sudo apt install -y clang
+          echo "::set-env name=CC::clang"
+          echo "::set-env name=CXX::clang++"
+        fi
+    - name: Build it
+      run: make VERBOSE=1
+    - name: Test it
+      run: make test
+    - name: Test it (advanced)
+      run: make test-advanced
+  build-macos:
+    name: macOS
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        buildType: [Debug, Release]
+        os: [macOS-12, macOS-14]
+    env:
+      BUILDTYPE: ${{ matrix.buildType }}
+    steps:
+    - name: Install automake
+      run: brew install automake autoconf libtool texinfo
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+    - name: Build it
+      run: make VERBOSE=1
+    - name: Test it
+      run: make test
+    - name: Test it (advanced)
+      run: make test-advanced
+  build-alpine:
+    name: Alpine Linux
+    runs-on: ubuntu-latest
+    container: alpine:3.19
+    strategy:
+      fail-fast: false
+      matrix:
+        buildType: [Debug, Release]
+    env:
+      BUILDTYPE: ${{ matrix.buildType }}
+    steps:
+    - name: Prepare
+      run: apk add git build-base cmake curl-dev autoconf automake libtool texinfo linux-headers --update-cache
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+    - name: Build it
+      run: make VERBOSE=1
+    - name: Test it
+      run: make test
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sys:
+          - mingw64
+          #- clang64
+          - ucrt64
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+    - name: Setup MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: ${{matrix.sys}}
+        update: true
+        install: >-
+          git
+          make
+        pacboy: >-
+          curl-winssl:p
+          autotools:p
+          toolchain:p
+          cmake:p
+          ninja:p
+          libffi:p
+    - name: Build it
+      run: make VERBOSE=1
+    - name: Test it
+      run: make test

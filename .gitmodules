@@ -1,18 +1,17 @@
 [submodule "deps/libuv"]
 	path = deps/libuv
-	url = https://github.com/libuv/libuv
+	url = git@github.com:qwtel/zig-build-libuv.git
 	branch = v1.x
 [submodule "deps/wasm3"]
 	path = deps/wasm3
-	url = https://github.com/saghul/wasm3.git
-	branch = v0.5-tjs
+	url = git@github.com:qwtel/zig-build-wasm3.git
 [submodule "deps/libffi"]
 	path = deps/libffi
-	url = https://github.com/libffi/libffi
+	url = git@github.com:libffi/libffi.git
 	ignore = dirty
 [submodule "deps/quickjs"]
 	path = deps/quickjs
-	url = https://github.com/quickjs-ng/quickjs.git
+	url = git@github.com:qwtel/zig-build-quickjs.git
 [submodule "deps/mimalloc"]
 	path = deps/mimalloc
-	url = https://github.com/microsoft/mimalloc
+	url = git@github.com:qwtel/zig-build-mimalloc.git

@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__getopts_size_enum = 2888 };
 const uint32_t tjs__getopts_size = 2888;
 
 const uint8_t tjs__getopts[2888] = {

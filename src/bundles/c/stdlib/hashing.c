@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__hashing_size_enum = 58037 };
 const uint32_t tjs__hashing_size = 58037;
 
 const uint8_t tjs__hashing[58037] = {

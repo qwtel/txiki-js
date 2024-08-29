@@ -1,4 +1,6 @@
+/// <reference path="../../../types/src/index.d.ts" />
 /* global tjs */
+// @ts-check
 
 import getopts from 'tjs:getopts';
 import path from 'tjs:path';
@@ -23,6 +25,8 @@ const Trailer = {
 };
 
 const core = globalThis[Symbol.for('tjs.internal.core')];
+
+const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
 
 const exeName = path.basename(tjs.args[0]);
 const help = `Usage: ${exeName} [options] [subcommand]
@@ -56,6 +60,17 @@ Subcommands:
 const helpEval = `Usage: ${exeName} eval EXPRESSION`;
 
 const helpRun = `Usage: ${exeName} run FILE`;
+
+const helpCompile = `Usage: ${exeName} compile [options] infile [outfile]
+
+Options:
+  -x, --exePath
+        Path to the tjs executable to bundle with the compiled file.
+        Defaults to the current executable. This is likely to be useful when cross-compiling.
+
+  -h, --help
+        Print help
+`;
 
 // First, let's check if this is a standalone binary.
 await (async () => {
@@ -97,18 +112,18 @@ const options = getopts(tjs.args.slice(1), {
     stopEarly: true,
     unknown: option => {
         if (![ 'memory-limit', 'stack-size' ].includes(option)) {
-            console.log(`${exeName}: unrecognized option: ${option}`);
+            tjs.stdout.write(encode(`${exeName}: unrecognized option: ${option}`));
             tjs.exit(1);
         }
 
-        return option;
+        return !!option;
     }
 });
 
 if (options.help) {
-    console.log(help);
+    tjs.stdout.write(encode(help));
 } else if (options.version) {
-    console.log(`v${tjs.version}`);
+    tjs.stdout.write(encode(`v${tjs.version}`));
 } else {
     const memoryLimit = options['memory-limit'];
     const stackSize = options['stack-size'];
@@ -133,7 +148,7 @@ if (options.help) {
         const [ expr ] = subargv;
 
         if (!expr) {
-            console.log(helpEval);
+            tjs.stdout.write(encode(helpEval));
             tjs.exit(1);
         }
 
@@ -142,20 +157,21 @@ if (options.help) {
         const [ filename ] = subargv;
 
         if (!filename) {
-            console.log(helpRun);
+            tjs.stdout.write(encode(helpRun));
             tjs.exit(1);
         }
 
         const ext = path.extname(filename).toLowerCase();
 
         if (ext === '.wasm') {
-            const bytes = await tjs.readFile(filename);
-            const module = new WebAssembly.Module(bytes);
-            const wasi = new WebAssembly.WASI({ args: subargv.slice(1) });
-            const importObject = { wasi_unstable: wasi.wasiImport };
-            const instance = new WebAssembly.Instance(module, importObject);
+            // const bytes = await tjs.readFile(filename);
+            // const module = new WebAssembly.Module(bytes);
+            // const wasi = new WebAssembly.WASI({ args: subargv.slice(1) });
+            // const importObject = { wasi_unstable: wasi.wasiImport };
+            // const instance = new WebAssembly.Instance(module, importObject);
 
-            wasi.start(instance);
+            // wasi.start(instance);
+            throw new Error('Not implemented');
         } else {
             await core.evalFile(filename);
         }
@@ -164,19 +180,34 @@ if (options.help) {
 
         runTests(dir);
     } else if (command === 'compile') {
-        const [ infile, outfile ] = subargv;
+        const compOpts = getopts(subargv, {
+            alias: {
+                exePath: 'x',
+                help: 'h',
+            },
+            string: [ 'x', 'h' ],
+            stopEarly: true,
+            unknown: option => {
+                tjs.stdout.write(encode(`${exeName} compile: unrecognized option: ${option}`));
+                tjs.exit(1);
 
-        if (!infile) {
-            console.log(help);
+                return !!option;
+            }
+        });
+
+        const [ infile, outfile ] = compOpts._;
+
+        if (!infile || compOpts.help) {
+            tjs.stdout.write(encode(helpCompile));
             tjs.exit(1);
         }
 
         const infilePath = path.parse(infile);
         const data = await tjs.readFile(infile);
         const bytecode = tjs.engine.serialize(tjs.engine.compile(data, infilePath.base));
-        const exe = await tjs.readFile(tjs.exePath);
+        const exe = await tjs.readFile(compOpts.exePath || tjs.exePath);
         const exeSize = exe.length;
-        const newBuffer = exe.buffer.transfer(exeSize + bytecode.length + Trailer.Size);
+        const newBuffer = /** @type {any} */(exe.buffer).transfer(exeSize + bytecode.length + Trailer.Size);
         const newExe = new Uint8Array(newBuffer);
 
         newExe.set(bytecode, exeSize);
@@ -194,7 +225,7 @@ if (options.help) {
 
         try {
             await tjs.stat(newFileName);
-            console.log('Target file exists already');
+            tjs.stdout.write(encode('Target file exists already'));
             tjs.exit(1);
         } catch (_) {
             // Ignore.
@@ -206,7 +237,7 @@ if (options.help) {
         await newFile.chmod(0o755);
         await newFile.close();
     } else {
-        console.log(help);
+        tjs.stdout.write(encode(help));
         tjs.exit(1);
     }
 }

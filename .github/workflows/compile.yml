@@ -1,0 +1,68 @@
+name: Releases
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo snap install zig --classic --beta
+      - uses: actions/cache@v4
+        id: zig-cache
+        with:
+          path: .zig-cache
+          key: ${{ runner.os }}-zig-cache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-zig-cache-
+      - run: zig build -Doptimize=ReleaseSmall --summary all
+      - run: zig-out/bin/tjs test tests
+  build:
+    runs-on: macos-14
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: brew install zig
+      - uses: actions/cache@v4
+        id: zig-cache
+        with:
+          path: .zig-cache
+          key: ${{ runner.os }}-zig-cache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-zig-cache-
+      - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zig-out
+          path: zig-out/*/*
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: zig-out
+          path: dist
+      - name: compress
+        run: |
+          cd dist
+          for dir in */; do zip -r "${dir%/}.zip" "$dir"; done
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "dist/*.zip"

@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 
+enum { tjs__core_size_enum = 26901 };
 const uint32_t tjs__core_size = 26901;
 
 const uint8_t tjs__core[26901] = {

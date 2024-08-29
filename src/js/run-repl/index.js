@@ -27,8 +27,6 @@
  */
 
 import path from 'tjs:path';
-import { Database } from 'tjs:sqlite';
-
 
 function _run(g) {
     /* close global objects */
@@ -143,6 +141,11 @@ function _run(g) {
     }
 
     async function init_history() {
+        const { Database } = await import('tjs:sqlite').catch(() => ({ Database: null }));
+        if (Database === null) {
+            return;
+        }
+
         const TJS_HOME = tjs.env.TJS_HOME ?? path.join(tjs.homeDir, '.tjs');
         const historyDbPath = path.join(TJS_HOME, 'history.db');
 
