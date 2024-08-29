@@ -33,6 +33,7 @@
 #include "bundles/c/stdlib/sqlite.c"
 #endif
 #include "bundles/c/stdlib/uuid.c"
+#include "bundles/c/stdlib/v8.c"
 #include "private.h"
 
 
@@ -43,17 +44,18 @@ typedef struct {
 } tjs_builtin_t;
 
 static tjs_builtin_t builtins[] = {
-    { "tjs:assert", tjs__assert, tjs__assert_size_enum },
-    // { "tjs:ffi", tjs__ffi, tjs__ffi_size },
-    { "tjs:getopts", tjs__getopts, tjs__getopts_size_enum },
-    { "tjs:hashing", tjs__hashing, tjs__hashing_size_enum },
-    { "tjs:ipaddr", tjs__ipaddr, tjs__ipaddr_size_enum },
-    { "tjs:path", tjs__path, tjs__path_size_enum },
-    { "tjs:posix-socket", tjs__posix_socket, tjs__posix_socket_size_enum },
+    { "tjs:assert", tjs__assert, sizeof(tjs__assert) },
+    // { "tjs:ffi", tjs__ffi, sizeof(tjs__ffi) },
+    { "tjs:getopts", tjs__getopts, sizeof(tjs__getopts) },
+    { "tjs:hashing", tjs__hashing, sizeof(tjs__hashing) },
+    { "tjs:ipaddr", tjs__ipaddr, sizeof(tjs__ipaddr) },
+    { "tjs:path", tjs__path, sizeof(tjs__path) },
+    { "tjs:posix-socket", tjs__posix_socket, sizeof(tjs__posix_socket) },
 #ifdef TJS__HAS_SQLITE
-    { "tjs:sqlite", tjs__sqlite, tjs__sqlite_size_enum },
+    { "tjs:sqlite", tjs__sqlite, sizeof(tjs__sqlite) },
 #endif
-    { "tjs:uuid", tjs__uuid, tjs__uuid_size_enum },
+    { "tjs:uuid", tjs__uuid, sizeof(tjs__uuid) },
+    { "tjs:v8", tjs__v8, sizeof(tjs__v8) },
     { NULL, NULL, 0 },
 };
 

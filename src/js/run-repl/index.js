@@ -1242,8 +1242,9 @@ function _run(g) {
     }
 
     function readline_handle_cmd(expr) {
-        handle_cmd(expr);
-        cmd_readline_start();
+        if (!handle_cmd(expr)) {
+            cmd_readline_start();
+        }
     }
 
     function handle_cmd(expr) {
@@ -1292,6 +1293,8 @@ function _run(g) {
         mexpr = '';
 
         eval_and_print(expr);
+
+        return true;
     }
 
     function colorize_js(str) {

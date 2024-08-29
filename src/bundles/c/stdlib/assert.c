@@ -2,7 +2,6 @@
 
 #include <inttypes.h>
 
-enum { tjs__assert_size_enum = 3448 };
 const uint32_t tjs__assert_size = 3448;
 
 const uint8_t tjs__assert[3448] = {

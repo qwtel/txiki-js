@@ -5,7 +5,7 @@ const tjs_version: std.SemanticVersion = .{
     .major = 24,
     .minor = 7,
     .patch = 0,
-    .pre = "-zig.1",
+    .pre = "-zig.2",
 };
 
 const targets: []const std.Target.Query = &.{
@@ -17,7 +17,7 @@ const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .x86_64, .os_tag = .windows },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
-    // .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .gnueabihf }, // XXX: only works when wasm is disabled
+    .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .gnueabihf }, // XXX: only works when wasm is disabled
 };
 
 const BuildOpts = struct {
@@ -34,6 +34,10 @@ fn build2(
     opts: BuildOpts,
 ) ![2]?*std.Build.Step.Compile {
     const target = b.resolveTargetQuery(query);
+
+    if (opts.with_wasm and target.result.abi == .gnueabihf) {
+        return .{ null, null };
+    }
 
     const dep_sqlite3 = b.dependency("sqlite3", .{
         .target = target,
@@ -59,6 +63,7 @@ fn build2(
 
     const lib = b.addStaticLibrary(.{
         .name = "tjs",
+        .root_source_file = b.path("src/v8-serialize-bindings.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -217,6 +222,33 @@ fn build2(
             },
         });
         tjs.step.dependOn(&art.step);
+    }
+
+    if (!opts.matrix) {
+        const exe = b.addExecutable(.{
+            .name = "hello",
+            .root_source_file = b.path("src/v8-serialize-main.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        exe.linkLibrary(dep_quickjs.artifact("qjs"));
+        b.installArtifact(exe);
+
+        const art_run = b.addRunArtifact(exe);
+        const run_step = b.step("main", "");
+        run_step.dependOn(&art_run.step);
+
+        const test_step = b.step("test", "Run unit tests for zig modules");
+        const unit_tests = b.addTest(.{
+            .root_source_file = b.path("src/v8-serialize-main.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        // unit_tests.defineCMacro("DUMP_LEAKS", "1");
+        unit_tests.linkLibrary(dep_quickjs.artifact("qjs"));
+
+        const run_unit_tests = b.addRunArtifact(unit_tests);
+        test_step.dependOn(&run_unit_tests.step);
     }
 
     return .{ tjs, tjsc };

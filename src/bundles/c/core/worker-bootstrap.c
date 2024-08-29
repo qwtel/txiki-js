@@ -2,7 +2,6 @@
 
 #include <inttypes.h>
 
-enum { tjs__worker_bootstrap_size_enum = 640 };
 const uint32_t tjs__worker_bootstrap_size = 640;
 
 const uint8_t tjs__worker_bootstrap[640] = {

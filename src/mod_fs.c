@@ -258,6 +258,24 @@ static TJSStatResult *tjs_stat_get(JSContext *ctx, JSValue obj) {
     return JS_GetOpaque2(ctx, obj, tjs_stat_class_id);
 }
 
+static JSValue tjs_new_statfs(JSContext *ctx, uv_statfs_t *st) {
+    JSValue obj = JS_NewObjectProto(ctx, JS_NULL);
+    if (JS_IsException(obj))
+        return obj;
+
+#define DEF_FIELD(x) JS_DefinePropertyValueStr(ctx, obj, STRINGIFY(x), JS_NewUint32(ctx, st->f_##x), JS_PROP_C_W_E);
+    DEF_FIELD(type);
+    DEF_FIELD(bsize);
+    DEF_FIELD(blocks);
+    DEF_FIELD(bfree);
+    DEF_FIELD(bavail);
+    DEF_FIELD(files);
+    DEF_FIELD(ffree);
+#undef DEF_FIELD
+
+    return obj;
+}
+
 static JSValue tjs_fsreq_init(JSContext *ctx, TJSFsReq *fr, JSValue obj) {
     fr->ctx = ctx;
     fr->req.data = fr;
@@ -309,6 +327,11 @@ static void uv__fs_req_cb(uv_fs_t *req) {
             arg = tjs_new_stat(ctx, &fr->req.statbuf);
             break;
 
+        case UV_FS_STATFS:
+            arg = tjs_new_statfs(ctx, fr->req.ptr);
+            break;
+
+        case UV_FS_READLINK:
         case UV_FS_REALPATH:
             arg = JS_NewString(ctx, fr->req.ptr);
             break;
@@ -326,6 +349,11 @@ static void uv__fs_req_cb(uv_fs_t *req) {
         case UV_FS_FCHOWN:
         case UV_FS_CHMOD:
         case UV_FS_FCHMOD:
+        case UV_FS_UTIME:
+        case UV_FS_LUTIME:
+        case UV_FS_FUTIME:
+        case UV_FS_LINK:
+        case UV_FS_SYMLINK:
             arg = JS_UNDEFINED;
             break;
 
@@ -548,6 +576,33 @@ static JSValue tjs_file_chown(JSContext *ctx, JSValue this_val, int argc, JSValu
         return JS_EXCEPTION;
 
     int r = uv_fs_fchown(tjs_get_loop(ctx), &fr->req, f->fd, uid, gid, uv__fs_req_cb);
+    if (r != 0) {
+        js_free(ctx, fr);
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return tjs_fsreq_init(ctx, fr, this_val);
+}
+
+static JSValue tjs_file_utime(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSFile *f = tjs_file_get(ctx, this_val);
+    if (!f)
+        return JS_EXCEPTION;
+
+    double atime;
+    if (JS_ToFloat64(ctx, &atime, argv[0]))
+        return JS_EXCEPTION;
+
+    double mtime;
+    if (JS_ToFloat64(ctx, &mtime, argv[1]))
+        return JS_EXCEPTION;
+
+    TJSFsReq *fr = js_malloc(ctx, sizeof(*fr));
+    if (!fr)
+        return JS_EXCEPTION;
+
+    /* Date.getTime is in ms, convert to seconds. */
+    int r = uv_fs_futime(tjs_get_loop(ctx), &fr->req, f->fd, atime / 1000, mtime / 1000, uv__fs_req_cb);
     if (r != 0) {
         js_free(ctx, fr);
         return tjs_throw_errno(ctx, r);
@@ -1252,6 +1307,163 @@ static JSValue tjs_fs_chmod(JSContext *ctx, JSValue this_val, int argc, JSValue 
     return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
 }
 
+static JSValue tjs_fs_xutime(JSContext *ctx, JSValue this_val, int argc, JSValue *argv, int magic) {
+    if (!JS_IsString(argv[0]))
+        return JS_ThrowTypeError(ctx, "expected a string for path parameter");
+
+    double atime;
+    if (JS_ToFloat64(ctx, &atime, argv[1]))
+        return JS_EXCEPTION;
+
+    double mtime;
+    if (JS_ToFloat64(ctx, &mtime, argv[2]))
+        return JS_EXCEPTION;
+
+    const char *path = JS_ToCString(ctx, argv[0]);
+    if (!path)
+        return JS_EXCEPTION;
+
+    TJSFsReq *fr = js_malloc(ctx, sizeof(*fr));
+    if (!fr) {
+        JS_FreeCString(ctx, path);
+        return JS_EXCEPTION;
+    }
+
+    /* Date.getTime is in ms, convert to seconds. */
+    int r = (magic == 1 ? uv_fs_lutime
+                        : uv_fs_utime)(tjs_get_loop(ctx), &fr->req, path, atime / 1000, mtime / 1000, uv__fs_req_cb);
+    JS_FreeCString(ctx, path);
+    if (r != 0) {
+        js_free(ctx, fr);
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
+}
+
+static JSValue tjs_fs_readlink(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    if (!JS_IsString(argv[0]))
+        return JS_ThrowTypeError(ctx, "expected a string for path parameter");
+
+    const char *path = JS_ToCString(ctx, argv[0]);
+    if (!path)
+        return JS_EXCEPTION;
+
+    TJSFsReq *fr = js_malloc(ctx, sizeof(*fr));
+    if (!fr) {
+        JS_FreeCString(ctx, path);
+        return JS_EXCEPTION;
+    }
+
+    int r = uv_fs_readlink(tjs_get_loop(ctx), &fr->req, path, uv__fs_req_cb);
+    JS_FreeCString(ctx, path);
+    if (r != 0) {
+        js_free(ctx, fr);
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
+}
+
+static JSValue tjs_fs_link(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    if (!JS_IsString(argv[0]))
+        return JS_ThrowTypeError(ctx, "expected a string for path parameter");
+    if (!JS_IsString(argv[1]))
+        return JS_ThrowTypeError(ctx, "expected a string for path parameter");
+
+    const char *path = JS_ToCString(ctx, argv[0]);
+    if (!path)
+        return JS_EXCEPTION;
+
+    const char *path2 = JS_ToCString(ctx, argv[1]);
+    if (!path2) {
+        JS_FreeCString(ctx, path);
+        return JS_EXCEPTION;
+    }
+
+    TJSFsReq *fr = js_malloc(ctx, sizeof(*fr));
+    if (!fr) {
+        JS_FreeCString(ctx, path);
+        JS_FreeCString(ctx, path2);
+        return JS_EXCEPTION;
+    }
+
+    int r = uv_fs_link(tjs_get_loop(ctx), &fr->req, path, path2, uv__fs_req_cb);
+    JS_FreeCString(ctx, path);
+    JS_FreeCString(ctx, path2);
+    if (r != 0) {
+        js_free(ctx, fr);
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
+}
+
+static JSValue tjs_fs_symlink(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    if (!JS_IsString(argv[0]))
+        return JS_ThrowTypeError(ctx, "expected a string for path parameter");
+    if (!JS_IsString(argv[1]))
+        return JS_ThrowTypeError(ctx, "expected a string for path parameter");
+
+    const char *path = JS_ToCString(ctx, argv[0]);
+    if (!path)
+        return JS_EXCEPTION;
+
+    const char *path2 = JS_ToCString(ctx, argv[1]);
+    if (!path2) {
+        JS_FreeCString(ctx, path);
+        return JS_EXCEPTION;
+    }
+
+    int flags;
+    if (JS_ToInt32(ctx, &flags, argv[2])) {
+        JS_FreeCString(ctx, path);
+        JS_FreeCString(ctx, path2);
+        return JS_EXCEPTION;
+    }
+
+    TJSFsReq *fr = js_malloc(ctx, sizeof(*fr));
+    if (!fr) {
+        JS_FreeCString(ctx, path);
+        JS_FreeCString(ctx, path2);
+        return JS_EXCEPTION;
+    }
+
+    int r = uv_fs_symlink(tjs_get_loop(ctx), &fr->req, path, path2, flags, uv__fs_req_cb);
+    JS_FreeCString(ctx, path);
+    JS_FreeCString(ctx, path2);
+    if (r != 0) {
+        js_free(ctx, fr);
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
+}
+
+static JSValue tjs_fs_statfs(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    if (!JS_IsString(argv[0]))
+        return JS_ThrowTypeError(ctx, "expected a string for path parameter");
+
+    const char *path = JS_ToCString(ctx, argv[0]);
+    if (!path)
+        return JS_EXCEPTION;
+
+    TJSFsReq *fr = js_malloc(ctx, sizeof(*fr));
+    if (!fr) {
+        JS_FreeCString(ctx, path);
+        return JS_EXCEPTION;
+    }
+
+    int r = uv_fs_statfs(tjs_get_loop(ctx), &fr->req, path, uv__fs_req_cb);
+    JS_FreeCString(ctx, path);
+    if (r != 0) {
+        js_free(ctx, fr);
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
+}
+
 static const JSCFunctionListEntry tjs_file_proto_funcs[] = {
     TJS_CFUNC_MAGIC_DEF("read", 2, tjs_file_rw, 0),
     TJS_CFUNC_MAGIC_DEF("write", 2, tjs_file_rw, 1),
@@ -1263,6 +1475,7 @@ static const JSCFunctionListEntry tjs_file_proto_funcs[] = {
     TJS_CFUNC_DEF("datasync", 0, tjs_file_datasync),
     TJS_CFUNC_DEF("chmod", 1, tjs_file_chmod),
     TJS_CFUNC_DEF("chown", 2, tjs_file_chown),
+    TJS_CFUNC_DEF("utime", 2, tjs_file_utime),
     TJS_CGETSET_DEF("path", tjs_file_path_get, NULL),
     JS_PROP_STRING_DEF("[Symbol.toStringTag]", "FileHandle", JS_PROP_C_W_E),
 };
@@ -1299,6 +1512,8 @@ static const JSCFunctionListEntry tjs_stat_proto_funcs[] = {
 };
 
 static const JSCFunctionListEntry tjs_fs_funcs[] = {
+    TJS_UVCONST(FS_SYMLINK_DIR),
+    TJS_UVCONST(FS_SYMLINK_JUNCTION),
     TJS_CFUNC_DEF("open", 3, tjs_fs_open),
     TJS_CFUNC_DEF("newStdioFile", 2, tjs_fs_new_stdio_file),
     TJS_CFUNC_MAGIC_DEF("stat", 1, tjs_fs_stat, 0),
@@ -1316,6 +1531,12 @@ static const JSCFunctionListEntry tjs_fs_funcs[] = {
     TJS_CFUNC_MAGIC_DEF("chown", 3, tjs_fs_xchown, 0),
     TJS_CFUNC_MAGIC_DEF("lchown", 3, tjs_fs_xchown, 1),
     TJS_CFUNC_DEF("chmod", 2, tjs_fs_chmod),
+    TJS_CFUNC_MAGIC_DEF("utime", 3, tjs_fs_xutime, 0),
+    TJS_CFUNC_MAGIC_DEF("lutime", 3, tjs_fs_xutime, 1),
+    TJS_CFUNC_DEF("readLink", 1, tjs_fs_readlink),
+    TJS_CFUNC_DEF("link", 2, tjs_fs_link),
+    TJS_CFUNC_DEF("symlink", 3, tjs_fs_symlink),
+    TJS_CFUNC_DEF("statFs", 1, tjs_fs_statfs),
     /* Internal */
     TJS_CFUNC_DEF("mkdirSync", 2, tjs_fs_mkdir_sync),
     TJS_CFUNC_DEF("statSync", 1, tjs_fs_stat_sync),

@@ -25,6 +25,7 @@
 #include "mem.h"
 #include "private.h"
 #include "tjs.h"
+#include "v8-serialize-bindings.h"
 
 #include <signal.h>
 #include <stdatomic.h>
@@ -181,6 +182,8 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
 #ifndef _WIN32
     tjs__mod_posix_socket_init(ctx, ns);
 #endif
+
+    zig__mod_v8_compat_init(ctx, ns);
 }
 
 JSValue tjs__get_args(JSContext *ctx) {
