@@ -170,8 +170,9 @@ fn jsSerializerWriteUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
 
     var lo: u32 = undefined;
     var hi: u32 = undefined;
-    if (c.JS_ToUint32(ctx, &lo, argv[0]) != 0) return c.JS_ThrowTypeError(ctx, "Could not convert argument to integer");
-    if (c.JS_ToUint32(ctx, &hi, argv[1]) != 0) return c.JS_ThrowTypeError(ctx, "Could not convert argument to integer");
+    if (c.JS_ToUint32(ctx, &lo, argv[0]) != 0 or c.JS_ToUint32(ctx, &hi, argv[1]) != 0) {
+        return c.JS_ThrowTypeError(ctx, "Could not convert argument to integer");
+    }
     const hi_64: u64 = @intCast(hi);
     const num: u64 = (hi_64 << 32) | lo;
     ser.writeUint64(num) catch {
