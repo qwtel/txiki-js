@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const c = @import("v8-qjs-compat.zig").c;
+pub const c = @import("v8-qjs-structs.zig").c;
 
 /// A Zig allocator that uses QuickJS's memory management functions.
 /// Allows freeing memory returned by our compat functions using QuickJS's `JS_Free*` functions.

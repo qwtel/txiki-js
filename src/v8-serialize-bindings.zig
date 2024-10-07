@@ -2,7 +2,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const z = @import("v8-qjs-compat.zig");
+pub const z = @import("v8-qjs-structs.zig");
 pub const c = z.c;
 
 const QuickJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
