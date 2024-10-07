@@ -16,13 +16,6 @@ Object.defineProperty(engine, 'serialize', {
     value: core.serialize
 });
 
-Object.defineProperty(engine, 'serializeV8', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: core.serializeV8
-});
-
 Object.defineProperty(engine, 'deserialize', {
     enumerable: true,
     configurable: false,

@@ -21,14 +21,6 @@ const N = 1000;
 
 performance.mark('start');
 for (let i = 0; i < N; i++) {
-  tjs.engine.serializeV8(typicalObjet)
-}
-performance.mark('end');
-console.log(performance.measure('full', 'start', 'end'));
-
-
-performance.mark('start');
-for (let i = 0; i < N; i++) {
   packr.pack(typicalObjet);
 }
 performance.mark('end');
