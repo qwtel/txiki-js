@@ -37,60 +37,28 @@
 
 /* JS malloc functions */
 
-static void *tjs__mf_malloc(JSMallocState *s, size_t size) {
-    void *ptr;
-
-    /* Do not allocate zero bytes: behavior is platform dependent */
-    assert(size != 0);
-
-    if (unlikely(s->malloc_size + size > s->malloc_limit - 1))
-        return NULL;
-
-    ptr = tjs__malloc(size);
-    if (!ptr)
-        return NULL;
-
-    s->malloc_count++;
-    s->malloc_size += tjs__malloc_usable_size(ptr);
-    return ptr;
+static void *tjs__mf_calloc(void *opaque, size_t count, size_t size) {
+    (void) opaque;
+    return tjs__calloc(count, size);
 }
 
-static void tjs__mf_free(JSMallocState *s, void *ptr) {
-    if (!ptr)
-        return;
+static void *tjs__mf_malloc(void *opaque, size_t size) {
+    (void) opaque;
+    return tjs__malloc(size);
+}
 
-    s->malloc_count--;
-    s->malloc_size -= tjs__malloc_usable_size(ptr);
+static void tjs__mf_free(void *opaque, void *ptr) {
+    (void) opaque;
     tjs__free(ptr);
 }
 
-static void *tjs__mf_realloc(JSMallocState *s, void *ptr, size_t size) {
-    size_t old_size;
-
-    if (!ptr) {
-        if (size == 0)
-            return NULL;
-        return tjs__mf_malloc(s, size);
-    }
-    old_size = tjs__malloc_usable_size(ptr);
-    if (size == 0) {
-        s->malloc_count--;
-        s->malloc_size -= old_size;
-        tjs__free(ptr);
-        return NULL;
-    }
-    if (s->malloc_size + size - old_size > s->malloc_limit - 1)
-        return NULL;
-
-    ptr = tjs__realloc(ptr, size);
-    if (!ptr)
-        return NULL;
-
-    s->malloc_size += tjs__malloc_usable_size(ptr) - old_size;
-    return ptr;
+static void *tjs__mf_realloc(void *opaque, void *ptr, size_t size) {
+    (void) opaque;
+    return tjs__realloc(ptr, size);
 }
 
 static const JSMallocFunctions tjs_mf = {
+    .js_calloc = tjs__mf_calloc,
     .js_malloc = tjs__mf_malloc,
     .js_free = tjs__mf_free,
     .js_realloc = tjs__mf_realloc,
@@ -99,9 +67,7 @@ static const JSMallocFunctions tjs_mf = {
 
 /* SharedArrayBuffer functions */
 
-#define TJS__SAB_MAGIC 0xCAFECAFECAFECAFEULL
 typedef struct {
-    uint64_t magic;
     int ref_count;
     uint8_t buf[0];
 } TJSSABHeader;
@@ -114,15 +80,12 @@ static void *tjs__sab_alloc(void *opaque, size_t size) {
     TJSSABHeader *sab = tjs__malloc(sizeof(*sab) + size);
     if (!sab)
         return NULL;
-    sab->magic = TJS__SAB_MAGIC;
     sab->ref_count = 1;
     return sab->buf;
 }
 
 void tjs__sab_free(void *opaque, void *ptr) {
     TJSSABHeader *sab = (TJSSABHeader *) ((uint8_t *) ptr - sizeof(TJSSABHeader));
-    if (sab->magic != TJS__SAB_MAGIC)
-        return;
     int ref_count = atomic_add_int(&sab->ref_count, -1);
     assert(ref_count >= 0);
     if (ref_count == 0)
@@ -131,8 +94,6 @@ void tjs__sab_free(void *opaque, void *ptr) {
 
 void tjs__sab_dup(void *opaque, void *ptr) {
     TJSSABHeader *sab = (TJSSABHeader *) ((uint8_t *) ptr - sizeof(TJSSABHeader));
-    if (sab->magic != TJS__SAB_MAGIC)
-        return;
     atomic_add_int(&sab->ref_count, 1);
 }
 
@@ -375,9 +336,6 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
 void TJS_FreeRuntime(TJSRuntime *qrt) {
     qrt->freeing = true;
 
-    /* Reset TTY state (if it had changed) before exiting. */
-    uv_tty_reset_mode();
-
     /* Close all core loop handles. */
     uv_close((uv_handle_t *) &qrt->jobs.prepare, NULL);
     uv_close((uv_handle_t *) &qrt->jobs.idle, NULL);
@@ -526,13 +484,10 @@ int TJS_Run(TJSRuntime *qrt) {
         r = uv_run(&qrt->loop, UV_RUN_DEFAULT);
     } while (r == 0 && JS_IsJobPending(qrt->rt));
 
-    JSValue exc = JS_GetException(qrt->ctx);
-    if (!JS_IsNull(exc)) {
-        tjs_dump_error1(qrt->ctx, exc);
+    if (JS_HasException(qrt->ctx)) {
+        tjs_dump_error(qrt->ctx);
         ret = 1;
     }
-
-    JS_FreeValue(qrt->ctx, exc);
 
     return ret;
 }
@@ -600,6 +555,31 @@ JSValue TJS_EvalModuleContent(JSContext *ctx,
         }
     }
 
+    return ret;
+}
+
+JSValue TJS_EvalScript(JSContext *ctx, const char *filename) {
+    DynBuf dbuf;
+    size_t dbuf_size;
+    int r;
+    JSValue ret;
+
+    tjs_dbuf_init(ctx, &dbuf);
+    r = tjs__load_file(ctx, &dbuf, filename);
+    if (r != 0) {
+        dbuf_free(&dbuf);
+        JS_ThrowReferenceError(ctx, "could not load '%s' - %s: %s", filename, uv_err_name(r), uv_strerror(r));
+        return JS_EXCEPTION;
+    }
+
+    dbuf_size = dbuf.size;
+
+    /* Add null termination, required by JS_Eval. */
+    dbuf_putc(&dbuf, '\0');
+
+    ret = JS_Eval(ctx, (char *) dbuf.buf, dbuf_size - 1, filename, JS_EVAL_TYPE_GLOBAL);
+
+    dbuf_free(&dbuf);
     return ret;
 }
 
