@@ -17,12 +17,11 @@ jobs:
           submodules: true
       - run: sudo snap install zig --classic --beta
       - uses: actions/cache@v4
-        id: zig-cache
         with:
           path: .zig-cache
-          key: ${{ runner.os }}-zig-cache-${{ github.sha }}
+          key: ${{ runner.os }}-zig-cache-v1-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-zig-cache-
+            ${{ runner.os }}-zig-cache-v1-
       - run: zig build -Doptimize=ReleaseSmall --summary all
       - run: zig-out/bin/tjs test tests
   build:
@@ -35,12 +34,11 @@ jobs:
           submodules: true
       - run: brew install zig
       - uses: actions/cache@v4
-        id: zig-cache
         with:
           path: .zig-cache
-          key: ${{ runner.os }}-zig-cache-${{ github.sha }}
+          key: ${{ runner.os }}-zig-cache-v1-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-zig-cache-
+            ${{ runner.os }}-zig-cache-v1-
       - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
       - uses: actions/upload-artifact@v4
         with:

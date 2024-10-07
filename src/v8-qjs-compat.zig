@@ -1,6 +1,5 @@
 /// Handrolled struct defs for a bunch of QuickJS types that either couldn't be auto-translagted by Zig,
-// or are marked private but we want to use them anyway..
-
+/// or are marked private but we want to use them anyway..
 const std = @import("std");
 const builtin = @import("builtin");
 
@@ -72,7 +71,7 @@ pub const JSProperty = extern struct {
             realm_and_id: usize,
             opaque_field: *void,
         },
-    }
+    },
 };
 
 pub const JSShapeProperty = extern struct {
@@ -93,7 +92,7 @@ pub const JSShape = extern struct {
     deleted_prop_count: c_int,
     shape_hash_next: *JSShape,
     proto: *JSObject,
-    prop: [0]JSShapeProperty,
+    prop: [*]JSShapeProperty,
 };
 
 pub const JSRegExp = extern struct {
@@ -244,6 +243,7 @@ pub const JSClassId = enum(u16) {
     UINT32_ARRAY,      // u.array (typed_array)
     BIG_INT64_ARRAY,   // u.array (typed_array)
     BIG_UINT64_ARRAY,  // u.array (typed_array)
+    FLOAT16_ARRAY,     // u.array (typed_array)
     FLOAT32_ARRAY,     // u.array (typed_array)
     FLOAT64_ARRAY,     // u.array (typed_array)
     DATAVIEW,          // u.typed_array
