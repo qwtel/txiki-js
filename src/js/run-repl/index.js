@@ -1898,6 +1898,7 @@ import path from 'tjs:path';
         }
 
         try {
+            const { Database } = await import('tjs:sqlite');
             historyDb = new Database(historyDbPath);
         } catch (e) {
             // Ignore.
