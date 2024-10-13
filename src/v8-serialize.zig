@@ -579,7 +579,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeJSObject(self: *Self, p: *z.JSObject, obj: c.JSValue) !void {
             const raw_props: [*]z.JSShapeProperty = @ptrCast(&p.shape.prop);
-            const props = raw_props[0..@intCast(p.shape.prop_count)];
+            const props = raw_props[0..@intCast(p.shape.prop_size)];
 
             var properties_written: u32 = 0;
             var is_pojo = true;

@@ -27,7 +27,7 @@ pub const JSString = extern struct {
     pub fn len(self: *JSString) u31 { return @intCast(self._len_or_is_wide_char & 0x7FFFFFFF); }
     pub fn isWideChar(self: *JSString) bool { return (self._len_or_is_wide_char & 0x80000000) != 0; }
     pub fn hash(self: *JSString) u30 { return @intCast(self._hash_or_atom_type & 0x3FFFFFFF); }
-    pub fn atomType(self: *JSString) u2 { return @intCast(self._hash_or_atom_type & 0xC0000000); }
+    pub fn atomType(self: *JSString) u2 { return @intCast(self._hash_or_atom_type >> 30); }
 };
 
 pub const JSVarRef = extern struct {
@@ -52,11 +52,13 @@ pub const JSBigInt = extern struct {
 pub const JSGCObjectHeader = extern struct {
     ref_count: c_int,
     _gc_obj_type_or_mark: u8,
-    dummy1: u8,
+    // XXX: bitfields are nightmares. From experiments, will have alignment 8 on 64-bit windows, but 4 otherwise.
+    // Since we only target 64-bit win, just hard-code it...
+    dummy1: u8 align(if (@import("builtin").target.os.tag == .windows) 8 else @sizeOf(c_int)),
     dummy2: u16,
     link: c.list_head,
     pub fn gcObjType(self: *JSGCObjectHeader) u4 { return @intCast(self._gc_obj_type_or_mark & 0x0F); }
-    pub fn mark(self: *JSGCObjectHeader) u4 { return @intCast(self._gc_obj_type_or_mark & 0xF0); }
+    pub fn mark(self: *JSGCObjectHeader) u4 { return @intCast(self._gc_obj_type_or_mark >> 4); }
 };
 
 pub const JSProperty = extern struct {
@@ -92,7 +94,7 @@ pub const JSShape = extern struct {
     deleted_prop_count: c_int,
     shape_hash_next: *JSShape,
     proto: *JSObject,
-    prop: [*]JSShapeProperty,
+    prop: [0]JSShapeProperty,
 };
 
 pub const JSRegExp = extern struct {
@@ -176,6 +178,7 @@ pub const JSObject = extern struct {
                 uint32_ptr: [*]u32,   // JS_CLASS_UINT32_ARRAY
                 int64_ptr: [*]i64,    // JS_CLASS_INT64_ARRAY
                 uint64_ptr: [*]u64,   // JS_CLASS_UINT64_ARRAY
+                fp16_ptr: [*]u16,     // JS_CLASS_FLOAT16_ARRAY
                 float_ptr: [*]f32,    // JS_CLASS_FLOAT32_ARRAY
                 double_ptr: [*]f64,   // JS_CLASS_FLOAT64_ARRAY
             },
