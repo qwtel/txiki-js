@@ -16,7 +16,11 @@ const dump_leaks = builtin.mode == .Debug;
 pub const JSString = extern struct {
     header: c.JSRefCountHeader,
     _len_or_is_wide_char: u32,
+    // XXX: bitfields are nightmares. From experiments, will claim an extra u32 on windows only
+    ___padding1: if (@import("builtin").target.os.tag == .windows) u32 else void,
     _hash_or_atom_type: u32,
+    // XXX: bitfields are nightmares. From experiments, will claim an extra u32 on windows only
+    ___padding2: if (@import("builtin").target.os.tag == .windows) u32 else void,
     hash_next: u32,
     first_weak_ref: *anyopaque, // XXX: should be c.JSWeakRefRecord,
     link: if (dump_leaks) c.list_head else void,
@@ -54,7 +58,7 @@ pub const JSGCObjectHeader = extern struct {
     _gc_obj_type_or_mark: u8,
     // XXX: bitfields are nightmares. From experiments, will have alignment 8 on 64-bit windows, but 4 otherwise.
     // Since we only target 64-bit win, just hard-code it...
-    dummy1: u8 align(if (@import("builtin").target.os.tag == .windows) 8 else @sizeOf(c_int)),
+    dummy1: u8 align(if (@import("builtin").target.os.tag == .windows) 8 else 1),
     dummy2: u16,
     link: c.list_head,
     pub fn gcObjType(self: *JSGCObjectHeader) u4 { return @intCast(self._gc_obj_type_or_mark & 0x0F); }
@@ -92,7 +96,7 @@ pub const JSShape = extern struct {
     prop_size: c_int,
     prop_count: c_int,
     deleted_prop_count: c_int,
-    shape_hash_next: *JSShape,
+    shape_hash_next: *anyopaque, // *JSShape, // XXX: why segfault when logging and not opaque?
     proto: *JSObject,
     prop: [0]JSShapeProperty,
 };

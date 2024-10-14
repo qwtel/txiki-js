@@ -226,7 +226,7 @@ fn build2(
 
     if (!opts.matrix) {
         const exe = b.addExecutable(.{
-            .name = "hello",
+            .name = "main",
             .root_source_file = b.path("src/v8-serialize-main.zig"),
             .target = target,
             .optimize = optimize,
