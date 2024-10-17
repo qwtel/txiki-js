@@ -7,16 +7,29 @@ pub const c = z.c;
 const QJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
 
 // A bunch of qjs iternal functions that we've stripped `static` from. They're not part of the header, so we have to declare them here.
-extern fn JS_CheckStackOverflow(rt: *c.JSRuntime, alloca_size: usize) c_int;
-extern fn JS_AtomIsString(ctx: ?*c.JSContext, v: c.JSAtom) c_int;
 extern fn JS_ToObject(ctx: ?*c.JSContext, v: c.JSValue) c.JSValue;
-extern fn js_alloc_string(ctx: ?*c.JSContext, max_len: c_int, is_wide_char: c_int) ?*z.JSString;
+extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: c.BOOL) c.JSValue;
+extern fn js_alloc_string(ctx: ?*c.JSContext, max_len: c_int, is_wide_char: c.BOOL) ?*z.JSString;
 extern fn js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
 extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
 extern fn js_string_to_bigint(ctx: ?*c.JSContext, buf: [*c]const u8, radix: c_int) c.JSValue;
 extern fn js_regexp_constructor_internal(ctx: ?*c.JSContext, ctor: c.JSValue, pattern: c.JSValue, bc: c.JSValue) c.JSValue;
 extern fn js_typed_array_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue, classid: c_int) c.JSValue;
+extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue, is_dataview: c.BOOL) c.JSValue;
 extern fn js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
+extern fn js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSRegExp;
+extern fn js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) c.BOOL;
+extern fn js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) c.BOOL;
+extern fn _JS_CheckStackOverflow(ctx: ?*c.JSContext, alloca_size: usize) c.BOOL;
+extern fn _JS_AtomIsString(ctx: ?*c.JSContext, v: c.JSAtom) c.BOOL;
+extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSMapState;
+extern fn _js_string_is_wide_char(p: *const z.JSString) c_int;
+extern fn _js_string_get_len(p: *const z.JSString) u32;
+extern fn _js_string_get_str8(p: *const z.JSString) [*]const u8;
+extern fn _js_string_get_str16(p: *const z.JSString) [*]const u16;
+extern fn _JS_GetObjectData(ctx: ?*c.JSContext, obj: c.JSValue, pval: *c.JSValue) c.BOOL;
+extern fn _js_typed_array_get_byte_length(p: *c.JSObject) u32;
+extern fn _js_typed_array_get_byte_offset(p: *c.JSObject) u32;
 
 const kLatestVersion = 15;
 
@@ -84,8 +97,7 @@ fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) vo
 }
 
 fn stackCheck(ctx: ?*c.JSContext) !void {
-    const z_ctx: ?*z.JSContext = @alignCast(@ptrCast(ctx));
-    if (JS_CheckStackOverflow(z_ctx.?.rt, 0) == c.TRUE) {
+    if (_JS_CheckStackOverflow(ctx, 0) == c.TRUE) {
         _ = c.JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
         return Error.StackOverflow;
     }
@@ -222,10 +234,10 @@ pub const DefaultDelegate = struct {
 
 const JSObjectHashContext = struct {
     const Self = @This();
-    pub fn hash(_: Self, s: *z.JSObject) u64 {
+    pub fn hash(_: Self, s: *c.JSObject) u64 {
         return @intFromPtr(s) * 3163; // Taken from QuickJS's hash function
     }
-    pub fn eql(_: Self, a: *z.JSObject, b: *z.JSObject) bool {
+    pub fn eql(_: Self, a: *c.JSObject, b: *c.JSObject) bool {
         return a == b;
     }
 };
@@ -240,7 +252,7 @@ pub fn Serializer(comptime Delegate: type) type {
         allocator: std.mem.Allocator,
         ctx: ?*c.JSContext,
         buffer: std.ArrayList(u8),
-        id_map: std.HashMap(*z.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage),
+        id_map: std.HashMap(*c.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage),
         next_id: u32 = 0,
 
         treat_array_buffer_views_as_host_objects: bool = false,
@@ -254,7 +266,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 .allocator = allocator,
                 .ctx = ctx,
                 .buffer = try std.ArrayList(u8).initCapacity(allocator, 2),
-                .id_map = std.HashMap(*z.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage).init(allocator),
+                .id_map = std.HashMap(*c.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage).init(allocator),
                 .has_custom_objects = false,
                 .delegate = null,
             };
@@ -265,7 +277,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 .allocator = allocator,
                 .ctx = ctx,
                 .buffer = try std.ArrayList(u8).initCapacity(allocator, 2),
-                .id_map = std.HashMap(*z.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage).init(allocator),
+                .id_map = std.HashMap(*c.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage).init(allocator),
                 .has_custom_objects = delegate.hasCustomHostObject(),
                 .delegate = delegate,
             };
@@ -444,24 +456,27 @@ pub fn Serializer(comptime Delegate: type) type {
                     try self.writeBigInt(object);
                 },
                 c.JS_TAG_STRING => {
-                    try self.writeString(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(object))));
+                    try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(object)));
                 },
                 c.JS_TAG_OBJECT => {
-                    const p: *z.JSObject = @alignCast(@ptrCast(c.JS_VALUE_GET_PTR(object)));
+                    const p: *c.JSObject = @ptrCast(c.JS_VALUE_GET_PTR(object));
+                    const class_id = c.JS_GetClassID(object);
                     // std.debug.print("Class id? {}\n", .{p.a.b.class_id});
-                    switch (p.a.b.class_id) {
+                    switch (class_id) {
                         // Despite being JSReceivers, these have their wrapped buffer serialized
                         // first. That makes this logic a little quirky, because it needs to
                         // happen before we assign object IDs.
                         @intFromEnum(z.JSClassId.UINT8C_ARRAY)...@intFromEnum(z.JSClassId.DATAVIEW) => {
                             if (!self.id_map.contains(p) and !self.treat_array_buffer_views_as_host_objects) {
-                                const ta: *z.JSTypedArray = p.u.typed_array;
-                                try self.writeJSReceiver(ta.buffer, object);
+                                const is_dataview = if (class_id == @intFromEnum(z.JSClassId.DATAVIEW)) c.TRUE else c.FALSE;
+                                const ab_val = js_typed_array_get_buffer(self.ctx, object, is_dataview);
+                                defer c.JS_FreeValue(self.ctx, ab_val);
+                                try self.writeJSReceiver(ab_val, @ptrCast(c.JS_VALUE_GET_PTR(ab_val)));
                             }
-                            try self.writeJSReceiver(p, object);
+                            try self.writeJSReceiver(object, p);
                         },
                         else => {
-                            try self.writeJSReceiver(p, object);
+                            try self.writeJSReceiver(object, p);
                         },
                     }
                 },
@@ -497,10 +512,10 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeBigIntContents(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(value))), value);
         }
 
-        fn writeString(self: *Self, p: *z.JSString) !void {
-            const len = p.len();
-            if (p.isWideChar()) {
-                const chars: [*]const u16 = @ptrCast(&p.u.str16);
+        fn writeString(self: *Self, p: *const z.JSString) !void {
+            const len = _js_string_get_len(p);
+            if (_js_string_is_wide_char(p) == c.TRUE) {
+                const chars = _js_string_get_str16(p);
                 const byte_length: u32 = len * @sizeOf(u16);
                 // The existing reading code expects 16-byte strings to be aligned.
                 if (((self.buffer.items.len + 1 + bytesNeededForVarint(u32, byte_length)) & 1) != 0) {
@@ -509,13 +524,13 @@ pub fn Serializer(comptime Delegate: type) type {
                 try self.writeTag(.TwoByteString);
                 try self.writeTwoByteString(chars[0..len]);
             } else {
-                const chars: [*]const u8 = @ptrCast(&p.u.str8);
+                const chars = _js_string_get_str8(p);
                 try self.writeTag(.OneByteString);
                 try self.writeOneByteString(chars[0..len]);
             }
         }
 
-        fn writeJSReceiver(self: *Self, p: *z.JSObject, obj: c.JSValue) !void {
+        fn writeJSReceiver(self: *Self, obj: c.JSValue, p: *c.JSObject) !void {
             // If the object has already been serialized, just write its ID.
             const find_result = try self.id_map.getOrPut(p);
             if (find_result.found_existing) {
@@ -534,39 +549,39 @@ pub fn Serializer(comptime Delegate: type) type {
             // If we are at the end of the stack, abort. This function may recurse.
             try stackCheck(self.ctx);
 
-            const class_id: z.JSClassId = @enumFromInt(p.a.b.class_id);
+            const class_id: z.JSClassId = @enumFromInt(c.JS_GetClassID(obj));
             switch (class_id) {
                 .ARRAY => {
-                    try self.writeJSArray(p, obj);
+                    try self.writeJSArray(obj);
                 },
                 .OBJECT => {
                     const is_host_object = try self.isHostObject(obj);
                     if (is_host_object) {
                         try self.writeHostObject(obj);
                     } else {
-                        try self.writeJSObject(p, obj);
+                        try self.writeJSObject(obj);
                     }
                 },
                 .DATE => {
-                    try self.writeJSDate(p.u.object_data);
+                    try self.writeJSDate(obj);
                 },
                 .NUMBER, .STRING, .BOOLEAN, .BIG_INT => {
-                    try self.writeJSPrimitiveWrapper(p.u.object_data);
+                    try self.writeJSPrimitiveWrapper(obj);
                 },
                 .REGEXP => {
-                    try self.writeJSRegExp(p.u.regexp);
+                    try self.writeJSRegExp(obj);
                 },
                 .MAP => {
-                    try self.writeJSMap(.Map, p.u.map_state);
+                    try self.writeJSMap(.Map, obj);
                 },
                 .SET => {
-                    try self.writeJSMap(.Set, p.u.map_state);
+                    try self.writeJSMap(.Set, obj);
                 },
                 .ARRAY_BUFFER, .SHARED_ARRAY_BUFFER => {
-                    try self.writeJSArrayBuffer(p.u.array_buffer);
+                    try self.writeJSArrayBuffer(obj);
                 },
                 .UINT8C_ARRAY, .INT8_ARRAY, .UINT8_ARRAY, .INT16_ARRAY, .UINT16_ARRAY, .INT32_ARRAY, .UINT32_ARRAY, .BIG_INT64_ARRAY, .BIG_UINT64_ARRAY, .FLOAT32_ARRAY, .FLOAT64_ARRAY, .DATAVIEW => {
-                    try self.writeJSArrayBufferView(p.u.typed_array, obj);
+                    try self.writeJSArrayBufferView(obj, class_id);
                 },
                 .ERROR => {
                     try self.writeJSError(obj);
@@ -577,42 +592,43 @@ pub fn Serializer(comptime Delegate: type) type {
             }
         }
 
-        fn writeJSObject(self: *Self, p: *z.JSObject, obj: c.JSValue) !void {
-            const raw_props: [*]z.JSShapeProperty = @ptrCast(&p.shape.prop);
-            const props = raw_props[0..@intCast(p.shape.prop_size)];
+        fn writeJSObject(self: *Self, obj: c.JSValue) !void {
+            // const raw_props: [*]z.JSShapeProperty = @ptrCast(&p.shape.prop);
+            // const props = raw_props[0..@intCast(p.shape.prop_size)];
 
-            var properties_written: u32 = 0;
-            var is_pojo = true;
+            // var properties_written: u32 = 0;
+            // var is_pojo = true;
 
-            inline for (0..2) |pass| {
-                if (is_pojo) {
-                    if (pass == 1) try self.writeTag(.BeginJSObject);
-                    for (props, 0..) |*prop, i| {
-                        const atom = prop.atom;
-                        const flags = prop.flags();
-                        if (atom != c.JS_ATOM_NULL and JS_AtomIsString(self.ctx, atom) == c.TRUE and (flags & c.JS_PROP_ENUMERABLE) != 0) {
-                            if (pass == 0 and (flags & c.JS_PROP_TMASK) != 0) {
-                                is_pojo = false;
-                                break;
-                            }
-                            if (pass == 1) {
-                                const key = c.JS_AtomToValue(self.ctx, atom);
-                                defer c.JS_FreeValue(self.ctx, key);
+            // inline for (0..2) |pass| {
+            //     if (is_pojo) {
+            //         if (pass == 1) try self.writeTag(.BeginJSObject);
+            //         for (props, 0..) |*prop, i| {
+            //             const atom = prop.atom;
+            //             const flags = prop.flags();
+            //             if (atom != c.JS_ATOM_NULL and _JS_AtomIsString(self.ctx, atom) == c.TRUE and (flags & c.JS_PROP_ENUMERABLE) != 0) {
+            //                 if (pass == 0 and (flags & c.JS_PROP_TMASK) != 0) {
+            //                     is_pojo = false;
+            //                     break;
+            //                 }
+            //                 if (pass == 1) {
+            //                     const key = c.JS_AtomToValue(self.ctx, atom);
+            //                     defer c.JS_FreeValue(self.ctx, key);
 
-                                const value = p.prop[i].u.value;
+            //                     const value = p.prop[i].u.value;
 
-                                try self.writeObject(key);
-                                try self.writeObject(value);
-                                properties_written += 1;
-                            }
-                        }
-                    }
-                    if (pass == 1) try self.writeTag(.EndJSObject);
-                    if (pass == 1) try self.writeVarint(u32, properties_written);
-                } else {
-                    try self.writeJSObjectSlow(.Object, obj);
-                }
-            }
+            //                     try self.writeObject(key);
+            //                     try self.writeObject(value);
+            //                     properties_written += 1;
+            //                 }
+            //             }
+            //         }
+            //         if (pass == 1) try self.writeTag(.EndJSObject);
+            //         if (pass == 1) try self.writeVarint(u32, properties_written);
+            //     } else {
+            //         try self.writeJSObjectSlow(.Object, obj);
+            //     }
+            // }
+            try self.writeJSObjectSlow(.Object, obj);
         }
 
         fn getOwnPropertyNames(self: *Self, obj: c.JSValue) ![]c.JSPropertyEnum {
@@ -641,14 +657,16 @@ pub fn Serializer(comptime Delegate: type) type {
             if (kind == .Array) try self.writeVarint(u32, @intCast(length)); // XXX: get length again?
         }
 
-        fn writeJSArray(self: *Self, p: *z.JSObject, obj: c.JSValue) !void {
+        fn writeJSArray(self: *Self, obj: c.JSValue) !void {
             // try self.writeJSObjectSlow(.Array, obj);
-            if (p.a.b.fastArray()) {
-                const length = p.u.array.count;
+            if (js_is_fast_array(self.ctx, obj) == c.TRUE) {
+                var values: [*]c.JSValue = undefined; 
+                var length: u32 = undefined;
+                _ = js_get_fast_array(self.ctx, obj, &values, &length);
                 try self.writeTag(.BeginDenseJSArray);
                 try self.writeVarint(u32, length);
                 for (0..length) |i| {
-                    const item = p.u.array.u.values[i];
+                    const item = values[i];
                     switch (c.JS_VALUE_GET_NORM_TAG(item)) {
                         c.JS_TAG_INT => try self.writeSmi(item),
                         c.JS_TAG_FLOAT64 => try self.writeHeapNumber(item),
@@ -667,12 +685,19 @@ pub fn Serializer(comptime Delegate: type) type {
             }
         }
 
-        fn writeJSDate(self: *Self, date: c.JSValue) !void {
+        fn writeJSDate(self: *Self, obj: c.JSValue) !void {
+            var date: c.JSValue = undefined;
+            _ = _JS_GetObjectData(self.ctx, obj, &date);
+            defer c.JS_FreeValue(self.ctx, date);
             try self.writeTag(.Date);
             try self.writeDouble(c.JS_VALUE_GET_FLOAT64(date));
         }
 
-        fn writeJSPrimitiveWrapper(self: *Self, value: c.JSValue) !void {
+        fn writeJSPrimitiveWrapper(self: *Self, obj: c.JSValue) !void {
+            var value: c.JSValue = undefined;
+            _ = _JS_GetObjectData(self.ctx, obj, &value);
+            defer c.JS_FreeValue(self.ctx, value);
+
             const tag = c.JS_VALUE_GET_NORM_TAG(value);
             switch (tag) {
                 c.JS_TAG_BOOL => try self.writeTag(if (c.JS_VALUE_GET_INT(value) == 0) .FalseObject else .TrueObject),
@@ -687,7 +712,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 },
                 c.JS_TAG_STRING => {
                     try self.writeTag(.StringObject);
-                    try self.writeString(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(value))));
+                    try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(value)));
                 },
                 else => {
                     try self.throwDataCloneError();
@@ -695,11 +720,12 @@ pub fn Serializer(comptime Delegate: type) type {
             }
         }
 
-        fn writeJSRegExp(self: *Self, regexp: z.JSRegExp) !void {
+        fn writeJSRegExp(self: *Self, obj: c.JSValue) !void {
+            const regexp = js_get_regexp(self.ctx, obj, c.FALSE);
             const bc = regexp.bytecode;
-            std.debug.assert(!bc.isWideChar());
+            std.debug.assert(_js_string_is_wide_char(bc) == c.FALSE);
 
-            const raw_bc: [*]const u8 = @ptrCast(&bc.u.str8);
+            const raw_bc = _js_string_get_str8(bc);
             const flags = c.lre_get_flags(raw_bc);
 
             var v8_flags = flags & 0b111; // first 3 falgs are identical (/gmi)
@@ -712,7 +738,8 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeVarint(u32, @intCast(v8_flags));
         }
 
-        fn writeJSMap(self: *Self, comptime as: SetOrMap, s: *z.JSMapState) !void {
+        fn writeJSMap(self: *Self, comptime as: SetOrMap, obj: c.JSValue) !void {
+            const s = _js_get_map_state(self.ctx, obj, c.FALSE);
             const length = s.record_count * (if (as == .Map) 2 else 1);
 
             var entries = try std.ArrayList(c.JSValue).initCapacity(self.allocator, length);
@@ -735,25 +762,36 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeVarint(u32, length);
         }
 
-        fn writeJSArrayBuffer(self: *Self, abuf: *z.JSArrayBuffer) !void {
-            if (abuf.detached != 0) {
+        fn writeJSArrayBuffer(self: *Self, obj: c.JSValue) !void {
+            var byte_length: usize = 0;
+            const bytes = c.JS_GetArrayBuffer(self.ctx, &byte_length, obj);
+            if (bytes == null)
                 try self.throwDataCloneErrorDetachedArrayBuffer();
-            }
+
+            // std.debug.print("HELLO?? {}\n", .{byte_length});
             try self.writeTag(.ArrayBuffer);
-            try self.writeVarint(u32, @intCast(abuf.byte_length));
-            try self.writeRawBytes(abuf.data[0..@intCast(abuf.byte_length)]);
+            try self.writeVarint(u32, @intCast(byte_length));
+            try self.writeRawBytes(bytes[0..@intCast(byte_length)]);
         }
 
-        fn writeJSArrayBufferView(self: *Self, ta: *z.JSTypedArray, val: c.JSValue) !void {
+        fn writeJSArrayBufferView(self: *Self, val: c.JSValue, class_id: z.JSClassId) !void {
             if (self.treat_array_buffer_views_as_host_objects) {
                 return self.writeHostObject(val);
             }
 
             try self.writeTag(.ArrayBufferView);
 
+            const is_dataview = if (class_id == .DATAVIEW) c.TRUE else c.FALSE;
+
+            const ab_val = js_typed_array_get_buffer(self.ctx, val, is_dataview);
+            defer c.JS_FreeValue(self.ctx, ab_val);
+
+            const p: *c.JSObject = @ptrCast(c.JS_VALUE_GET_PTR(val));
+            const byte_offset = _js_typed_array_get_byte_offset(p);
+            const byte_length = _js_typed_array_get_byte_length(p);
+
             // XXX: out of bounds check?
 
-            const class_id: z.JSClassId = @enumFromInt(ta.obj.a.b.class_id);
             const tag: ArrayBufferViewTag = switch (class_id) {
                 .UINT8C_ARRAY => .Uint8ClampedArray,
                 .INT8_ARRAY => .Int8Array,
@@ -772,8 +810,8 @@ pub fn Serializer(comptime Delegate: type) type {
             };
 
             try self.writeVarint(u32, @intFromEnum(tag));
-            try self.writeVarint(u32, @intCast(ta.offset));
-            try self.writeVarint(u32, @intCast(ta.length));
+            try self.writeVarint(u32, byte_offset);
+            try self.writeVarint(u32, byte_length);
             // XXX: does qjs have these flags?
             // uint32_t flags =
             //      JSArrayBufferViewIsLengthTracking::encode(view->is_length_tracking()) |
@@ -826,7 +864,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
             if (message_found) {
                 try self.writeErrorTag(.Message);
-                try self.writeString(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(message_desc.value))));
+                try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(message_desc.value)));
             }
 
             const stack = c.JS_NewAtom(self.ctx, "stack");
@@ -835,7 +873,7 @@ pub fn Serializer(comptime Delegate: type) type {
             defer c.JS_FreeValue(self.ctx, stack_val);
             if (c.JS_IsString(stack_val) == 1) {
                 try self.writeErrorTag(.Stack);
-                try self.writeString(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(stack_val))));
+                try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(stack_val)));
             }
 
             if (cause_found) {
@@ -1489,9 +1527,9 @@ pub fn Deserializer(comptime Delegate: type) type {
             return result;
         }
 
-        fn readJSArrayBufferView(self: *Self, js_ab: c.JSValue) !c.JSValue {
-            const p: *z.JSObject = @alignCast(@ptrCast(c.JS_VALUE_GET_PTR(js_ab)));
-            const buffer_byte_length: u32 = @intCast(p.u.array_buffer.byte_length);
+        fn readJSArrayBufferView(self: *Self, ab_val: c.JSValue) !c.JSValue {
+            var buffer_byte_length: usize = undefined;
+            _ = c.JS_GetArrayBuffer(self.ctx, &buffer_byte_length, ab_val);
 
             const tag = try self.readVarint(u8);
             const byte_offset = try self.readVarint(u32);
@@ -1534,7 +1572,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             //   }
 
             var argv: [3]c.JSValue = undefined;
-            argv[0] = js_ab;
+            argv[0] = ab_val;
             argv[1] = c.JS_NewUint32(self.ctx, byte_offset);
             argv[2] = c.JS_NewUint32(self.ctx, byte_length / element_size);
             defer c.JS_FreeValue(self.ctx, argv[1]);
@@ -1556,35 +1594,34 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             var tag: ErrorTag = @enumFromInt(try self.readVarint(u8));
 
-            const z_ctx: *z.JSContext = @alignCast(@ptrCast(self.ctx));
-            var error_proto: ?c.JSValue = undefined;
+            var error_num: z.JSErrorEnum = undefined;
             switch (tag) {
                 .EvalErrorPrototype => {
-                    error_proto = z_ctx.native_error_proto[0];
+                    error_num = .EVAL_ERROR;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
                 .RangeErrorPrototype => {
-                    error_proto = z_ctx.native_error_proto[1];
+                    error_num = .RANGE_ERROR;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
                 .ReferenceErrorPrototype => {
-                    error_proto = z_ctx.native_error_proto[2];
+                    error_num = .REFERENCE_ERROR;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
                 .SyntaxErrorPrototype => {
-                    error_proto = z_ctx.native_error_proto[3];
+                    error_num = .SYNTAX_ERROR;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
                 .TypeErrorPrototype => {
-                    error_proto = z_ctx.native_error_proto[4];
+                    error_num = .TYPE_ERROR;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
                 .UriErrorPrototype => {
-                    error_proto = z_ctx.native_error_proto[5];
+                    error_num = .URI_ERROR;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
                 else => {
-                    error_proto = null;
+                    error_num = .PLAIN_ERROR;
                 },
             }
 
@@ -1602,8 +1639,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             }
             errdefer if (stack) |x| c.JS_FreeValue(self.ctx, x);
 
-            const err_class_id = @intFromEnum(z.JSClassId.ERROR);
-            const err_obj = if (error_proto) |proto| c.JS_NewObjectProtoClass(self.ctx, proto, err_class_id) else c.JS_NewError(self.ctx);
+            const err_obj = JS_MakeError(self.ctx, error_num, "", c.FALSE);
             errdefer c.JS_FreeValue(self.ctx, err_obj);
 
             try self.addObjectWithID(id, err_obj);

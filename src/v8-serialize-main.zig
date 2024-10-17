@@ -229,6 +229,10 @@ test "serializer 22" {
     const expected = [12]u8{ 255, 15, 66, 3, 1, 2, 3, 86, 63, 0, 3, 0 };
     try testSerializeEvalJS("new DataView(new Uint8Array([1,2,3]).buffer)", &expected);
 }
+test "serializer 22-1" {
+    const expected = [13]u8{ 255, 15, 66,  4, 1, 2, 3,  4, 86, 87, 0, 4, 0};
+    try testSerializeEvalJS("new Uint16Array(new Uint8Array([1,2,3,4]).buffer)", &expected);
+}
 test "serializer 23" {
     const expected = [10]u8{ 255, 15, 111, 34, 1, 120, 73, 6, 123, 1 };
     try testSerializeEvalJS("(() => { const o = {}; Object.defineProperty(o, 'x', { enumerable: true, get: () => 3, set: () => {} }); return o; })()", &expected);
@@ -293,10 +297,30 @@ test "serializer 31" {
     const expected = [4]u8{ 255, 15, 73, 1 };
     try testSerializeEvalJS("-1", &expected);
 }
-// test "serializer 31-1" {
-//    const expected = [11]u8{ 255,  15,  78,   0,   0, 64, 196, 161, 197, 217, 193 };
-//    try testSerializeEvalJS("-1729529617", &expected);
-// }
+test "serializer 31-2" {
+    const expected = [4]u8{ 255, 15, 73, 3 };
+    try testSerializeEvalJS("-2", &expected);
+}
+test "serializer 31-3" {
+    const expected = [4]u8{ 255, 15, 73, 5 };
+    try testSerializeEvalJS("-3", &expected);
+}
+test "serializer 31-4" {
+    const expected = [5]u8{ 255, 15, 73, 255, 15 };
+    try testSerializeEvalJS("-1024", &expected);
+}
+test "serializer 31-5" {
+    const expected = [8]u8{ 255,  15,  73, 157, 156, 180, 241,  12 };
+    try testSerializeEvalJS("-1729529615", &expected);
+}
+test "serializer 31-6" {
+    const expected = [8]u8{ 255,  15,  73, 159, 156, 180, 241,  12 };
+    try testSerializeEvalJS("-1729529616", &expected);
+}
+test "serializer 31-7" {
+    const expected = [8]u8{ 255,  15,  73, 161, 156, 180, 241,  12 };
+    try testSerializeEvalJS("-1729529617", &expected);
+}
 
 test "deserializer 1" {
     const data = [3]u8{ 255, 15, 48 };
