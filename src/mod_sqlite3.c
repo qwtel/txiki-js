@@ -36,10 +36,12 @@ typedef struct {
 
 static void tjs_sqlite3_finalizer(JSRuntime *rt, JSValue val) {
     TJSSqlite3Handle *h = JS_GetOpaque(val, tjs_sqlite3_class_id);
-    if (!h)
+    if (!h) {
         return;
-    if (h->handle)
+    }
+    if (h->handle) {
         sqlite3_close(h->handle);
+    }
     js_free_rt(rt, h);
 }
 
@@ -53,8 +55,9 @@ static JSValue tjs_new_sqlite3(JSContext *ctx, sqlite3 *handle) {
     JSValue obj;
 
     obj = JS_NewObjectClass(ctx, tjs_sqlite3_class_id);
-    if (JS_IsException(obj))
+    if (JS_IsException(obj)) {
         return obj;
+    }
 
     h = js_mallocz(ctx, sizeof(*h));
     if (!h) {
@@ -80,8 +83,9 @@ typedef struct {
 
 static void tjs_sqlite3_stmt_finalizer(JSRuntime *rt, JSValue val) {
     TJSSqlite3Stmt *h = JS_GetOpaque(val, tjs_sqlite3_stmt_class_id);
-    if (!h)
+    if (!h) {
         return;
+    }
     if (h->stmt) {
         sqlite3_reset(h->stmt);
         sqlite3_finalize(h->stmt);
@@ -99,8 +103,9 @@ static JSValue tjs_new_sqlite3_stmt(JSContext *ctx, sqlite3_stmt *stmt) {
     JSValue obj;
 
     obj = JS_NewObjectClass(ctx, tjs_sqlite3_stmt_class_id);
-    if (JS_IsException(obj))
+    if (JS_IsException(obj)) {
         return obj;
+    }
 
     h = js_mallocz(ctx, sizeof(*h));
     if (!h) {
@@ -127,8 +132,9 @@ JSValue tjs_throw_sqlite3_errno(JSContext *ctx, int err) {
                               JS_NewString(ctx, sqlite3_errstr(err)),
                               JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(ctx, obj, "errno", JS_NewInt32(ctx, err), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
-    if (JS_IsException(obj))
+    if (JS_IsException(obj)) {
         obj = JS_NULL;
+    }
     return JS_Throw(ctx, obj);
 }
 
@@ -172,8 +178,9 @@ static JSValue tjs_sqlite3_open(JSContext *ctx, JSValue this_val, int argc, JSVa
 static JSValue tjs_sqlite3_close(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
     int r = sqlite3_close(h->handle);
     if (r != SQLITE_OK) {
@@ -188,8 +195,9 @@ static JSValue tjs_sqlite3_close(JSContext *ctx, JSValue this_val, int argc, JSV
 static JSValue tjs_sqlite3_load_extension(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
     const char *zFile = JS_ToCString(ctx, argv[1]);
     const char *zProc = JS_IsUndefined(argv[2]) ? NULL : JS_ToCString(ctx, argv[2]);
@@ -203,8 +211,9 @@ static JSValue tjs_sqlite3_load_extension(JSContext *ctx, JSValue this_val, int 
     int r = sqlite3_load_extension(h->handle, zFile, zProc, NULL);
 
     JS_FreeCString(ctx, zFile);
-    if (zProc)
+    if (zProc) {
         JS_FreeCString(ctx, zProc);
+    }
 
     if (r != SQLITE_OK) {
         return tjs_throw_sqlite3_errno(ctx, r);
@@ -216,8 +225,9 @@ static JSValue tjs_sqlite3_load_extension(JSContext *ctx, JSValue this_val, int 
 static JSValue tjs_sqlite3_exec(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
     const char *sql = JS_ToCString(ctx, argv[1]);
 
@@ -239,8 +249,9 @@ static JSValue tjs_sqlite3_exec(JSContext *ctx, JSValue this_val, int argc, JSVa
 static JSValue tjs_sqlite3_prepare(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
     const char *sql = JS_ToCString(ctx, argv[1]);
 
@@ -268,8 +279,9 @@ static JSValue tjs_sqlite3_prepare(JSContext *ctx, JSValue this_val, int argc, J
 static JSValue tjs_sqlite3_in_transaction(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
     return JS_NewBool(ctx, !sqlite3_get_autocommit(h->handle));
 }
@@ -277,11 +289,13 @@ static JSValue tjs_sqlite3_in_transaction(JSContext *ctx, JSValue this_val, int 
 static JSValue tjs_sqlite3_stmt_finalize(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Stmt *h = tjs_sqlite3_stmt_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
-    if (!h->stmt)
+    if (!h->stmt) {
         return JS_UNDEFINED;
+    }
 
     sqlite3_reset(h->stmt);
 
@@ -298,11 +312,13 @@ static JSValue tjs_sqlite3_stmt_finalize(JSContext *ctx, JSValue this_val, int a
 static JSValue tjs_sqlite3_stmt_expand(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Stmt *h = tjs_sqlite3_stmt_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
-    if (!h->stmt)
+    if (!h->stmt) {
         return JS_NewString(ctx, "");
+    }
 
     char *sql = sqlite3_expanded_sql(h->stmt);
     if (sql == NULL) {
@@ -376,8 +392,9 @@ static JSValue tjs__sqlite3_bind_param(JSContext *ctx, sqlite3_stmt *stmt, int i
         case JS_TAG_STRING: {
             size_t len;
             const char *x = JS_ToCStringLen(ctx, &len, v);
-            if (!x)
+            if (!x) {
                 return JS_EXCEPTION;
+            }
             r = sqlite3_bind_text(stmt, idx, x, len, SQLITE_TRANSIENT);
             JS_FreeCString(ctx, x);
             CHECK_RET(r);
@@ -386,8 +403,9 @@ static JSValue tjs__sqlite3_bind_param(JSContext *ctx, sqlite3_stmt *stmt, int i
         case JS_TAG_OBJECT: {
             size_t len = 0;
             const uint8_t *x = JS_GetUint8Array(ctx, &len, v);
-            if (!x)
+            if (!x) {
                 return JS_EXCEPTION;
+            }
             r = sqlite3_bind_blob(stmt, idx, x, len, SQLITE_TRANSIENT);
             CHECK_RET(r);
             break;
@@ -396,10 +414,11 @@ static JSValue tjs__sqlite3_bind_param(JSContext *ctx, sqlite3_stmt *stmt, int i
             int64_t x;
             r = JS_ToInt64(ctx, &x, v);
             CHECK_VALUE(r, idx);
-            if (x < INT_MIN || x > INT_MAX)
+            if (x < INT_MIN || x > INT_MAX) {
                 r = sqlite3_bind_int64(stmt, idx, x);
-            else
+            } else {
                 r = sqlite3_bind_int(stmt, idx, x);
+            }
             CHECK_RET(r);
             break;
         }
@@ -446,18 +465,21 @@ static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSVa
         JS_FreeValue(ctx, js_length);
         for (int i = 0; i < len; i++) {
             JSValue v = JS_GetPropertyUint32(ctx, params, i);
-            if (JS_IsException(v))
+            if (JS_IsException(v)) {
                 return v;
+            }
             bool is_exception = JS_IsException(tjs__sqlite3_bind_param(ctx, stmt, i + 1, v));
             JS_FreeValue(ctx, v);
-            if (is_exception)
+            if (is_exception) {
                 return JS_EXCEPTION;
+            }
         }
     } else if (JS_IsObject(params)) {
         JSPropertyEnum *ptab;
         uint32_t plen;
-        if (JS_GetOwnPropertyNames(ctx, &ptab, &plen, params, JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY))
+        if (JS_GetOwnPropertyNames(ctx, &ptab, &plen, params, JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY)) {
             return JS_EXCEPTION;
+        }
         for (int i = 0; i < plen; i++) {
             JSAtom patom = ptab[i].atom;
             JSValue prop = JS_GetProperty(ctx, params, patom);
@@ -468,8 +490,9 @@ static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSVa
             const char *key = JS_AtomToCString(ctx, patom);
             int idx = sqlite3_bind_parameter_index(stmt, key);
             if (idx == 0 || JS_IsException(tjs__sqlite3_bind_param(ctx, stmt, idx, prop))) {
-                if (idx == 0)
+                if (idx == 0) {
                     JS_ThrowReferenceError(ctx, "Could not find parameter '%s'", key);
+                }
                 JS_FreeValue(ctx, prop);
                 JS_FreeCString(ctx, key);
                 JS_FreePropEnum(ctx, ptab, plen);
@@ -489,11 +512,13 @@ static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSVa
 static JSValue tjs_sqlite3_stmt_all(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Stmt *h = tjs_sqlite3_stmt_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
-    if (!h->stmt)
+    if (!h->stmt) {
         return JS_ThrowInternalError(ctx, "Statement has been finalized");
+    }
 
     int r = sqlite3_reset(h->stmt);
     if (r != SQLITE_OK) {
@@ -503,8 +528,9 @@ static JSValue tjs_sqlite3_stmt_all(JSContext *ctx, JSValue this_val, int argc, 
     if (argc == 2) {
         JSValue params = argv[1];
 
-        if (JS_IsException(tjs__sqlite3_bind_params(ctx, h->stmt, params)))
+        if (JS_IsException(tjs__sqlite3_bind_params(ctx, h->stmt, params))) {
             return JS_EXCEPTION;
+        }
     }
 
     JSValue result = JS_NewArray(ctx);
@@ -526,11 +552,13 @@ static JSValue tjs_sqlite3_stmt_all(JSContext *ctx, JSValue this_val, int argc, 
 static JSValue tjs_sqlite3_stmt_run(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Stmt *h = tjs_sqlite3_stmt_get(ctx, argv[0]);
 
-    if (!h)
+    if (!h) {
         return JS_EXCEPTION;
+    }
 
-    if (!h->stmt)
+    if (!h->stmt) {
         return JS_ThrowInternalError(ctx, "Statement has been finalized");
+    }
 
     int r = sqlite3_reset(h->stmt);
     if (r != SQLITE_OK) {
@@ -540,8 +568,9 @@ static JSValue tjs_sqlite3_stmt_run(JSContext *ctx, JSValue this_val, int argc, 
     if (argc == 2) {
         JSValue params = argv[1];
 
-        if (JS_IsException(tjs__sqlite3_bind_params(ctx, h->stmt, params)))
+        if (JS_IsException(tjs__sqlite3_bind_params(ctx, h->stmt, params))) {
             return JS_EXCEPTION;
+        }
     }
 
     r = sqlite3_step(h->stmt);

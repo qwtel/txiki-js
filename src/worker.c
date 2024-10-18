@@ -81,8 +81,9 @@ static void uv__close_cb(uv_handle_t *handle) {
 static void tjs_msgpipe_finalizer(JSRuntime *rt, JSValue val) {
     TJSMessagePipe *p = JS_GetOpaque(val, tjs_msgpipe_class_id);
     if (p) {
-        for (int i = 0; i < MSGPIPE_EVENT_MAX; i++)
+        for (int i = 0; i < MSGPIPE_EVENT_MAX; i++) {
             JS_FreeValueRT(rt, p->events[i]);
+        }
         uv_close(&p->h.handle, uv__close_cb);
     }
 }
@@ -90,8 +91,9 @@ static void tjs_msgpipe_finalizer(JSRuntime *rt, JSValue val) {
 static void tjs_msgpipe_mark(JSRuntime *rt, JSValue val, JS_MarkFunc *mark_func) {
     TJSMessagePipe *p = JS_GetOpaque(val, tjs_msgpipe_class_id);
     if (p) {
-        for (int i = 0; i < MSGPIPE_EVENT_MAX; i++)
+        for (int i = 0; i < MSGPIPE_EVENT_MAX; i++) {
             JS_MarkValue(rt, p->events[i], mark_func);
+        }
     }
 }
 
@@ -122,8 +124,9 @@ static JSValue emit_event(JSContext *ctx, int argc, JSValue *argv) {
 static void emit_msgpipe_event(TJSMessagePipe *p, int event, JSValue arg) {
     JSContext *ctx = p->ctx;
     JSValue event_func = p->events[event];
-    if (!JS_IsFunction(ctx, event_func))
+    if (!JS_IsFunction(ctx, event_func)) {
         return;
+    }
 
     JSValue args[2];
     args[0] = JS_DupValue(ctx, event_func);
@@ -153,8 +156,9 @@ static void uv__read_cb(uv_stream_t *handle, ssize_t nread, const uv_buf_t *buf)
 
     if (nread < 0) {
         uv_read_stop(&p->h.stream);
-        if (p->reading.data)
+        if (p->reading.data) {
             js_free(ctx, p->reading.data);
+        }
         memset(&p->reading, 0, sizeof(p->reading));
         if (nread != UV_EOF) {
             JSValue error = tjs_new_error(ctx, nread);
@@ -168,8 +172,9 @@ static void uv__read_cb(uv_stream_t *handle, ssize_t nread, const uv_buf_t *buf)
         size_t len_size = sizeof(p->reading.total_size.u8);
 
         /* This is a bogus read, likely a zero-read. Just return the buffer. */
-        if (nread != len_size)
+        if (nread != len_size) {
             return;
+        }
 
         uint64_t total_size = p->reading.total_size.u64;
         CHECK_GE(total_size, 0);
@@ -194,10 +199,11 @@ static void uv__read_cb(uv_stream_t *handle, ssize_t nread, const uv_buf_t *buf)
     JSSABTab sab_tab;
     int flags = JS_READ_OBJ_SAB | JS_READ_OBJ_REFERENCE;
     JSValue obj = JS_ReadObject2(ctx, (const uint8_t *) p->reading.data, total_size, flags, &sab_tab);
-    if (JS_IsException(obj))
+    if (JS_IsException(obj)) {
         emit_msgpipe_event(p, MSGPIPE_EVENT_MESSAGE_ERROR, JS_GetException(ctx));
-    else
+    } else {
         emit_msgpipe_event(p, MSGPIPE_EVENT_MESSAGE, obj);
+    }
     JS_FreeValue(ctx, obj);
 
     /* Decrement the SAB reference counts. */
@@ -211,8 +217,9 @@ static void uv__read_cb(uv_stream_t *handle, ssize_t nread, const uv_buf_t *buf)
 
 static JSValue tjs_new_msgpipe(JSContext *ctx, uv_os_sock_t fd) {
     JSValue obj = JS_NewObjectClass(ctx, tjs_msgpipe_class_id);
-    if (JS_IsException(obj))
+    if (JS_IsException(obj)) {
         return obj;
+    }
 
     TJSMessagePipe *p = tjs__mallocz(sizeof(*p));
     if (!p) {
@@ -254,12 +261,14 @@ static void uv__write_cb(uv_write_t *req, int status) {
 
 static JSValue tjs_msgpipe_postmessage(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSMessagePipe *p = tjs_msgpipe_get(ctx, this_val);
-    if (!p)
+    if (!p) {
         return JS_EXCEPTION;
+    }
 
     TJSMessagePipeWriteReq *wr = js_malloc(ctx, sizeof(*wr));
-    if (!wr)
+    if (!wr) {
         return JS_EXCEPTION;
+    }
 
     size_t len;
     int flags = JS_WRITE_OBJ_SAB | JS_WRITE_OBJ_REFERENCE | JS_WRITE_OBJ_STRIP_SOURCE;
@@ -295,15 +304,17 @@ static JSValue tjs_msgpipe_postmessage(JSContext *ctx, JSValue this_val, int arg
 
 static JSValue tjs_msgpipe_event_get(JSContext *ctx, JSValue this_val, int magic) {
     TJSMessagePipe *p = tjs_msgpipe_get(ctx, this_val);
-    if (!p)
+    if (!p) {
         return JS_EXCEPTION;
+    }
     return JS_DupValue(ctx, p->events[magic]);
 }
 
 static JSValue tjs_msgpipe_event_set(JSContext *ctx, JSValue this_val, JSValue value, int magic) {
     TJSMessagePipe *p = tjs_msgpipe_get(ctx, this_val);
-    if (!p)
+    if (!p) {
         return JS_EXCEPTION;
+    }
     if (JS_IsFunction(ctx, value) || JS_IsUndefined(value) || JS_IsNull(value)) {
         JS_FreeValue(ctx, p->events[magic]);
         p->events[magic] = JS_DupValue(ctx, value);
@@ -341,8 +352,9 @@ static JSValue worker_eval(JSContext *ctx, int argc, JSValue *argv) {
     JSValue ret;
 
     specifier = JS_ToCString(ctx, argv[0]);
-    if (!specifier)
+    if (!specifier) {
         goto error;
+    }
 
     if (!JS_IsUndefined(argv[1])) {
         size_t len;
@@ -436,8 +448,9 @@ static TJSWorker *tjs_worker_get(JSContext *ctx, JSValue obj) {
 
 static JSValue tjs_new_worker(JSContext *ctx, uv_os_sock_t channel_fd) {
     JSValue obj = JS_NewObjectClass(ctx, tjs_worker_class_id);
-    if (JS_IsException(obj))
+    if (JS_IsException(obj)) {
         return obj;
+    }
 
     TJSWorker *w = tjs__mallocz(sizeof(*w));
     if (!w) {
@@ -460,8 +473,9 @@ static JSValue tjs_new_worker(JSContext *ctx, uv_os_sock_t channel_fd) {
 
 static JSValue tjs_worker_constructor(JSContext *ctx, JSValue new_target, int argc, JSValue *argv) {
     const char *specifier = JS_ToCString(ctx, argv[0]);
-    if (!specifier)
+    if (!specifier) {
         return JS_EXCEPTION;
+    }
 
     uv_os_sock_t fds[2];
     int r = uv_socketpair(SOCK_STREAM, 0, fds, UV_NONBLOCK_PIPE, UV_NONBLOCK_PIPE);
@@ -512,8 +526,9 @@ static JSValue tjs_worker_constructor(JSContext *ctx, JSValue new_target, int ar
 
 static JSValue tjs_worker_terminate(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSWorker *w = tjs_worker_get(ctx, this_val);
-    if (!w)
+    if (!w) {
         return JS_EXCEPTION;
+    }
     if (w->wrt) {
         TJS_Stop(w->wrt);
         CHECK_EQ(uv_thread_join(&w->tid), 0);
@@ -525,8 +540,9 @@ static JSValue tjs_worker_terminate(JSContext *ctx, JSValue this_val, int argc, 
 
 static JSValue tjs_worker_get_msgpipe(JSContext *ctx, JSValue this_val) {
     TJSWorker *w = tjs_worker_get(ctx, this_val);
-    if (!w)
+    if (!w) {
         return JS_EXCEPTION;
+    }
     return JS_DupValue(ctx, w->message_pipe);
 }
 
