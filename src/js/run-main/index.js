@@ -225,8 +225,7 @@ if (options.help) {
 
         try {
             await tjs.stat(newFileName);
-            tjs.stdout.write(encode('Target file exists already'));
-            tjs.exit(1);
+            await tjs.unlink(newFileName);
         } catch (_) {
             // Ignore.
         }
