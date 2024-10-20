@@ -123,13 +123,18 @@ static TJSSqlite3Stmt *tjs_sqlite3_stmt_get(JSContext *ctx, JSValue obj) {
     return JS_GetOpaque2(ctx, obj, tjs_sqlite3_stmt_class_id);
 }
 
-JSValue tjs_throw_sqlite3_errno(JSContext *ctx, int err) {
+JSValue tjs_throw_sqlite3_errno(JSContext *ctx, int err, sqlite3 *db) {
     JSValue obj;
+    char error_buffer[512];
+    int extended_error_code = sqlite3_extended_errcode(db);
+    snprintf(error_buffer, sizeof(error_buffer), 
+            "SQLite error %d: %s (Extended code: %d)", 
+            err, sqlite3_errmsg(db), extended_error_code);
     obj = JS_NewError(ctx);
     JS_DefinePropertyValueStr(ctx,
                               obj,
                               "message",
-                              JS_NewString(ctx, sqlite3_errstr(err)),
+                              JS_NewString(ctx, error_buffer),
                               JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(ctx, obj, "errno", JS_NewInt32(ctx, err), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     if (JS_IsException(obj)) {
@@ -156,15 +161,18 @@ static JSValue tjs_sqlite3_open(JSContext *ctx, JSValue this_val, int argc, JSVa
 
     JS_FreeCString(ctx, db_name);
 
+    sqlite3_extended_result_codes(handle, 1);
+
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, handle);
     }
 
     // Enable sqlite extensions (but only via C calls)
     r = sqlite3_db_config(handle, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
     if (r != SQLITE_OK) {
+        JSValue ret = tjs_throw_sqlite3_errno(ctx, r, handle);
         sqlite3_close(handle);
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return ret;
     }
 
     JSValue obj = tjs_new_sqlite3(ctx, handle);
@@ -184,7 +192,7 @@ static JSValue tjs_sqlite3_close(JSContext *ctx, JSValue this_val, int argc, JSV
 
     int r = sqlite3_close(h->handle);
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, h->handle);
     }
 
     h->handle = NULL;
@@ -216,7 +224,7 @@ static JSValue tjs_sqlite3_load_extension(JSContext *ctx, JSValue this_val, int 
     }
 
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, h->handle);
     }
 
     return JS_UNDEFINED;
@@ -240,7 +248,7 @@ static JSValue tjs_sqlite3_exec(JSContext *ctx, JSValue this_val, int argc, JSVa
     JS_FreeCString(ctx, sql);
 
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, h->handle);
     }
 
     return JS_UNDEFINED;
@@ -265,7 +273,7 @@ static JSValue tjs_sqlite3_prepare(JSContext *ctx, JSValue this_val, int argc, J
     JS_FreeCString(ctx, sql);
 
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, h->handle);
     }
 
     JSValue obj = tjs_new_sqlite3_stmt(ctx, stmt);
@@ -301,7 +309,7 @@ static JSValue tjs_sqlite3_stmt_finalize(JSContext *ctx, JSValue this_val, int a
 
     int r = sqlite3_finalize(h->stmt);
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, sqlite3_db_handle(h->stmt));
     }
 
     h->stmt = NULL;
@@ -377,7 +385,7 @@ static JSValue tjs__sqlite3_bind_param(JSContext *ctx, sqlite3_stmt *stmt, int i
 
 #define CHECK_RET(ret)                                                                                                 \
     if (r != SQLITE_OK) {                                                                                              \
-        return tjs_throw_sqlite3_errno(ctx, ret);                                                                      \
+        return tjs_throw_sqlite3_errno(ctx, ret, sqlite3_db_handle(stmt));                                                                      \
     }
 
     switch (JS_VALUE_GET_NORM_TAG(v)) {
@@ -522,7 +530,7 @@ static JSValue tjs_sqlite3_stmt_all(JSContext *ctx, JSValue this_val, int argc, 
 
     int r = sqlite3_reset(h->stmt);
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, sqlite3_db_handle(h->stmt));
     }
 
     if (argc == 2) {
@@ -543,7 +551,7 @@ static JSValue tjs_sqlite3_stmt_all(JSContext *ctx, JSValue this_val, int argc, 
 
     if (r != SQLITE_OK && r != SQLITE_DONE) {
         JS_FreeValue(ctx, result);
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, sqlite3_db_handle(h->stmt));
     }
 
     return result;
@@ -562,7 +570,7 @@ static JSValue tjs_sqlite3_stmt_run(JSContext *ctx, JSValue this_val, int argc, 
 
     int r = sqlite3_reset(h->stmt);
     if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, sqlite3_db_handle(h->stmt));
     }
 
     if (argc == 2) {
@@ -575,7 +583,7 @@ static JSValue tjs_sqlite3_stmt_run(JSContext *ctx, JSValue this_val, int argc, 
 
     r = sqlite3_step(h->stmt);
     if (r != SQLITE_OK && r != SQLITE_DONE && r != SQLITE_ROW) {
-        return tjs_throw_sqlite3_errno(ctx, r);
+        return tjs_throw_sqlite3_errno(ctx, r, sqlite3_db_handle(h->stmt));
     }
 
     return JS_UNDEFINED;
