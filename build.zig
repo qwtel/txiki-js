@@ -5,7 +5,7 @@ const tjs_version: std.SemanticVersion = .{
     .major = 24,
     .minor = 7,
     .patch = 0,
-    .pre = "-zig.6",
+    .pre = "-zig.7",
 };
 
 const targets: []const std.Target.Query = &.{
