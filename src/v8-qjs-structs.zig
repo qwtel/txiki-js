@@ -13,8 +13,12 @@ pub const c = @cImport({
 
 pub const JSString = opaque {}; 
 
+pub const JSRefCountHeader = extern struct {
+    ref_count: c_int,
+};
+
 pub const JSBigInt = extern struct {
-    header: c.JSRefCountHeader,
+    header: JSRefCountHeader,
     num: c.bf_t,
 };
 
