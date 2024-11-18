@@ -15,7 +15,8 @@ extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int
 extern fn js_string_to_bigint(ctx: ?*c.JSContext, buf: [*c]const u8, radix: c_int) c.JSValue;
 extern fn js_regexp_constructor_internal(ctx: ?*c.JSContext, ctor: c.JSValue, pattern: c.JSValue, bc: c.JSValue) c.JSValue;
 extern fn js_typed_array_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue, classid: c_int) c.JSValue;
-extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue, is_dataview: c.BOOL) c.JSValue;
+extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
+extern fn js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
 extern fn js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSRegExp;
 extern fn js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) c.BOOL;
@@ -468,8 +469,8 @@ pub fn Serializer(comptime Delegate: type) type {
                         // happen before we assign object IDs.
                         @intFromEnum(z.JSClassId.UINT8C_ARRAY)...@intFromEnum(z.JSClassId.DATAVIEW) => {
                             if (!self.id_map.contains(p) and !self.treat_array_buffer_views_as_host_objects) {
-                                const is_dataview = if (class_id == @intFromEnum(z.JSClassId.DATAVIEW)) c.TRUE else c.FALSE;
-                                const ab_val = js_typed_array_get_buffer(self.ctx, object, is_dataview);
+                                const is_dataview = class_id == @intFromEnum(z.JSClassId.DATAVIEW);
+                                const ab_val = if (is_dataview) js_dataview_get_buffer(self.ctx, object) else js_typed_array_get_buffer(self.ctx, object);
                                 defer c.JS_FreeValue(self.ctx, ab_val);
                                 try self.writeJSReceiver(ab_val, @ptrCast(c.JS_VALUE_GET_PTR(ab_val)));
                             }
@@ -781,9 +782,8 @@ pub fn Serializer(comptime Delegate: type) type {
 
             try self.writeTag(.ArrayBufferView);
 
-            const is_dataview = if (class_id == .DATAVIEW) c.TRUE else c.FALSE;
-
-            const ab_val = js_typed_array_get_buffer(self.ctx, val, is_dataview);
+            const is_dataview = class_id == .DATAVIEW;
+            const ab_val = if (is_dataview) js_dataview_get_buffer(self.ctx, val) else js_typed_array_get_buffer(self.ctx, val);
             defer c.JS_FreeValue(self.ctx, ab_val);
 
             const p: *c.JSObject = @ptrCast(c.JS_VALUE_GET_PTR(val));
