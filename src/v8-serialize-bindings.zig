@@ -88,11 +88,7 @@ fn jsSerializerContructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: 
         return c.JS_ThrowTypeError(ctx, "Could not create Serializer");
     };
 
-    if (c.JS_SetOpaque(obj, ser) == c.FALSE) {
-        ser.deinit();
-        ser.allocator.destroy(ser);
-        return c.JS_ThrowTypeError(ctx, "Could not set opaque");
-    }
+    _ = c.JS_SetOpaque(obj, ser);
 
     _ = argc;
     _ = argv;
@@ -225,11 +221,7 @@ fn jsDeserializerContructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc
         return c.JS_ThrowTypeError(ctx, "Could not create Deserializer");
     };
 
-    if (c.JS_SetOpaque(obj, des) == c.FALSE) {
-        des.deinit();
-        des.allocator.destroy(des);
-        return c.JS_ThrowTypeError(ctx, "Could not set opaque");
-    }
+    _ = c.JS_SetOpaque(obj, des);
 
     return obj;
 }
