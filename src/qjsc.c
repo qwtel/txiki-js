@@ -343,7 +343,7 @@ int main(int argc, char **argv) {
     if (!out_filename)
         out_filename = "out.c";
 
-    pstrcpy(cfilename, sizeof(cfilename), out_filename);
+    js__pstrcpy(cfilename, sizeof(cfilename), out_filename);
 
     fo = fopen(cfilename, "w");
     if (!fo) {
