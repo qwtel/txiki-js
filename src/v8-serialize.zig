@@ -6,7 +6,7 @@ pub const c = z.c;
 
 const QJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
 
-// A bunch of qjs iternal functions that we've stripped `static` from. They're not part of the header, so we have to declare them here.
+// A bunch of qjs internal functions that we've stripped `static` from. They're not part of the header, so we have to declare them here.
 extern fn JS_ToObject(ctx: ?*c.JSContext, v: c.JSValue) c.JSValue;
 extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: c.BOOL) c.JSValue;
 extern fn js_alloc_string(ctx: ?*c.JSContext, max_len: c_int, is_wide_char: c.BOOL) ?*z.JSString;
@@ -14,7 +14,6 @@ extern fn js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) 
 extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
 extern fn js_string_to_bigint(ctx: ?*c.JSContext, buf: [*c]const u8, radix: c_int) c.JSValue;
 extern fn js_regexp_constructor_internal(ctx: ?*c.JSContext, ctor: c.JSValue, pattern: c.JSValue, bc: c.JSValue) c.JSValue;
-extern fn js_typed_array_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue, classid: c_int) c.JSValue;
 extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
@@ -1580,7 +1579,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             const obj = if (tag_enum == .DataView)
                 js_dataview_constructor(self.ctx, z.JS_UNDEFINED, 3, &argv)
             else
-                js_typed_array_constructor(self.ctx, z.JS_UNDEFINED, 3, &argv, @intFromEnum(class_id));
+                c.JS_NewTypedArray(self.ctx, 3, &argv, @intFromEnum(class_id) - @intFromEnum(z.JSClassId.UINT8C_ARRAY));
             if (c.JS_IsException(obj) == c.TRUE) return Error.OutOfMemory;
             errdefer c.JS_FreeValue(self.ctx, obj);
 
