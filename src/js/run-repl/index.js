@@ -194,14 +194,10 @@ import path from 'tjs:path';
     
     async function term_read_handler() {
         while (term_read) {
-            try {
-                const nread = await tjs.stdin.read(term_read_buf);
+            const nread = await tjs.stdin.read(term_read_buf);
 
-                for (var i = 0; i < nread; i++) {
-                    handle_byte(term_read_buf[i]);
-                }
-            } catch (error) {
-                print_eval_error(error);
+            for (var i = 0; i < nread; i++) {
+                handle_byte(term_read_buf[i]);
             }
         }
     }
@@ -1590,7 +1586,7 @@ import path from 'tjs:path';
             expr = '"use strict"; void 0;' + expr;
         eval_start_time = os.now();
         /* eval as a script */
-        result = std.evalScript(expr, { backtrace_barrier: true, async: true });
+        result = Promise.try(std.evalScript, expr, { backtrace_barrier: true, async: true });
         /* result is a promise */
         result.then(print_eval_result, print_eval_error);
     }
