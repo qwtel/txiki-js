@@ -98,7 +98,7 @@ fn jsSerializerContructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: 
 fn jsSerializerFinalizer(_: ?*c.JSRuntime, this_val: c.JSValue) callconv(.C) void {
     const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque(this_val, serializer_class_id)));
     ser.deinit();
-    ser.allocator.destroy(ser);
+    ser.ac.destroy(ser);
 }
 
 fn jsSerializerWriteHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
@@ -229,7 +229,7 @@ fn jsDeserializerContructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc
 fn jsDeserializerFinalizer(_: ?*c.JSRuntime, this_val: c.JSValue) callconv(.C) void {
     const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque(this_val, deserializer_class_id)));
     des.deinit();
-    des.allocator.destroy(des);
+    des.ac.destroy(des);
 }
 
 fn jsDeserializerReadHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.C) c.JSValue {

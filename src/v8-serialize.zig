@@ -249,10 +249,10 @@ const ObjectOrArray = enum(u1) { Object, Array };
 pub fn Serializer(comptime Delegate: type) type {
     // XXX: comptime validate delegate type
     return struct {
-        allocator: std.mem.Allocator,
+        ac: std.mem.Allocator,
         ctx: ?*c.JSContext,
-        buffer: std.ArrayList(u8),
-        id_map: std.HashMap(*c.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage),
+        buffer: std.ArrayListUnmanaged(u8),
+        id_map: std.HashMapUnmanaged(*c.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage),
         next_id: u32 = 0,
 
         treat_array_buffer_views_as_host_objects: bool = false,
@@ -263,10 +263,10 @@ pub fn Serializer(comptime Delegate: type) type {
 
         pub fn init(allocator: std.mem.Allocator, ctx: ?*c.JSContext) !Self {
             return Self{
-                .allocator = allocator,
+                .ac = allocator,
                 .ctx = ctx,
-                .buffer = try std.ArrayList(u8).initCapacity(allocator, 2),
-                .id_map = std.HashMap(*c.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage).init(allocator),
+                .buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, 2),
+                .id_map = .{},
                 .has_custom_objects = false,
                 .delegate = null,
             };
@@ -274,18 +274,18 @@ pub fn Serializer(comptime Delegate: type) type {
 
         pub fn initDelegate(allocator: std.mem.Allocator, ctx: ?*c.JSContext, delegate: Delegate) !Self {
             return Self{
-                .allocator = allocator,
+                .ac = allocator,
                 .ctx = ctx,
-                .buffer = try std.ArrayList(u8).initCapacity(allocator, 2),
-                .id_map = std.HashMap(*c.JSObject, u32, JSObjectHashContext, std.hash_map.default_max_load_percentage).init(allocator),
+                .buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, 2),
+                .id_map = .{},
                 .has_custom_objects = delegate.hasCustomHostObject(),
                 .delegate = delegate,
             };
         }
 
         pub fn deinit(self: *Self) void {
-            self.buffer.deinit();
-            self.id_map.deinit();
+            self.buffer.deinit(self.ac);
+            self.id_map.deinit(self.ac);
         }
 
         pub fn writeHeader(self: *Self) !void {
@@ -298,7 +298,7 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeTag(self: *Self, tag: SerializationTag) !void {
-            try self.buffer.append(@intFromEnum(tag));
+            try self.buffer.append(self.ac, @intFromEnum(tag));
         }
 
         fn writeVarint(self: *Self, comptime T: type, value: T) !void {
@@ -310,9 +310,9 @@ pub fn Serializer(comptime Delegate: type) type {
             }
             var temp_value = value;
             while (temp_value >= 0x80) : (temp_value >>= 7) {
-                try self.buffer.append(@intCast((temp_value & 0x7F) | 0x80));
+                try self.buffer.append(self.ac, @intCast((temp_value & 0x7F) | 0x80));
             }
-            try self.buffer.append(@intCast(temp_value));
+            try self.buffer.append(self.ac, @intCast(temp_value));
         }
 
         fn writeZigZag(self: *Self, comptime T: type, value: T) !void {
@@ -369,8 +369,8 @@ pub fn Serializer(comptime Delegate: type) type {
 
             const expn: usize = @intCast(bf.num.expn);
             const v8_limbs_num: usize = (expn + 63) >> 6; // divCeil
-            const v8_limbs = try self.allocator.alloc(u64, v8_limbs_num);
-            defer self.allocator.free(v8_limbs);
+            const v8_limbs = try self.ac.alloc(u64, v8_limbs_num);
+            defer self.ac.free(v8_limbs);
 
             var end: usize = hex_str.len;
             var v8_limbs_idx: usize = 0;
@@ -412,18 +412,18 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn reserveRawBytes(self: *Self, size: usize) ![]u8 {
-            try self.buffer.ensureUnusedCapacity(size);
+            try self.buffer.ensureUnusedCapacity(self.ac, size);
             const slice = self.buffer.unusedCapacitySlice();
             self.buffer.items.len += size;
             return slice[0..size];
         }
 
         pub fn writeRawBytes(self: *Self, bytes: []const u8) !void {
-            try self.buffer.appendSlice(bytes);
+            try self.buffer.appendSlice(self.ac, bytes);
         }
 
         fn writeByte(self: *Self, value: u8) !void {
-            try self.buffer.append(value);
+            try self.buffer.append(self.ac, value);
         }
 
         pub fn writeUint32(self: *Self, value: u32) !void {
@@ -435,7 +435,7 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         pub fn release(self: *Self) ![]u8 {
-            return self.buffer.toOwnedSlice();
+            return self.buffer.toOwnedSlice(self.ac);
         }
 
         pub fn writeObject(self: *Self, object: c.JSValue) Error!void {
@@ -532,7 +532,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeJSReceiver(self: *Self, obj: c.JSValue, p: *c.JSObject) !void {
             // If the object has already been serialized, just write its ID.
-            const find_result = try self.id_map.getOrPut(p);
+            const find_result = try self.id_map.getOrPut(self.ac, p);
             if (find_result.found_existing) {
                 try self.writeTag(.ObjectReference);
                 try self.writeVarint(u32, find_result.value_ptr.* - 1);
@@ -742,8 +742,8 @@ pub fn Serializer(comptime Delegate: type) type {
             const s = _js_get_map_state(self.ctx, obj, c.FALSE);
             const length = s.record_count * (if (as == .Map) 2 else 1);
 
-            var entries = try std.ArrayList(c.JSValue).initCapacity(self.allocator, length);
-            defer entries.deinit();
+            var entries = try std.ArrayListUnmanaged(c.JSValue).initCapacity(self.ac, length);
+            defer entries.deinit(self.ac);
 
             var el = s.records.next;
             while (el != &s.records) : (el = el.*.next) {
@@ -933,7 +933,7 @@ pub fn Serializer(comptime Delegate: type) type {
 pub fn Deserializer(comptime Delegate: type) type {
     // FIXME: comptime validate delegate type
     return struct {
-        allocator: std.mem.Allocator,
+        ac: std.mem.Allocator,
         ctx: ?*c.JSContext,
         js_view: c.JSValue,
         data: []const u8,
@@ -942,7 +942,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         next_id: u32 = 0,
         version_13_broken_data_mode: bool = false,
         suppress_deserialization_errors: bool = false,
-        id_map: std.AutoHashMap(u32, c.JSValue),
+        id_map: std.AutoHashMapUnmanaged(u32, c.JSValue),
         // array_buffer_transfer_map: *anyopaque = null,
         // shared_object_conveyor: *anyopaque = null,
         delegate: ?Delegate,
@@ -952,11 +952,11 @@ pub fn Deserializer(comptime Delegate: type) type {
         pub fn init(allocator: std.mem.Allocator, ctx: ?*c.JSContext, buffer_view: c.JSValue) !Self {
             const slice = try arrayBufferViewToSlice(ctx, buffer_view);
             return Self{
-                .allocator = allocator,
+                .ac = allocator,
                 .ctx = ctx,
                 .js_view = c.JS_DupValue(ctx, buffer_view), // XXX: should probably create our own view
                 .data = slice,
-                .id_map = std.AutoHashMap(u32, c.JSValue).init(allocator),
+                .id_map = .{},
                 .delegate = null,
             };
         }
@@ -964,17 +964,17 @@ pub fn Deserializer(comptime Delegate: type) type {
         pub fn initDelegate(allocator: std.mem.Allocator, ctx: ?*c.JSContext, buffer_view: c.JSValue, delegate: Delegate) !Self {
             const slice = try arrayBufferViewToSlice(ctx, buffer_view);
             return Self{
-                .allocator = allocator,
+                .ac = allocator,
                 .ctx = ctx,
                 .js_view = c.JS_DupValue(ctx, buffer_view), // XXX: should probably create our own view
                 .data = slice,
-                .id_map = std.AutoHashMap(u32, c.JSValue).init(allocator),
+                .id_map = .{},
                 .delegate = delegate,
             };
         }
 
         pub fn deinit(self: *Self) void {
-            self.id_map.deinit();
+            self.id_map.deinit(self.ac);
             c.JS_FreeValue(self.ctx, self.js_view);
         }
 
@@ -1202,22 +1202,22 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn bigIntFromSerializedDigits(self: *Self, sign_bit: u1, digits_store: []const u8) !c.JSValue {
             if (digits_store.len == 0) return js_string_to_bigint(self.ctx, "0", 16);
 
-            var hex = try std.ArrayList(u8).initCapacity(self.allocator, 2 + digits_store.len * 2);
-            defer hex.deinit();
+            var hex = try std.ArrayListUnmanaged(u8).initCapacity(self.ac, 2 + digits_store.len * 2);
+            defer hex.deinit(self.ac);
 
-            if (sign_bit == 1) try hex.append(@as(u8, '-'));
+            if (sign_bit == 1) try hex.append(self.ac, @as(u8, '-'));
 
             var i = digits_store.len;
             while (i > 0) {
                 i -= 1;
                 const byte = digits_store[i];
-                try hex.append(@as(u8, "0123456789abcdef"[byte >> 4]));
-                try hex.append(@as(u8, "0123456789abcdef"[byte & 0xf]));
+                try hex.append(self.ac, @as(u8, "0123456789abcdef"[byte >> 4]));
+                try hex.append(self.ac, @as(u8, "0123456789abcdef"[byte & 0xf]));
             }
-            try hex.append(0);
+            try hex.append(self.ac, 0);
 
-            const slice = try hex.toOwnedSlice();
-            defer self.allocator.free(slice);
+            const slice = try hex.toOwnedSlice(self.ac);
+            defer self.ac.free(slice);
             // std.debug.print("\nstr: {s}\n", .{slice});
 
             const bigint = js_string_to_bigint(self.ctx, slice.ptr, 16);
@@ -1252,8 +1252,8 @@ pub fn Deserializer(comptime Delegate: type) type {
             const bytes = try self.readRawBytes(byte_length);
             const c_length: c_int = @intCast(byte_length / @sizeOf(u16));
             if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) { // XXX: all the homies hate this
-                const aligned_bytes = try self.allocator.alignedAlloc(u8, 2, byte_length);
-                defer self.allocator.free(aligned_bytes);
+                const aligned_bytes = try self.ac.alignedAlloc(u8, 2, byte_length);
+                defer self.ac.free(aligned_bytes);
                 @memcpy(aligned_bytes, bytes);
                 const bytes_u16 = std.mem.bytesAsSlice(u16, aligned_bytes);
                 return js_new_string16_len(self.ctx, @alignCast(bytes_u16.ptr), c_length);
@@ -1689,7 +1689,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         fn addObjectWithID(self: *Self, id: u32, value: c.JSValue) !void {
             if (self.hasObjectWithID(id)) return Error.DataCloneError;
-            try self.id_map.put(id, value);
+            try self.id_map.put(self.ac, id, value);
         }
     };
 }
