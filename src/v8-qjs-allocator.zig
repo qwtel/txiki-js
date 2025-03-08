@@ -13,20 +13,21 @@ pub const QJSAllocator = struct {
                 .alloc = alloc,
                 .resize = resize,
                 .free = free,
+                .remap = remap,
             },
         };
     }
 
-    fn alloc(ctx: *anyopaque, n: usize, log2_ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    fn alloc(ctx: *anyopaque, n: usize, log2_ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const js_ctx: *c.JSContext = @ptrCast(@alignCast(ctx));
         const ptr = c.js_malloc(js_ctx, n);
-        std.debug.assert(log2_ptr_align < 64);
-        std.debug.assert(std.mem.isAligned(@intFromPtr(ptr), @as(usize, 1) << @intCast(log2_ptr_align)));
+        std.debug.assert(@intFromEnum(log2_ptr_align) < 64);
+        std.debug.assert(std.mem.isAligned(@intFromPtr(ptr), @as(usize, 1) << @intFromEnum(log2_ptr_align)));
         _ = ret_addr;
         return @ptrCast(ptr);
     }
 
-    fn resize(ctx: *anyopaque, old_mem: []u8, log2_buf_align: u8, n: usize, ret_addr: usize) bool {
+    fn resize(ctx: *anyopaque, old_mem: []u8, log2_buf_align: std.mem.Alignment, n: usize, ret_addr: usize) bool {
         const js_ctx: *c.JSContext = @ptrCast(@alignCast(ctx));
         if (n <= old_mem.len) {
             return true;
@@ -40,10 +41,19 @@ pub const QJSAllocator = struct {
         return false;
     }
 
-    fn free(ctx: *anyopaque, mem: []u8, log2_buf_align: u8, ret_addr: usize) void {
+    fn free(ctx: *anyopaque, mem: []u8, log2_buf_align: std.mem.Alignment, ret_addr: usize) void {
         const js_ctx: *c.JSContext = @ptrCast(@alignCast(ctx));
         _ = log2_buf_align;
         _ = ret_addr;
         c.js_free(js_ctx, mem.ptr);
+    }
+
+    fn remap(ctx: *anyopaque, old_mem: []u8, log2_buf_align: std.mem.Alignment, n: usize, ret_addr: usize) ?[*]u8 {
+        _ = ctx;
+        _ = old_mem;
+        _ = log2_buf_align;
+        _ = n;
+        _ = ret_addr;
+        return null;
     }
 };

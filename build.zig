@@ -89,7 +89,7 @@ fn build2(
         lib.installLibraryHeaders(dep_mimalloc.artifact("mimalloc-static"));
     }
 
-    if (target.result.os.tag != .windows and !target.result.isAndroid()) {
+    if (target.result.os.tag != .windows and !target.result.abi.isAndroid()) {
         lib.linkSystemLibrary("pthread");
     }
 
@@ -147,7 +147,7 @@ fn build2(
         },
         .flags = cflags.items,
     });
-    if (target.result.os.tag == .linux or target.result.isBSD()) {
+    if (target.result.os.tag == .linux or target.result.os.tag.isBSD()) {
         lib.addCSourceFiles(.{
             .files = &.{"src/mod_posix-socket.c"},
             .flags = cflags.items,
@@ -157,18 +157,18 @@ fn build2(
     const tjs_platform = try std.fmt.allocPrint(
         b.allocator,
         "\"{s}\"",
-        .{if (target.result.isDarwin()) "darwin" else @tagName(target.result.os.tag)},
+        .{if (target.result.os.tag.isDarwin()) "darwin" else @tagName(target.result.os.tag)},
     );
 
-    lib.defineCMacro("TJS__PLATFORM", tjs_platform);
+    lib.root_module.addCMacro("TJS__PLATFORM", tjs_platform);
     if (opts.with_sqlite) {
-        lib.defineCMacro("TJS__HAS_SQLITE", "1");
+        lib.root_module.addCMacro("TJS__HAS_SQLITE", "1");
     }
     if (opts.with_wasm) {
-        lib.defineCMacro("TJS__HAS_WASM", "1");
+        lib.root_module.addCMacro("TJS__HAS_WASM", "1");
     }
     if (opts.with_mimalloc) {
-        lib.defineCMacro("TJS__HAS_MIMALLOC", "1");
+        lib.root_module.addCMacro("TJS__HAS_MIMALLOC", "1");
     }
 
     const tjs = b.addExecutable(.{
@@ -197,7 +197,7 @@ fn build2(
     // Can only build for macOS on macOS right now, and is skipped otherwise.
     // `macos-libc.ini` is checked into the repo, but can create with `zig libc > macos-libc.ini` and then
     // replace `include_dir` and `sys_include_dir` with output from `xcrun --show-sdk-path --sdk macosx` + `/usr/include`
-    if (target.result.isDarwin()) {
+    if (target.result.os.tag.isDarwin()) {
         if (builtin.os.tag == .macos) {
             tjs.setLibCFile(b.path("macos-libc.ini"));
             tjsc.setLibCFile(b.path("macos-libc.ini"));
@@ -244,7 +244,7 @@ fn build2(
             .target = target,
             .optimize = optimize,
         });
-        // unit_tests.defineCMacro("DUMP_LEAKS", "1");
+        // unit_tests.root_module.addCMacro("DUMP_LEAKS", "1");
         unit_tests.linkLibrary(dep_quickjs.artifact("qjs"));
 
         const run_unit_tests = b.addRunArtifact(unit_tests);

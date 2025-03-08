@@ -36,7 +36,7 @@ const kLatestVersion = 15;
 fn bytesNeededForVarint(comptime T: type, value: T) usize {
     comptime {
         const type_info = @typeInfo(T);
-        if (type_info != .Int or type_info.Int.signedness != .unsigned) {
+        if (type_info != .int or type_info.int.signedness != .unsigned) {
             @compileError("Only unsigned integer types can be written as varints.");
         }
     }
@@ -82,8 +82,8 @@ fn shiftRightN(values: []u64, n: usize) void {
 }
 
 fn ShiftTypeOf(comptime T: type) type {
-    const info = @typeInfo(T);
-    return switch (info.Int.bits) {
+    const type_info = @typeInfo(T);
+    return switch (type_info.int.bits) {
         0...8 => u3,
         9...16 => u4,
         17...32 => u5,
@@ -304,7 +304,7 @@ pub fn Serializer(comptime Delegate: type) type {
         fn writeVarint(self: *Self, comptime T: type, value: T) !void {
             comptime {
                 const type_info = @typeInfo(T);
-                if (type_info != .Int or type_info.Int.signedness != .unsigned) {
+                if (type_info != .int or type_info.int.signedness != .unsigned) {
                     @compileError("Only unsigned integer types can be written as varints.");
                 }
             }
@@ -318,11 +318,11 @@ pub fn Serializer(comptime Delegate: type) type {
         fn writeZigZag(self: *Self, comptime T: type, value: T) !void {
             comptime {
                 const type_info = @typeInfo(T);
-                if (type_info != .Int or type_info.Int.signedness != .signed) {
+                if (type_info != .int or type_info.int.signedness != .signed) {
                     @compileError("Only signed integer types can be written as zigzag.");
                 }
             }
-            const UnsignedT = @Type(.{ .Int = .{ .bits = @typeInfo(T).Int.bits, .signedness = .unsigned } });
+            const UnsignedT = @Type(.{ .int = .{ .bits = @typeInfo(T).int.bits, .signedness = .unsigned } });
             const bit_value: UnsignedT = @bitCast(value);
             const sign_bit: UnsignedT = @bitCast(value >> (@bitSizeOf(T) - 1));
             const zigzag_value: UnsignedT = bit_value << 1 ^ sign_bit;
@@ -1019,7 +1019,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn readVarint(self: *Self, comptime T: type) !T {
             comptime {
                 const type_info = @typeInfo(T);
-                if (type_info != .Int or type_info.Int.signedness != .unsigned) {
+                if (type_info != .int or type_info.int.signedness != .unsigned) {
                     @compileError("Only unsigned integer types can be read from varints.");
                 }
             }
@@ -1047,11 +1047,11 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn readZigZag(self: *Self, comptime T: type) !T {
             comptime {
                 const type_info = @typeInfo(T);
-                if (type_info != .Int or type_info.Int.signedness != .signed) {
+                if (type_info != .int or type_info.int.signedness != .signed) {
                     @compileError("Only signed integer types can be read as zigzag.");
                 }
             }
-            const UnsignedT = @Type(.{ .Int = .{ .bits = @typeInfo(T).Int.bits, .signedness = .unsigned } });
+            const UnsignedT = @Type(.{ .int = .{ .bits = @typeInfo(T).int.bits, .signedness = .unsigned } });
             const unsigned_value: UnsignedT = try self.readVarint(UnsignedT);
             const a: T = @intCast(unsigned_value >> 1);
             const b: T = @intCast(unsigned_value & 1);
