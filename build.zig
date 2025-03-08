@@ -1,11 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const tjs_version: std.SemanticVersion = .{
-    .major = 24,
-    .minor = 12,
-    .patch = 0,
-    .pre = "-zig.0",
+const BuildZon = struct {
+    version: []const u8,
 };
 
 const targets: []const std.Target.Query = &.{
@@ -270,13 +267,18 @@ pub fn build(b: *std.Build) !void {
 
     {
         const ac = b.allocator;
+
+        const zon_file = try std.fs.cwd().openFile("build.zig.zon", .{});
+        const zon_buffer = try zon_file.readToEndAllocOptions(ac, 1024 * 1024, null, @alignOf(u8), 0);
+        const zon_parsed = try std.zon.parse.fromSlice(BuildZon, ac, zon_buffer, null, .{ .ignore_unknown_fields = true });
+        const tjs_version = try std.SemanticVersion.parse(zon_parsed.version);
+
         var buf0 = try std.fs.cwd().readFileAlloc(ac, b.path("src/version.h.in").getPath(b), 4096 * 4);
         var buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_MAJOR@", try usizeToStr(ac, tjs_version.major));
         buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_MINOR@", try usizeToStr(ac, tjs_version.minor));
         buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_PATCH@", try usizeToStr(ac, tjs_version.patch));
         buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_SUFFIX@", tjs_version.pre orelse "");
         const f = try std.fs.cwd().createFile(b.path("src/version.h").getPath(b), .{ .truncate = true });
-        defer f.close();
         try f.writeAll(buf0);
     }
 
