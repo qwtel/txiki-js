@@ -345,7 +345,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeTwoByteString(self: *Self, value: []const u16) !void {
             try self.writeVarint(usize, value.len * @sizeOf(u16));
-            try self.writeRawBytes(std.mem.sliceAsBytes(value));
+            try self.writeRawBytes(@ptrCast(value));
         }
 
         fn writeBigIntContents(self: *Self, bf: *z.JSBigInt, obj: c.JSValue) !void {
@@ -408,7 +408,7 @@ pub fn Serializer(comptime Delegate: type) type {
             const bitfield: u32 = (byte_length << 1) | sign_bit;
 
             try self.writeVarint(u32, bitfield);
-            try self.writeRawBytes(std.mem.sliceAsBytes(v8_limbs));
+            try self.writeRawBytes(@ptrCast(v8_limbs));
         }
 
         fn reserveRawBytes(self: *Self, size: usize) ![]u8 {
@@ -1255,11 +1255,11 @@ pub fn Deserializer(comptime Delegate: type) type {
                 const aligned_bytes = try self.ac.alignedAlloc(u8, 2, byte_length);
                 defer self.ac.free(aligned_bytes);
                 @memcpy(aligned_bytes, bytes);
-                const bytes_u16 = std.mem.bytesAsSlice(u16, aligned_bytes);
-                return js_new_string16_len(self.ctx, @alignCast(bytes_u16.ptr), c_length);
+                const bytes_u16: []const u16 = @ptrCast(aligned_bytes);
+                return js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
             } else {
-                const bytes_u16 = std.mem.bytesAsSlice(u16, bytes);
-                return js_new_string16_len(self.ctx, @alignCast(bytes_u16.ptr), c_length);
+                const bytes_u16: []const u16 = @alignCast(@ptrCast(bytes));
+                return js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
             }
         }
 
