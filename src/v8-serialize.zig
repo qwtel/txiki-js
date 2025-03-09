@@ -575,7 +575,8 @@ pub fn Serializer(comptime Delegate: type) type {
                 .array_buffer, .shared_array_buffer => {
                     try self.writeJSArrayBuffer(obj);
                 },
-                .uint8c_array, .int8_array, .uint8_array, .int16_array, .uint16_array, .int32_array, .uint32_array, .big_int64_array, .big_uint64_array, .float16_array, .float32_array, .float64_array, .dataview => {
+                .uint8c_array, .int8_array, .uint8_array, .int16_array, .uint16_array, .int32_array, .uint32_array, 
+                .big_int64_array, .big_uint64_array, .float16_array, .float32_array, .float64_array, .dataview => {
                     try self.writeJSArrayBufferView(obj, class_id);
                 },
                 .@"error" => {
