@@ -223,8 +223,8 @@ fn build2(
 
     if (!opts.matrix) {
         const exe = b.addExecutable(.{
-            .name = "main",
-            .root_source_file = b.path("src/v8-serialize-main.zig"),
+            .name = "playground",
+            .root_source_file = b.path("src/v8-serialize-test.zig"),
             .target = target,
             .optimize = optimize,
         });
@@ -232,12 +232,12 @@ fn build2(
         b.installArtifact(exe);
 
         const art_run = b.addRunArtifact(exe);
-        const run_step = b.step("main", "");
+        const run_step = b.step("playground", "");
         run_step.dependOn(&art_run.step);
 
         const test_step = b.step("test", "Run unit tests for zig modules");
         const unit_tests = b.addTest(.{
-            .root_source_file = b.path("src/v8-serialize-main.zig"),
+            .root_source_file = b.path("src/v8-serialize-test.zig"),
             .target = target,
             .optimize = optimize,
         });
