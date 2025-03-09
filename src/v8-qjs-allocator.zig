@@ -49,11 +49,13 @@ pub const QJSAllocator = struct {
     }
 
     fn remap(ctx: *anyopaque, old_mem: []u8, log2_buf_align: std.mem.Alignment, n: usize, ret_addr: usize) ?[*]u8 {
-        _ = ctx;
-        _ = old_mem;
-        _ = log2_buf_align;
-        _ = n;
+        const js_ctx: *c.JSContext = @ptrCast(@alignCast(ctx));
         _ = ret_addr;
+        const new_ptr_opt = c.js_realloc(js_ctx, old_mem.ptr, n);
+        if (new_ptr_opt) |new_ptr| {
+            std.debug.assert(std.mem.isAligned(@intFromPtr(new_ptr), @as(usize, 1) << @intFromEnum(log2_buf_align)));
+            return @ptrCast(new_ptr);
+        }
         return null;
     }
 };
