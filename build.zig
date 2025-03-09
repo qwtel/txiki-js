@@ -273,12 +273,13 @@ pub fn build(b: *std.Build) !void {
         const zon_parsed = try std.zon.parse.fromSlice(BuildZon, ac, zon_buffer, null, .{ .ignore_unknown_fields = true });
         const tjs_version = try std.SemanticVersion.parse(zon_parsed.version);
 
-        var buf0 = try std.fs.cwd().readFileAlloc(ac, b.path("src/version.h.in").getPath(b), 4096 * 4);
+        var buf0 = try std.fs.cwd().readFileAlloc(ac, b.path("src/version.h.in").getPath(b), 1024 * 1024);
         var buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_MAJOR@", try usizeToStr(ac, tjs_version.major));
         buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_MINOR@", try usizeToStr(ac, tjs_version.minor));
         buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_PATCH@", try usizeToStr(ac, tjs_version.patch));
         buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_SUFFIX@", if (tjs_version.pre) |s| try std.fmt.allocPrint(ac, "-{s}", .{s}) else "");
         const f = try std.fs.cwd().createFile(b.path("src/version.h").getPath(b), .{ .truncate = true });
+        defer f.close();
         try f.writeAll(buf0);
     }
 
