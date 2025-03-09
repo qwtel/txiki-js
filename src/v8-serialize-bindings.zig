@@ -75,7 +75,7 @@ fn initDeserializer(ctx: ?*c.JSContext, obj: c.JSValue, js_view: c.JSValue) !*De
     return des;
 }
 
-fn jsSerializerContructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsSerializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
     if (c.JS_IsConstructor(ctx, new_target) == 0) {
         return c.JS_ThrowTypeError(ctx, "not a constructor");
     }
@@ -206,7 +206,7 @@ const serializer_proto_funcs = [_]c.JSCFunctionListEntry{
     z.JS_CFUNC_DEF("_setTreatArrayBufferViewsAsHostObjects", 1, jsSerializerSetTreatArrayBufferViewsAsHostObjects),
 };
 
-fn jsDeserializerContructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsDeserializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
     if (c.JS_IsConstructor(ctx, new_target) == 0) {
         return c.JS_ThrowTypeError(ctx, "not a constructor");
     }
@@ -343,7 +343,7 @@ export fn zig__mod_v8_compat_init(ctx: ?*c.JSContext, ns: c.JSValue) callconv(.C
     c.JS_SetPropertyFunctionList(ctx, ser_proto, &serializer_proto_funcs, serializer_proto_funcs.len);
     c.JS_SetClassProto(ctx, serializer_class_id, ser_proto);
 
-    const ser_ctor = c.JS_NewCFunction2(ctx, jsSerializerContructor, "Serializer", 0, c.JS_CFUNC_constructor_or_func, 0);
+    const ser_ctor = c.JS_NewCFunction2(ctx, jsSerializerConstructor, "Serializer", 0, c.JS_CFUNC_constructor_or_func, 0);
     c.JS_SetConstructor(ctx, ser_ctor, ser_proto);
 
     _ = c.JS_NewClassID(rt, &deserializer_class_id);
@@ -353,7 +353,7 @@ export fn zig__mod_v8_compat_init(ctx: ?*c.JSContext, ns: c.JSValue) callconv(.C
     c.JS_SetPropertyFunctionList(ctx, des_proto, &deserializer_proto_funcs, deserializer_proto_funcs.len);
     c.JS_SetClassProto(ctx, deserializer_class_id, des_proto);
 
-    const des_ctor = c.JS_NewCFunction2(ctx, jsDeserializerContructor, "Deserializer", 1, c.JS_CFUNC_constructor_or_func, 0);
+    const des_ctor = c.JS_NewCFunction2(ctx, jsDeserializerConstructor, "Deserializer", 1, c.JS_CFUNC_constructor_or_func, 0);
     c.JS_SetConstructor(ctx, des_ctor, des_proto);
 
     _ = c.JS_DefinePropertyValueStr(ctx, ns, "Serializer", ser_ctor, c.JS_PROP_C_W_E);

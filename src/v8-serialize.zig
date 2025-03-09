@@ -9,6 +9,7 @@ const QJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
 // A bunch of qjs internal functions that we've stripped `static` from. They're not part of the header, so we have to declare them here.
 extern fn JS_ToObject(ctx: ?*c.JSContext, v: c.JSValue) c.JSValue;
 extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: c.BOOL) c.JSValue;
+
 extern fn js_alloc_string(ctx: ?*c.JSContext, max_len: c_int, is_wide_char: c.BOOL) ?*z.JSString;
 extern fn js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
 extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
@@ -19,6 +20,7 @@ extern fn js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, arg
 extern fn js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSRegExp;
 extern fn js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) c.BOOL;
 extern fn js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) c.BOOL;
+
 extern fn _JS_CheckStackOverflow(ctx: ?*c.JSContext, alloca_size: usize) c.BOOL;
 extern fn _JS_AtomIsString(ctx: ?*c.JSContext, v: c.JSAtom) c.BOOL;
 extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSMapState;
