@@ -13,7 +13,6 @@ extern fn js_alloc_string(ctx: ?*c.JSContext, max_len: c_int, is_wide_char: c.BO
 extern fn js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
 extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
 extern fn js_string_to_bigint(ctx: ?*c.JSContext, buf: [*c]const u8, radix: c_int) c.JSValue;
-extern fn js_regexp_constructor_internal(ctx: ?*c.JSContext, ctor: c.JSValue, pattern: c.JSValue, bc: c.JSValue) c.JSValue;
 extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
@@ -1247,7 +1246,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             const byte_length = try self.readVarint(u32);
             const bytes = try self.readRawBytes(byte_length);
             const c_length: c_int = @intCast(byte_length / @sizeOf(u16));
-            if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) { // XXX: all the homies hate this
+            if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) {
                 const aligned_bytes = try self.ac.alignedAlloc(u8, 2, byte_length);
                 defer self.ac.free(aligned_bytes);
                 @memcpy(aligned_bytes, bytes);
@@ -1421,17 +1420,30 @@ pub fn Deserializer(comptime Delegate: type) type {
             const pattern = try self.readString();
             defer c.JS_FreeValue(self.ctx, pattern);
             const v8_flags = try self.readVarint(u32);
-
-            // TODO: restore flags
-            // var bc = v8_flags & 0b111;  // first 3 falgs are identical (/gmi)
-            // if ((v8_flags & 1 << 3) != 0) bc |= c.LRE_FLAG_STICKY;
-            // if ((v8_flags & 1 << 4) != 0) bc |= c.LRE_FLAG_UNICODE;
-            // if ((v8_flags & 1 << 5) != 0) bc |= c.LRE_FLAG_DOTALL;
-            _ = v8_flags;
-
-            const regexp = js_regexp_constructor_internal(self.ctx, z.JS_UNDEFINED, pattern, c.JS_NewString(self.ctx, ""));
-            if (c.JS_IsException(regexp) == 1) return Error.OutOfMemory;
-            errdefer c.JS_FreeValue(self.ctx, regexp);
+            
+            var flags: std.ArrayListUnmanaged(u8) = .empty;
+            defer flags.deinit(self.ac);
+            
+            if ((v8_flags & (1 << 0)) != 0) try flags.append(self.ac, 'g'); // global
+            if ((v8_flags & (1 << 1)) != 0) try flags.append(self.ac, 'i'); // ignoreCase
+            if ((v8_flags & (1 << 2)) != 0) try flags.append(self.ac, 'm'); // multiline
+            if ((v8_flags & (1 << 3)) != 0) try flags.append(self.ac, 'y'); // sticky
+            if ((v8_flags & (1 << 4)) != 0) try flags.append(self.ac, 'u'); // unicode
+            if ((v8_flags & (1 << 5)) != 0) try flags.append(self.ac, 's'); // dotAll
+            
+            const global = c.JS_GetGlobalObject(self.ctx);
+            defer c.JS_FreeValue(self.ctx, global);
+            
+            const regexp_constructor = c.JS_GetPropertyStr(self.ctx, global, "RegExp");
+            defer c.JS_FreeValue(self.ctx, regexp_constructor);
+            
+            const flag_str = c.JS_NewStringLen(self.ctx, flags.items.ptr, flags.items.len);
+            defer c.JS_FreeValue(self.ctx, flag_str);
+            
+            var argv = [_]c.JSValue{pattern, flag_str};
+            const regexp = c.JS_CallConstructor(self.ctx, regexp_constructor, 2, &argv);
+            if (c.JS_IsException(regexp) == 1) return Error.DataCloneError;
+            errdefer c.JS_FreeValue(self.ctx, regexp);   
 
             try self.addObjectWithID(id, regexp);
             return regexp;
