@@ -49,8 +49,8 @@ fn bytesNeededForVarint(comptime T: type, value: T) usize {
     return result;
 }
 
-/// A rightshift for u64 slices that can shift by more than 64 bits.
-fn shiftRightN(values: []u64, n: usize) void {
+/// A right-shift for u64 slices that can shift by more than 64 bits.
+fn shiftRightU64Slice(values: []u64, n: usize) void {
     const m = n / 64; // Number of full u64 shifts
     const n_bits: u6 = @intCast(n % 64); // Remaining bit shift within u64
 
@@ -351,57 +351,53 @@ pub fn Serializer(comptime Delegate: type) type {
         fn writeBigIntContents(self: *Self, bf: *z.JSBigInt, obj: c.JSValue) !void {
             if (bf.num.len == 0) return self.writeVarint(u32, 0);
 
-            const to_string_func = c.JS_GetPropertyStr(self.ctx, obj, "toString");
-            defer c.JS_FreeValue(self.ctx, to_string_func);
+            std.debug.assert(bf.num.expn > 0);
 
-            var argv: [1]c.JSValue = .{c.JS_NewInt32(self.ctx, 16)};
-            defer c.JS_FreeValue(self.ctx, argv[0]);
-
-            const result = c.JS_Call(self.ctx, to_string_func, obj, 1, &argv);
-            defer c.JS_FreeValue(self.ctx, result);
-            if (c.JS_IsException(result) == c.TRUE) return Error.DataCloneError;
-
-            const hex_str_ptr = c.JS_ToCString(self.ctx, result);
-            defer c.JS_FreeCString(self.ctx, hex_str_ptr);
-
-            var hex_str = std.mem.span(hex_str_ptr);
-            if (hex_str[0] == '-') hex_str = hex_str[1..]; // abs
-
-            const expn: usize = @intCast(bf.num.expn);
-            const v8_limbs_num: usize = (expn + 63) >> 6; // divCeil
+            const bf_expn_bits: usize = @intCast(bf.num.expn);
+            const v8_limbs_num: usize = (bf_expn_bits + 63) >> 6; // divCeil
             const v8_limbs = try self.ac.alloc(u64, v8_limbs_num);
             defer self.ac.free(v8_limbs);
 
-            var end: usize = hex_str.len;
-            var v8_limbs_idx: usize = 0;
-            while (end > 0) {
-                const start = if (end > 16) end - 16 else 0;
-                const hex_slice = hex_str[start..end];
-                v8_limbs[v8_limbs_idx] = std.fmt.parseInt(u64, hex_slice, 16) catch unreachable;
-                end = start;
-                v8_limbs_idx += 1;
+            // Define limb_bits based on the same conditions as in libbf.h
+            const limb_bits = @bitSizeOf(c.limb_t);
+            if (limb_bits == 64) {
+                const bf_limbs: []c.limb_t = bf.num.tab[0..bf.num.len];
+
+                @memset(v8_limbs, 0);
+                for (bf_limbs, 0..) |limb, i| v8_limbs[i] = limb;
+
+                const total_output_bits = 64 * v8_limbs_num;
+                const extra_output_bits = 64 * (v8_limbs_num - bf_limbs.len);
+                const right_shift_to_align = total_output_bits - bf_expn_bits + extra_output_bits;
+                shiftRightU64Slice(v8_limbs, right_shift_to_align);
+            } else {
+                // NOTE: Using safe, but slower, string parsing for 32-bit platforms because the limb size is different.
+                const to_string_func = c.JS_GetPropertyStr(self.ctx, obj, "toString");
+                defer c.JS_FreeValue(self.ctx, to_string_func);
+
+                var argv: [1]c.JSValue = .{c.JS_NewInt32(self.ctx, 16)};
+                defer c.JS_FreeValue(self.ctx, argv[0]);
+
+                const result = c.JS_Call(self.ctx, to_string_func, obj, 1, &argv);
+                defer c.JS_FreeValue(self.ctx, result);
+                if (c.JS_IsException(result) == c.TRUE) return Error.DataCloneError;
+
+                const hex_str_ptr = c.JS_ToCString(self.ctx, result);
+                defer c.JS_FreeCString(self.ctx, hex_str_ptr);
+
+                var hex_str = std.mem.span(hex_str_ptr);
+                if (hex_str[0] == '-') hex_str = hex_str[1..]; // abs
+
+                var end: usize = hex_str.len;
+                var v8_limbs_idx: usize = 0;
+                while (end > 0) {
+                    const start = if (end > 16) end - 16 else 0;
+                    const hex_slice = hex_str[start..end];
+                    v8_limbs[v8_limbs_idx] = std.fmt.parseInt(u64, hex_slice, 16) catch unreachable;
+                    end = start;
+                    v8_limbs_idx += 1;
+                }
             }
-
-            // XXX: The following code works without string parsing by directly reading form qjs' big decimal representation,
-            // bit it only works on 64-bit platforms...
-            // std.debug.assert(bf.num.expn > 0);
-
-            // const expn: u32 = @intCast(bf.num.expn);
-            // const v8_limbs_num: u32 = (expn + 63) >> 6; // divCeil
-
-            // // FIXME: `c.limb_t` might not be `u64`, depending on the platform or flags, but the v8 format is always u64!
-            // const bf_limbs: []c.limb_t = bf.num.tab[0..bf.num.len];
-
-            // const v8_limbs = try self.allocator.alloc(u64, v8_limbs_num);
-            // defer self.allocator.free(v8_limbs);
-
-            // for (v8_limbs) |*l| l.* = 0;
-            // for (bf_limbs, 0..) |limb, i| v8_limbs[i] = limb;
-
-            // const max_expn = 64 * v8_limbs_num;
-            // const omitted = (v8_limbs_num - bf_limbs.len) * 64;
-            // const shift = max_expn - expn + omitted;
-            // shiftRightN(v8_limbs, shift);
 
             const sign_bit: u1 = @intCast(bf.num.sign);
             const byte_length: u31 = @intCast(v8_limbs_num * @sizeOf(u64));
