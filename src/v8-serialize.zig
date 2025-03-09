@@ -655,7 +655,7 @@ pub fn Serializer(comptime Delegate: type) type {
         fn writeJSArray(self: *Self, obj: c.JSValue) !void {
             // try self.writeJSObjectSlow(.Array, obj);
             if (js_is_fast_array(self.ctx, obj) == c.TRUE) {
-                var values: [*]c.JSValue = undefined; 
+                var values: [*]c.JSValue = undefined;
                 var length: u32 = undefined;
                 _ = js_get_fast_array(self.ctx, obj, &values, &length);
                 try self.writeTag(.begin_dense_js_array);
@@ -1414,36 +1414,40 @@ pub fn Deserializer(comptime Delegate: type) type {
             return value;
         }
 
+        inline fn appendChar(arr: []u8, len: *usize, ch: u8) void {
+            arr[len.*] = ch;
+            len.* += 1;
+        }
+
         fn readJSRegExp(self: *Self) !c.JSValue {
             const id: u32 = self.next_id;
             self.next_id += 1;
             const pattern = try self.readString();
             defer c.JS_FreeValue(self.ctx, pattern);
             const v8_flags = try self.readVarint(u32);
-            
-            var flags: std.ArrayListUnmanaged(u8) = .empty;
-            defer flags.deinit(self.ac);
-            
-            if ((v8_flags & (1 << 0)) != 0) try flags.append(self.ac, 'g'); // global
-            if ((v8_flags & (1 << 1)) != 0) try flags.append(self.ac, 'i'); // ignoreCase
-            if ((v8_flags & (1 << 2)) != 0) try flags.append(self.ac, 'm'); // multiline
-            if ((v8_flags & (1 << 3)) != 0) try flags.append(self.ac, 'y'); // sticky
-            if ((v8_flags & (1 << 4)) != 0) try flags.append(self.ac, 'u'); // unicode
-            if ((v8_flags & (1 << 5)) != 0) try flags.append(self.ac, 's'); // dotAll
-            
+
+            var flags: [6]u8 = undefined;
+            var flags_len: usize = 0;
+            if ((v8_flags & (1 << 0)) != 0) appendChar(&flags, &flags_len, 'g'); // global
+            if ((v8_flags & (1 << 1)) != 0) appendChar(&flags, &flags_len, 'i'); // ignoreCase
+            if ((v8_flags & (1 << 2)) != 0) appendChar(&flags, &flags_len, 'm'); // multiline
+            if ((v8_flags & (1 << 3)) != 0) appendChar(&flags, &flags_len, 'y'); // sticky
+            if ((v8_flags & (1 << 4)) != 0) appendChar(&flags, &flags_len, 'u'); // unicode
+            if ((v8_flags & (1 << 5)) != 0) appendChar(&flags, &flags_len, 's'); // dotAll
+
             const global = c.JS_GetGlobalObject(self.ctx);
             defer c.JS_FreeValue(self.ctx, global);
-            
+
             const regexp_constructor = c.JS_GetPropertyStr(self.ctx, global, "RegExp");
             defer c.JS_FreeValue(self.ctx, regexp_constructor);
-            
-            const flag_str = c.JS_NewStringLen(self.ctx, flags.items.ptr, flags.items.len);
+
+            const flag_str = c.JS_NewStringLen(self.ctx, &flags, flags_len);
             defer c.JS_FreeValue(self.ctx, flag_str);
-            
-            var argv = [_]c.JSValue{pattern, flag_str};
+
+            var argv = [_]c.JSValue{ pattern, flag_str };
             const regexp = c.JS_CallConstructor(self.ctx, regexp_constructor, 2, &argv);
             if (c.JS_IsException(regexp) == 1) return Error.DataCloneError;
-            errdefer c.JS_FreeValue(self.ctx, regexp);   
+            errdefer c.JS_FreeValue(self.ctx, regexp);
 
             try self.addObjectWithID(id, regexp);
             return regexp;
