@@ -47,80 +47,79 @@ pub const JSMapState = extern struct {
 };
 
 /// These are the values of the `class_id` field in `JSObject`. In qjs they are named `JS_CLASS_*`.
-// XXX: Mabye don't use capslock?
 pub const JSClassId = enum(u16) {
-    OBJECT = 1,        // must be first
-    ARRAY,             // u.array       | length
-    ERROR,
-    NUMBER,            // u.object_data
-    STRING,            // u.object_data
-    BOOLEAN,           // u.object_data
-    SYMBOL,            // u.object_data
-    ARGUMENTS,         // u.array       | length
-    MAPPED_ARGUMENTS,  //               | length
-    DATE,              // u.object_data
-    MODULE_NS,
-    C_FUNCTION,        // u.cfunc
-    BYTECODE_FUNCTION, // u.func
-    BOUND_FUNCTION,    // u.bound_function
-    C_FUNCTION_DATA,   // u.c_function_data_record
-    GENERATOR_FUNCTION, // u.func
-    FOR_IN_ITERATOR,   // u.for_in_iterator
-    REGEXP,            // u.regexp
-    ARRAY_BUFFER,      // u.array_buffer
-    SHARED_ARRAY_BUFFER, // u.array_buffer
-    UINT8C_ARRAY,      // u.array (typed_array)
-    INT8_ARRAY,        // u.array (typed_array)
-    UINT8_ARRAY,       // u.array (typed_array)
-    INT16_ARRAY,       // u.array (typed_array)
-    UINT16_ARRAY,      // u.array (typed_array)
-    INT32_ARRAY,       // u.array (typed_array)
-    UINT32_ARRAY,      // u.array (typed_array)
-    BIG_INT64_ARRAY,   // u.array (typed_array)
-    BIG_UINT64_ARRAY,  // u.array (typed_array)
-    FLOAT16_ARRAY,     // u.array (typed_array)
-    FLOAT32_ARRAY,     // u.array (typed_array)
-    FLOAT64_ARRAY,     // u.array (typed_array)
-    DATAVIEW,          // u.typed_array
-    BIG_INT,           // u.object_data
-    MAP,               // u.map_state
-    SET,               // u.map_state
-    WEAKMAP,           // u.map_state
-    WEAKSET,           // u.map_state
-    MAP_ITERATOR,      // u.map_iterator_data
-    SET_ITERATOR,      // u.map_iterator_data
-    ARRAY_ITERATOR,    // u.array_iterator_data
-    STRING_ITERATOR,   // u.array_iterator_data
-    REGEXP_STRING_ITERATOR,   // u.regexp_string_iterator_data
-    GENERATOR,         // u.generator_data
-    PROXY,             // u.proxy_data
-    PROMISE,           // u.promise_data
-    PROMISE_RESOLVE_FUNCTION,  // u.promise_function_data
-    PROMISE_REJECT_FUNCTION,   // u.promise_function_data
-    ASYNC_FUNCTION,            // u.func
-    ASYNC_FUNCTION_RESOLVE,    // u.async_function_data
-    ASYNC_FUNCTION_REJECT,     // u.async_function_data
-    ASYNC_FROM_SYNC_ITERATOR,  // u.async_from_sync_iterator_data
-    ASYNC_GENERATOR_FUNCTION,  // u.func
-    ASYNC_GENERATOR,   // u.async_generator_data
-    WEAK_REF,
-    FINALIZATION_REGISTRY,
-    CALL_SITE,
+    object = 1,        // must be first
+    array,             // u.array       | length
+    @"error",
+    number,            // u.object_data
+    string,            // u.object_data
+    boolean,           // u.object_data
+    symbol,            // u.object_data
+    arguments,         // u.array       | length
+    mapped_arguments,  //               | length
+    date,              // u.object_data
+    module_ns,
+    c_function,        // u.cfunc
+    bytecode_function, // u.func
+    bound_function,    // u.bound_function
+    c_function_data,   // u.c_function_data_record
+    generator_function, // u.func
+    for_in_iterator,   // u.for_in_iterator
+    regexp,            // u.regexp
+    array_buffer,      // u.array_buffer
+    shared_array_buffer, // u.array_buffer
+    uint8c_array,      // u.array (typed_array)
+    int8_array,        // u.array (typed_array)
+    uint8_array,       // u.array (typed_array)
+    int16_array,       // u.array (typed_array)
+    uint16_array,      // u.array (typed_array)
+    int32_array,       // u.array (typed_array)
+    uint32_array,      // u.array (typed_array)
+    big_int64_array,   // u.array (typed_array)
+    big_uint64_array,  // u.array (typed_array)
+    float16_array,     // u.array (typed_array)
+    float32_array,     // u.array (typed_array)
+    float64_array,     // u.array (typed_array)
+    dataview,          // u.typed_array
+    big_int,           // u.object_data
+    map,               // u.map_state
+    set,               // u.map_state
+    weakmap,           // u.map_state
+    weakset,           // u.map_state
+    map_iterator,      // u.map_iterator_data
+    set_iterator,      // u.map_iterator_data
+    array_iterator,    // u.array_iterator_data
+    string_iterator,   // u.array_iterator_data
+    regexp_string_iterator,   // u.regexp_string_iterator_data
+    generator,         // u.generator_data
+    proxy,             // u.proxy_data
+    promise,           // u.promise_data
+    promise_resolve_function,  // u.promise_function_data
+    promise_reject_function,   // u.promise_function_data
+    async_function,            // u.func
+    async_function_resolve,    // u.async_function_data
+    async_function_reject,     // u.async_function_data
+    async_from_sync_iterator,  // u.async_from_sync_iterator_data
+    async_generator_function,  // u.func
+    async_generator,   // u.async_generator_data
+    weak_ref,
+    finalization_registry,
+    call_site,
 
-    INIT_COUNT, // last entry for predefined classes
+    init_count, // last entry for predefined classes
     _,
 };
 
 pub const JSErrorEnum = enum(c_int) {
-    EVAL_ERROR,
-    RANGE_ERROR,
-    REFERENCE_ERROR,
-    SYNTAX_ERROR,
-    TYPE_ERROR,
-    URI_ERROR,
-    INTERNAL_ERROR,
-    AGGREGATE_ERROR,
-    PLAIN_ERROR,
+    eval_error,
+    range_error,
+    reference_error,
+    syntax_error,
+    type_error,
+    uri_error,
+    internal_error,
+    aggregate_error,
+    plain_error,
     _,
 };
 

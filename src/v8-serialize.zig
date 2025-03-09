@@ -124,80 +124,80 @@ pub fn arrayBufferViewToSlice(ctx: ?*c.JSContext, obj: c.JSValue) ![]u8 {
 }
 
 pub const SerializationTag = enum(u8) {
-    Version = 255,
-    Padding = 0,
-    VerifyObjectCount = '?',
-    TheHole = '-',
-    Undefined = '_',
-    Null = '0',
-    True = 'T',
-    False = 'F',
-    Int32 = 'I',
-    Uint32 = 'U',
-    Double = 'N',
-    BigInt = 'Z',
-    Utf8String = 'S',
-    OneByteString = '"',
-    TwoByteString = 'c',
-    ObjectReference = '^',
-    BeginJSObject = 'o',
-    EndJSObject = '{',
-    BeginSparseJSArray = 'a',
-    EndSparseJSArray = '@',
-    BeginDenseJSArray = 'A',
-    EndDenseJSArray = '$',
-    Date = 'D',
-    TrueObject = 'y',
-    FalseObject = 'x',
-    NumberObject = 'n',
-    BigIntObject = 'z',
-    StringObject = 's',
-    RegExp = 'R',
-    BeginJSMap = ';',
-    EndJSMap = ':',
-    BeginJSSet = '\'',
-    EndJSSet = ',',
-    ArrayBuffer = 'B',
-    ResizableArrayBuffer = '~',
-    ArrayBufferTransfer = 't',
-    ArrayBufferView = 'V',
-    SharedArrayBuffer = 'u',
-    SharedObject = 'p',
-    WasmModuleTransfer = 'w',
-    HostObject = '\\',
-    WasmMemoryTransfer = 'm',
-    Error = 'r',
+    version = 255,
+    padding = 0,
+    verify_object_count = '?',
+    the_hole = '-',
+    undefined = '_',
+    null = '0',
+    true = 'T',
+    false = 'F',
+    int32 = 'I',
+    uint32 = 'U',
+    double = 'N',
+    big_int = 'Z',
+    utf8_string = 'S',
+    one_byte_string = '"',
+    two_byte_string = 'c',
+    object_reference = '^',
+    begin_js_object = 'o',
+    end_js_object = '{',
+    begin_sparse_js_array = 'a',
+    end_sparse_js_array = '@',
+    begin_dense_js_array = 'A',
+    end_dense_js_array = '$',
+    date = 'D',
+    true_object = 'y',
+    false_object = 'x',
+    number_object = 'n',
+    big_int_object = 'z',
+    string_object = 's',
+    reg_exp = 'R',
+    begin_js_map = ';',
+    end_js_map = ':',
+    begin_js_set = '\'',
+    end_js_set = ',',
+    array_buffer = 'B',
+    resizable_array_buffer = '~',
+    array_buffer_transfer = 't',
+    array_buffer_view = 'V',
+    shared_array_buffer = 'u',
+    shared_object = 'p',
+    wasm_module_transfer = 'w',
+    host_object = '\\',
+    wasm_memory_transfer = 'm',
+    @"error" = 'r',
     _,
 };
 
 pub const ArrayBufferViewTag = enum(u8) {
-    Int8Array = 'b',
-    Uint8Array = 'B',
-    Uint8ClampedArray = 'C',
-    Int16Array = 'w',
-    Uint16Array = 'W',
-    Int32Array = 'd',
-    Uint32Array = 'D',
-    Float16Array = 'h',
-    Float32Array = 'f',
-    Float64Array = 'F',
-    BigInt64Array = 'q',
-    BigUint64Array = 'Q',
-    DataView = '?',
+    int8_array = 'b',
+    uint8_array = 'B',
+    uint8_clamped_array = 'C',
+    int16_array = 'w',
+    uint16_array = 'W',
+    int32_array = 'd',
+    uint32_array = 'D',
+    float16_array = 'h',
+    float32_array = 'f',
+    float64_array = 'F',
+    big_int64_array = 'q',
+    big_uint64_array = 'Q',
+    data_view = '?',
     _,
 };
 
 pub const ErrorTag = enum(u8) {
-    EvalErrorPrototype = 'E',
-    RangeErrorPrototype = 'R',
-    ReferenceErrorPrototype = 'F',
-    SyntaxErrorPrototype = 'S',
-    TypeErrorPrototype = 'T',
-    UriErrorPrototype = 'U',
-    Message = 'm',
-    Cause = 'c',
-    Stack = 's',
-    End = '.',
+    eval_error_prototype = 'E',
+    range_error_prototype = 'R',
+    reference_error_prototype = 'F',
+    syntax_error_prototype = 'S',
+    type_error_prototype = 'T',
+    uri_error_prototype = 'U',
+    message = 'm',
+    cause = 'c',
+    stack = 's',
+    end = '.',
     _,
 };
 
@@ -289,7 +289,7 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         pub fn writeHeader(self: *Self) !void {
-            try self.writeTag(.Version);
+            try self.writeTag(.version);
             try self.writeVarint(u32, kLatestVersion);
         }
 
@@ -466,9 +466,9 @@ pub fn Serializer(comptime Delegate: type) type {
                         // Despite being JSReceivers, these have their wrapped buffer serialized
                         // first. That makes this logic a little quirky, because it needs to
                         // happen before we assign object IDs.
-                        @intFromEnum(z.JSClassId.UINT8C_ARRAY)...@intFromEnum(z.JSClassId.DATAVIEW) => {
+                        @intFromEnum(z.JSClassId.uint8c_array)...@intFromEnum(z.JSClassId.dataview) => {
                             if (!self.id_map.contains(p) and !self.treat_array_buffer_views_as_host_objects) {
-                                const is_dataview = class_id == @intFromEnum(z.JSClassId.DATAVIEW);
+                                const is_dataview = class_id == @intFromEnum(z.JSClassId.dataview);
                                 const ab_val = if (is_dataview) js_dataview_get_buffer(self.ctx, object) else js_typed_array_get_buffer(self.ctx, object);
                                 defer c.JS_FreeValue(self.ctx, ab_val);
                                 try self.writeJSReceiver(ab_val, @ptrCast(c.JS_VALUE_GET_PTR(ab_val)));
@@ -489,26 +489,26 @@ pub fn Serializer(comptime Delegate: type) type {
         fn writeOddball(self: *Self, oddball: c.JSValue) !void {
             const tag = c.JS_VALUE_GET_NORM_TAG(oddball);
             const v8_tag: SerializationTag = switch (tag) {
-                c.JS_TAG_UNDEFINED => .Undefined,
-                c.JS_TAG_NULL => .Null,
-                c.JS_TAG_BOOL => if (c.JS_VALUE_GET_INT(oddball) == 0) .False else .True,
+                c.JS_TAG_UNDEFINED => .undefined,
+                c.JS_TAG_NULL => .null,
+                c.JS_TAG_BOOL => if (c.JS_VALUE_GET_INT(oddball) == 0) .false else .true,
                 else => unreachable,
             };
             try self.writeTag(v8_tag);
         }
 
         fn writeSmi(self: *Self, value: c.JSValue) !void {
-            try self.writeTag(.Int32);
+            try self.writeTag(.int32);
             try self.writeZigZag(i32, c.JS_VALUE_GET_INT(value));
         }
 
         fn writeHeapNumber(self: *Self, value: c.JSValue) !void {
-            try self.writeTag(.Double);
+            try self.writeTag(.double);
             try self.writeDouble(c.JS_VALUE_GET_FLOAT64(value));
         }
 
         fn writeBigInt(self: *Self, value: c.JSValue) !void {
-            try self.writeTag(.BigInt);
+            try self.writeTag(.big_int);
             try self.writeBigIntContents(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(value))), value);
         }
 
@@ -519,13 +519,13 @@ pub fn Serializer(comptime Delegate: type) type {
                 const byte_length: u32 = len * @sizeOf(u16);
                 // The existing reading code expects 16-byte strings to be aligned.
                 if (((self.buffer.items.len + 1 + bytesNeededForVarint(u32, byte_length)) & 1) != 0) {
-                    try self.writeTag(.Padding);
+                    try self.writeTag(.padding);
                 }
-                try self.writeTag(.TwoByteString);
+                try self.writeTag(.two_byte_string);
                 try self.writeTwoByteString(chars[0..len]);
             } else {
                 const chars = _js_string_get_str8(p);
-                try self.writeTag(.OneByteString);
+                try self.writeTag(.one_byte_string);
                 try self.writeOneByteString(chars[0..len]);
             }
         }
@@ -534,7 +534,7 @@ pub fn Serializer(comptime Delegate: type) type {
             // If the object has already been serialized, just write its ID.
             const find_result = try self.id_map.getOrPut(self.ac, p);
             if (find_result.found_existing) {
-                try self.writeTag(.ObjectReference);
+                try self.writeTag(.object_reference);
                 try self.writeVarint(u32, find_result.value_ptr.* - 1);
                 return;
             }
@@ -551,10 +551,10 @@ pub fn Serializer(comptime Delegate: type) type {
 
             const class_id: z.JSClassId = @enumFromInt(c.JS_GetClassID(obj));
             switch (class_id) {
-                .ARRAY => {
+                .array => {
                     try self.writeJSArray(obj);
                 },
-                .OBJECT => {
+                .object => {
                     const is_host_object = try self.isHostObject(obj);
                     if (is_host_object) {
                         try self.writeHostObject(obj);
@@ -562,28 +562,28 @@ pub fn Serializer(comptime Delegate: type) type {
                         try self.writeJSObject(obj);
                     }
                 },
-                .DATE => {
+                .date => {
                     try self.writeJSDate(obj);
                 },
-                .NUMBER, .STRING, .BOOLEAN, .BIG_INT => {
+                .number, .string, .boolean, .big_int => {
                     try self.writeJSPrimitiveWrapper(obj);
                 },
-                .REGEXP => {
+                .regexp => {
                     try self.writeJSRegExp(obj);
                 },
-                .MAP => {
+                .map => {
                     try self.writeJSMap(.Map, obj);
                 },
-                .SET => {
+                .set => {
                     try self.writeJSMap(.Set, obj);
                 },
-                .ARRAY_BUFFER, .SHARED_ARRAY_BUFFER => {
+                .array_buffer, .shared_array_buffer => {
                     try self.writeJSArrayBuffer(obj);
                 },
-                .UINT8C_ARRAY, .INT8_ARRAY, .UINT8_ARRAY, .INT16_ARRAY, .UINT16_ARRAY, .INT32_ARRAY, .UINT32_ARRAY, .BIG_INT64_ARRAY, .BIG_UINT64_ARRAY, .FLOAT32_ARRAY, .FLOAT64_ARRAY, .DATAVIEW => {
+                .uint8c_array, .int8_array, .uint8_array, .int16_array, .uint16_array, .int32_array, .uint32_array, .big_int64_array, .big_uint64_array, .float16_array, .float32_array, .float64_array, .dataview => {
                     try self.writeJSArrayBufferView(obj, class_id);
                 },
-                .ERROR => {
+                .@"error" => {
                     try self.writeJSError(obj);
                 },
                 else => {
@@ -647,12 +647,12 @@ pub fn Serializer(comptime Delegate: type) type {
             const prop_enum = try self.getOwnPropertyNames(obj);
             defer c.JS_FreePropertyEnum(self.ctx, prop_enum.ptr, @intCast(prop_enum.len));
 
-            try self.writeTag(if (kind == .Array) .BeginSparseJSArray else .BeginJSObject);
+            try self.writeTag(if (kind == .Array) .begin_sparse_js_array else .begin_js_object);
             if (kind == .Array) try self.writeVarint(u32, @intCast(length));
 
             const properties_written = try self.writeJSObjectPropertiesSlow(obj, prop_enum);
 
-            try self.writeTag(if (kind == .Array) .EndSparseJSArray else .EndJSObject);
+            try self.writeTag(if (kind == .Array) .end_sparse_js_array else .end_js_object);
             try self.writeVarint(u32, properties_written);
             if (kind == .Array) try self.writeVarint(u32, @intCast(length)); // XXX: get length again?
         }
@@ -663,7 +663,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 var values: [*]c.JSValue = undefined; 
                 var length: u32 = undefined;
                 _ = js_get_fast_array(self.ctx, obj, &values, &length);
-                try self.writeTag(.BeginDenseJSArray);
+                try self.writeTag(.begin_dense_js_array);
                 try self.writeVarint(u32, length);
                 for (0..length) |i| {
                     const item = values[i];
@@ -677,7 +677,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 // TODO: Write properties (i.e. non-numeric keys on an array)
                 // _ = try self.getOwnPropertyNames2(obj);
 
-                try self.writeTag(.EndDenseJSArray);
+                try self.writeTag(.end_dense_js_array);
                 try self.writeVarint(u32, 0); // TODO: properties_written?
                 try self.writeVarint(u32, length);
             } else {
@@ -689,7 +689,7 @@ pub fn Serializer(comptime Delegate: type) type {
             var date: c.JSValue = undefined;
             _ = _JS_GetObjectData(self.ctx, obj, &date);
             defer c.JS_FreeValue(self.ctx, date);
-            try self.writeTag(.Date);
+            try self.writeTag(.date);
             try self.writeDouble(c.JS_VALUE_GET_FLOAT64(date));
         }
 
@@ -700,18 +700,18 @@ pub fn Serializer(comptime Delegate: type) type {
 
             const tag = c.JS_VALUE_GET_NORM_TAG(value);
             switch (tag) {
-                c.JS_TAG_BOOL => try self.writeTag(if (c.JS_VALUE_GET_INT(value) == 0) .FalseObject else .TrueObject),
+                c.JS_TAG_BOOL => try self.writeTag(if (c.JS_VALUE_GET_INT(value) == 0) .false_object else .true_object),
                 c.JS_TAG_FLOAT64, c.JS_TAG_INT => {
                     const dbl: f64 = if (tag == c.JS_TAG_INT) @floatFromInt(c.JS_VALUE_GET_INT(value)) else c.JS_VALUE_GET_FLOAT64(value);
-                    try self.writeTag(.NumberObject);
+                    try self.writeTag(.number_object);
                     try self.writeDouble(dbl);
                 },
                 c.JS_TAG_BIG_INT => {
-                    try self.writeTag(.BigIntObject);
+                    try self.writeTag(.big_int_object);
                     try self.writeBigIntContents(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(value))), value);
                 },
                 c.JS_TAG_STRING => {
-                    try self.writeTag(.StringObject);
+                    try self.writeTag(.string_object);
                     try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(value)));
                 },
                 else => {
@@ -733,7 +733,7 @@ pub fn Serializer(comptime Delegate: type) type {
             if ((flags & c.LRE_FLAG_UNICODE) != 0) v8_flags |= 1 << 4;
             if ((flags & c.LRE_FLAG_DOTALL) != 0) v8_flags |= 1 << 5;
 
-            try self.writeTag(.RegExp);
+            try self.writeTag(.reg_exp);
             try self.writeString(regexp.pattern);
             try self.writeVarint(u32, @intCast(v8_flags));
         }
@@ -754,11 +754,11 @@ pub fn Serializer(comptime Delegate: type) type {
                 }
             }
 
-            try self.writeTag(if (as == .Map) .BeginJSMap else .BeginJSSet);
+            try self.writeTag(if (as == .Map) .begin_js_map else .begin_js_set);
             for (entries.items) |entry| {
                 try self.writeObject(entry);
             }
-            try self.writeTag(if (as == .Map) .EndJSMap else .EndJSSet);
+            try self.writeTag(if (as == .Map) .end_js_map else .end_js_set);
             try self.writeVarint(u32, length);
         }
 
@@ -769,7 +769,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 try self.throwDataCloneErrorDetachedArrayBuffer();
 
             // std.debug.print("HELLO?? {}\n", .{byte_length});
-            try self.writeTag(.ArrayBuffer);
+            try self.writeTag(.array_buffer);
             try self.writeVarint(u32, @intCast(byte_length));
             try self.writeRawBytes(bytes[0..@intCast(byte_length)]);
         }
@@ -779,9 +779,9 @@ pub fn Serializer(comptime Delegate: type) type {
                 return self.writeHostObject(val);
             }
 
-            try self.writeTag(.ArrayBufferView);
+            try self.writeTag(.array_buffer_view);
 
-            const is_dataview = class_id == .DATAVIEW;
+            const is_dataview = class_id == .dataview;
             const ab_val = if (is_dataview) js_dataview_get_buffer(self.ctx, val) else js_typed_array_get_buffer(self.ctx, val);
             defer c.JS_FreeValue(self.ctx, ab_val);
 
@@ -792,19 +792,19 @@ pub fn Serializer(comptime Delegate: type) type {
             // XXX: out of bounds check?
 
             const tag: ArrayBufferViewTag = switch (class_id) {
-                .UINT8C_ARRAY => .Uint8ClampedArray,
-                .INT8_ARRAY => .Int8Array,
-                .UINT8_ARRAY => .Uint8Array,
-                .INT16_ARRAY => .Int16Array,
-                .UINT16_ARRAY => .Uint16Array,
-                .INT32_ARRAY => .Int32Array,
-                .UINT32_ARRAY => .Uint32Array,
-                .BIG_INT64_ARRAY => .BigInt64Array,
-                .BIG_UINT64_ARRAY => .BigUint64Array,
-                .FLOAT16_ARRAY => .Float16Array,
-                .FLOAT32_ARRAY => .Float32Array,
-                .FLOAT64_ARRAY => .Float64Array,
-                .DATAVIEW => .DataView,
+                .uint8c_array => .uint8_clamped_array,
+                .int8_array => .int8_array,
+                .uint8_array => .uint8_array,
+                .int16_array => .int16_array,
+                .uint16_array => .uint16_array,
+                .int32_array => .int32_array,
+                .uint32_array => .uint32_array,
+                .big_int64_array => .big_int64_array,
+                .big_uint64_array => .big_uint64_array,
+                .float16_array => .float16_array,
+                .float32_array => .float32_array,
+                .float64_array => .float64_array,
+                .dataview => .data_view,
                 else => unreachable,
             };
 
@@ -835,7 +835,7 @@ pub fn Serializer(comptime Delegate: type) type {
             const cause_found = c.JS_GetOwnProperty(self.ctx, &cause_desc, obj, cause) == c.TRUE;
             defer if (cause_found) c.JS_FreeValue(self.ctx, cause_desc.value);
 
-            try self.writeTag(.Error);
+            try self.writeTag(.@"error");
 
             const name_object = c.JS_GetPropertyStr(self.ctx, obj, "name");
             defer c.JS_FreeValue(self.ctx, name_object);
@@ -845,24 +845,24 @@ pub fn Serializer(comptime Delegate: type) type {
 
             const name = std.mem.span(name_cstr);
             if (std.mem.eql(u8, name, "EvalError")) {
-                try self.writeErrorTag(.EvalErrorPrototype);
+                try self.writeErrorTag(.eval_error_prototype);
             } else if (std.mem.eql(u8, name, "RangeError")) {
-                try self.writeErrorTag(.RangeErrorPrototype);
+                try self.writeErrorTag(.range_error_prototype);
             } else if (std.mem.eql(u8, name, "ReferenceError")) {
-                try self.writeErrorTag(.ReferenceErrorPrototype);
+                try self.writeErrorTag(.reference_error_prototype);
             } else if (std.mem.eql(u8, name, "SyntaxError")) {
-                try self.writeErrorTag(.SyntaxErrorPrototype);
+                try self.writeErrorTag(.syntax_error_prototype);
             } else if (std.mem.eql(u8, name, "TypeError")) {
-                try self.writeErrorTag(.TypeErrorPrototype);
+                try self.writeErrorTag(.type_error_prototype);
             } else if (std.mem.eql(u8, name, "URIError")) {
-                try self.writeErrorTag(.UriErrorPrototype);
+                try self.writeErrorTag(.uri_error_prototype);
             } else {
                 // The default prototype in the deserialization side is Error.prototype, so
                 // we don't have to do anything here.
             }
 
             if (message_found) {
-                try self.writeErrorTag(.Message);
+                try self.writeErrorTag(.message);
                 try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(message_desc.value)));
             }
 
@@ -871,20 +871,20 @@ pub fn Serializer(comptime Delegate: type) type {
             const stack_val = c.JS_GetProperty(self.ctx, obj, stack);
             defer c.JS_FreeValue(self.ctx, stack_val);
             if (c.JS_IsString(stack_val) == 1) {
-                try self.writeErrorTag(.Stack);
+                try self.writeErrorTag(.stack);
                 try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(stack_val)));
             }
 
             if (cause_found) {
-                try self.writeErrorTag(.Cause);
+                try self.writeErrorTag(.cause);
                 try self.writeObject(cause_desc.value);
             }
 
-            try self.writeErrorTag(.End);
+            try self.writeErrorTag(.end);
         }
 
         fn writeHostObject(self: *Self, val: c.JSValue) !void {
-            try self.writeTag(.HostObject);
+            try self.writeTag(.host_object);
             return if (self.delegate) |del| try del.writeHostObject(self.ctx, val) else return Error.NotImplemented;
         }
 
@@ -979,8 +979,8 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         pub fn readHeader(self: *Self) !bool {
-            if (try self.peekTag() == .Version) {
-                try self.consumeTag(.Version);
+            if (try self.peekTag() == .version) {
+                try self.consumeTag(.version);
                 const version = try self.readVarint(u8);
                 if (version > kLatestVersion) {
                     return Error.DataCloneError;
@@ -992,8 +992,8 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         fn peekTag(self: *Self) !?SerializationTag {
             var peek_position = self.position;
-            var tag: SerializationTag = .Padding;
-            while (tag == .Padding) {
+            var tag: SerializationTag = .padding;
+            while (tag == .padding) {
                 if (peek_position >= self.data.len) return null;
                 tag = @enumFromInt(self.data[peek_position]);
                 peek_position += 1;
@@ -1007,8 +1007,8 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         fn readTag(self: *Self) !?SerializationTag {
-            var tag: SerializationTag = .Padding;
-            while (tag == .Padding) {
+            var tag: SerializationTag = .padding;
+            while (tag == .padding) {
                 if (self.position >= self.data.len) return null;
                 tag = @enumFromInt(self.data[self.position]);
                 self.position += 1;
@@ -1100,8 +1100,8 @@ pub fn Deserializer(comptime Delegate: type) type {
             // after format version 0.
             if (c.JS_IsArrayBuffer(result) == c.TRUE) {
                 const tag = try self.peekTag();
-                if (tag == .ArrayBufferView) {
-                    try self.consumeTag(.ArrayBufferView);
+                if (tag == .array_buffer_view) {
+                    try self.consumeTag(.array_buffer_view);
                     defer c.JS_FreeValue(self.ctx, result);
                     return try self.readJSArrayBufferView(result);
                 }
@@ -1112,76 +1112,76 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         fn readObjectInternal(self: *Self) !c.JSValue {
             if (try self.readTag()) |tag| switch (tag) {
-                .Undefined => return z.JS_UNDEFINED,
-                .Null => return z.JS_NULL,
-                .True => return z.JS_TRUE,
-                .False => return z.JS_FALSE,
-                .Int32 => {
+                .undefined => return z.JS_UNDEFINED,
+                .null => return z.JS_NULL,
+                .true => return z.JS_TRUE,
+                .false => return z.JS_FALSE,
+                .int32 => {
                     const value = try self.readZigZag(i32);
                     return c.JS_NewInt32(self.ctx, value);
                 },
-                .Uint32 => {
+                .uint32 => {
                     const value = try self.readVarint(u32);
                     return c.JS_NewUint32(self.ctx, value);
                 },
-                .Double => {
+                .double => {
                     const value = try self.readDouble();
                     return c.JS_NewFloat64(self.ctx, value);
                 },
-                .BigInt => {
+                .big_int => {
                     return self.readBigInt();
                 },
-                .Utf8String => {
+                .utf8_string => {
                     return self.readUtf8String();
                 },
-                .OneByteString => {
+                .one_byte_string => {
                     return self.readOneByteString();
                 },
-                .TwoByteString => {
+                .two_byte_string => {
                     return self.readTwoByteString();
                 },
-                .ObjectReference => {
+                .object_reference => {
                     const id = try self.readVarint(u32);
                     return self.getObjectWithID(id);
                 },
-                .BeginJSObject => {
+                .begin_js_object => {
                     return self.readJSObject();
                 },
-                .BeginSparseJSArray => {
+                .begin_sparse_js_array => {
                     return self.readSparseJSArray();
                 },
-                .BeginDenseJSArray => {
+                .begin_dense_js_array => {
                     return self.readDenseJSArray();
                 },
-                .Date => {
+                .date => {
                     return self.readJSDate();
                 },
-                .TrueObject, .FalseObject, .NumberObject, .BigIntObject, .StringObject => |t| {
+                .true_object, .false_object, .number_object, .big_int_object, .string_object => |t| {
                     return self.readJSPrimitiveWrapper(t);
                 },
-                .RegExp => {
+                .reg_exp => {
                     return self.readJSRegExp();
                 },
-                .BeginJSMap => {
+                .begin_js_map => {
                     return self.readJSMap(.Map);
                 },
-                .BeginJSSet => {
+                .begin_js_set => {
                     return self.readJSMap(.Set);
                 },
-                .ArrayBuffer => {
+                .array_buffer => {
                     const is_shared = false;
                     const is_resizable = false;
                     return self.readJSArrayBuffer(is_shared, is_resizable);
                 },
-                // .SharedArrayBuffer => {
+                // .shared_array_buffer => {
                 //     const is_shared = false;
                 //     const is_resizable = true;
                 //     return self.readJSArrayBuffer(is_shared, is_resizable);
                 // },
-                .Error => {
+                .@"error" => {
                     return self.readJSError();
                 },
-                .HostObject => {
+                .host_object => {
                     return self.readHostObject();
                 },
                 else => {
@@ -1276,7 +1276,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             try self.addObjectWithID(id, object);
 
-            const num_properties = try self.readJSObjectProperties(object, .EndJSObject);
+            const num_properties = try self.readJSObjectProperties(object, .end_js_object);
             const expected_num_properties = try self.readVarint(u32);
             if (num_properties != expected_num_properties) return Error.DataCloneError;
 
@@ -1327,7 +1327,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             try self.addObjectWithID(id, array);
 
-            const num_properties = try self.readJSObjectProperties(array, .EndSparseJSArray);
+            const num_properties = try self.readJSObjectProperties(array, .end_sparse_js_array);
             const expected_num_properties = try self.readVarint(u32);
             const expected_length = try self.readVarint(u32);
             if (num_properties != expected_num_properties or length != expected_length) return Error.DataCloneError;
@@ -1354,8 +1354,8 @@ pub fn Deserializer(comptime Delegate: type) type {
             var idx: u32 = 0;
             while (idx < length) : (idx += 1) {
                 const tag = try self.peekTag();
-                if (tag == .TheHole) {
-                    try self.consumeTag(.TheHole);
+                if (tag == .the_hole) {
+                    try self.consumeTag(.the_hole);
                     continue;
                 }
 
@@ -1371,7 +1371,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 if (code < 0) return Error.JSError;
             }
 
-            const num_properties = try self.readJSObjectProperties(array, .EndDenseJSArray);
+            const num_properties = try self.readJSObjectProperties(array, .end_dense_js_array);
             const expected_num_properties = try self.readVarint(u32);
             const expected_length = try self.readVarint(u32);
             if (num_properties != expected_num_properties or length != expected_length) return Error.ValidationFailed;
@@ -1394,20 +1394,20 @@ pub fn Deserializer(comptime Delegate: type) type {
             const id: u32 = self.next_id;
             self.next_id += 1;
             const value: c.JSValue = switch (tag) {
-                .TrueObject => JS_ToObject(self.ctx, z.JS_TRUE),
-                .FalseObject => JS_ToObject(self.ctx, z.JS_FALSE),
-                .NumberObject => blk: {
+                .true_object => JS_ToObject(self.ctx, z.JS_TRUE),
+                .false_object => JS_ToObject(self.ctx, z.JS_FALSE),
+                .number_object => blk: {
                     const double = try self.readDouble();
                     const js_num = c.JS_NewFloat64(self.ctx, double);
                     defer c.JS_FreeValue(self.ctx, js_num);
                     break :blk JS_ToObject(self.ctx, js_num);
                 },
-                .BigIntObject => blk: {
+                .big_int_object => blk: {
                     const bigint = try self.readBigInt();
                     defer c.JS_FreeValue(self.ctx, bigint);
                     break :blk JS_ToObject(self.ctx, bigint);
                 },
-                .StringObject => blk: {
+                .string_object => blk: {
                     const js_str = try self.readString();
                     defer c.JS_FreeValue(self.ctx, js_str);
                     break :blk JS_ToObject(self.ctx, js_str);
@@ -1465,7 +1465,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             var length: u32 = 0;
             while (true) {
                 const tag = try self.peekTag();
-                if (tag == if (kind == .Map) .EndJSMap else .EndJSSet) {
+                if (tag == if (kind == .Map) .end_js_map else .end_js_set) {
                     try self.consumeTag(tag);
                     break;
                 }
@@ -1546,19 +1546,19 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             const tag_enum: ArrayBufferViewTag = @enumFromInt(tag);
             const class_id: z.JSClassId, const element_size: u32 = switch (tag_enum) {
-                .Uint8ClampedArray => .{ .UINT8C_ARRAY, 1 },
-                .Int8Array => .{ .INT8_ARRAY, 1 },
-                .Uint8Array => .{ .UINT8_ARRAY, 1 },
-                .Int16Array => .{ .INT16_ARRAY, 2 },
-                .Uint16Array => .{ .UINT16_ARRAY, 2 },
-                .Int32Array => .{ .INT32_ARRAY, 4 },
-                .Uint32Array => .{ .UINT32_ARRAY, 4 },
-                .BigInt64Array => .{ .BIG_INT64_ARRAY, 8 },
-                .BigUint64Array => .{ .BIG_UINT64_ARRAY, 8 },
-                .Float16Array => .{ .FLOAT16_ARRAY, 2 },
-                .Float32Array => .{ .FLOAT32_ARRAY, 4 },
-                .Float64Array => .{ .FLOAT64_ARRAY, 8 },
-                .DataView => .{ .DATAVIEW, 1 },
+                .uint8_clamped_array => .{ .uint8c_array, 1 },
+                .int8_array => .{ .int8_array, 1 },
+                .uint8_array => .{ .uint8_array, 1 },
+                .int16_array => .{ .int16_array, 2 },
+                .uint16_array => .{ .uint16_array, 2 },
+                .int32_array => .{ .int32_array, 4 },
+                .uint32_array => .{ .uint32_array, 4 },
+                .big_int64_array => .{ .big_int64_array, 8 },
+                .big_uint64_array => .{ .big_uint64_array, 8 },
+                .float16_array => .{ .float16_array, 2 },
+                .float32_array => .{ .float32_array, 4 },
+                .float64_array => .{ .float64_array, 8 },
+                .data_view => .{ .dataview, 1 },
                 else => return Error.DataCloneError,
             };
 
@@ -1576,10 +1576,10 @@ pub fn Deserializer(comptime Delegate: type) type {
             argv[2] = c.JS_NewUint32(self.ctx, byte_length / element_size);
             defer c.JS_FreeValue(self.ctx, argv[1]);
             defer c.JS_FreeValue(self.ctx, argv[2]);
-            const obj = if (tag_enum == .DataView)
+            const obj = if (tag_enum == .data_view)
                 js_dataview_constructor(self.ctx, z.JS_UNDEFINED, 3, &argv)
             else
-                c.JS_NewTypedArray(self.ctx, 3, &argv, @intFromEnum(class_id) - @intFromEnum(z.JSClassId.UINT8C_ARRAY));
+                c.JS_NewTypedArray(self.ctx, 3, &argv, @intFromEnum(class_id) - @intFromEnum(z.JSClassId.uint8c_array));
             if (c.JS_IsException(obj) == c.TRUE) return Error.OutOfMemory;
             errdefer c.JS_FreeValue(self.ctx, obj);
 
@@ -1595,44 +1595,44 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             var error_num: z.JSErrorEnum = undefined;
             switch (tag) {
-                .EvalErrorPrototype => {
-                    error_num = .EVAL_ERROR;
+                .eval_error_prototype => {
+                    error_num = .eval_error;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
-                .RangeErrorPrototype => {
-                    error_num = .RANGE_ERROR;
+                .range_error_prototype => {
+                    error_num = .range_error;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
-                .ReferenceErrorPrototype => {
-                    error_num = .REFERENCE_ERROR;
+                .reference_error_prototype => {
+                    error_num = .reference_error;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
-                .SyntaxErrorPrototype => {
-                    error_num = .SYNTAX_ERROR;
+                .syntax_error_prototype => {
+                    error_num = .syntax_error;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
-                .TypeErrorPrototype => {
-                    error_num = .TYPE_ERROR;
+                .type_error_prototype => {
+                    error_num = .type_error;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
-                .UriErrorPrototype => {
-                    error_num = .URI_ERROR;
+                .uri_error_prototype => {
+                    error_num = .uri_error;
                     tag = @enumFromInt(try self.readVarint(u8));
                 },
                 else => {
-                    error_num = .PLAIN_ERROR;
+                    error_num = .plain_error;
                 },
             }
 
             var message: ?c.JSValue = null;
-            if (tag == .Message) {
+            if (tag == .message) {
                 message = try self.readString();
                 tag = @enumFromInt(try self.readVarint(u8));
             }
             errdefer if (message) |x| c.JS_FreeValue(self.ctx, x);
 
             var stack: ?c.JSValue = null;
-            if (tag == .Stack) {
+            if (tag == .stack) {
                 stack = try self.readString();
                 tag = @enumFromInt(try self.readVarint(u8));
             }
@@ -1653,7 +1653,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             };
 
             var cause: ?c.JSValue = null;
-            if (tag == .Cause) {
+            if (tag == .cause) {
                 cause = try self.readObject();
                 if (c.JS_DefinePropertyValueStr(self.ctx, err_obj, "cause", cause.?, no_enum) < 0) {
                     return Error.DataCloneError;
@@ -1662,7 +1662,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             }
             errdefer if (cause) |x| c.JS_FreeValue(self.ctx, x);
 
-            if (tag != .End) return Error.DataCloneError;
+            if (tag != .end) return Error.DataCloneError;
             return err_obj;
         }
 
