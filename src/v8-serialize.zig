@@ -10,7 +10,6 @@ const QJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
 extern fn JS_ToObject(ctx: ?*c.JSContext, v: c.JSValue) c.JSValue;
 extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: c.BOOL) c.JSValue;
 
-extern fn js_alloc_string(ctx: ?*c.JSContext, max_len: c_int, is_wide_char: c.BOOL) ?*z.JSString;
 extern fn js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
 extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
 extern fn js_string_to_bigint(ctx: ?*c.JSContext, buf: [*c]const u8, radix: c_int) c.JSValue;
@@ -21,6 +20,7 @@ extern fn js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL)
 extern fn js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) c.BOOL;
 extern fn js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) c.BOOL;
 
+// A few non-standard qjs functions that we've added.
 extern fn _JS_CheckStackOverflow(ctx: ?*c.JSContext, alloca_size: usize) c.BOOL;
 extern fn _JS_AtomIsString(ctx: ?*c.JSContext, v: c.JSAtom) c.BOOL;
 extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSMapState;
@@ -809,10 +809,12 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeVarint(u32, @intFromEnum(tag));
             try self.writeVarint(u32, byte_offset);
             try self.writeVarint(u32, byte_length);
-            // XXX: does qjs have these flags?
+            // V8 has special flags for length tracking and resizable array buffer backing,
+            // but QuickJS doesn't have equivalent features. In V8 these flags would be:
             // uint32_t flags =
             //      JSArrayBufferViewIsLengthTracking::encode(view->is_length_tracking()) |
             //      JSArrayBufferViewIsBackedByRab::encode(view->is_backed_by_rab());
+            // For QuickJS compatibility, we'll just write 0 as the flags value
             try self.writeVarint(u32, 0);
         }
 
@@ -898,9 +900,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
                 // If the property is no longer found, do not serialize it.
                 // This could happen if a getter deleted the property.
-                // XXX: How to handle this in qjs? Checking undefined is not correct,
-                //      since a value might be legitimately set to undefined.
-                // if (c.JS_IsUndefined(value) != 0) continue;
+                if (c.JS_HasProperty(self.ctx, obj, prop.atom) == c.FALSE) continue;
 
                 try self.writeObject(key);
                 try self.writeObject(value);
