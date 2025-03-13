@@ -32,7 +32,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - run: brew install zig
+      - run: |
+          brew update
+          brew install zig
       - uses: actions/cache@v4
         with:
           path: .zig-cache
