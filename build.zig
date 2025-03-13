@@ -190,20 +190,7 @@ fn build2(
         .flags = cflags.items,
     });
 
-    // XXX: Workaround for outdated libc in Zig for macOS Sonoma. Hopefully this will get fixed sometime in the future.
-    // Can only build for macOS on macOS right now, and is skipped otherwise.
-    // `macos-libc.ini` is checked into the repo, but can create with `zig libc > macos-libc.ini` and then
-    // replace `include_dir` and `sys_include_dir` with output from `xcrun --show-sdk-path --sdk macosx` + `/usr/include`
-    if (target.result.os.tag.isDarwin()) {
-        if (builtin.os.tag == .macos) {
-            tjs.setLibCFile(b.path("macos-libc.ini"));
-            tjsc.setLibCFile(b.path("macos-libc.ini"));
-        } else {
-            return .{ null, null };
-        }
-    } else {
-        lib.linkLibC();
-    }
+    lib.linkLibC();
 
     if (opts.with_sqlite and !opts.matrix) {
         const sqlite_ext_test = b.addSharedLibrary(.{
@@ -302,6 +289,8 @@ pub fn build(b: *std.Build) !void {
             b.getInstallStep().dependOn(&tjs_output.step);
             b.getInstallStep().dependOn(&tjsc_output.step);
         }
+
+        return;
     }
 
     const tjs, const tjsc = try build2(b, std_query, std_optimize, .{

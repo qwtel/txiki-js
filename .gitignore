@@ -15,3 +15,4 @@ node_modules/
 types/api/
 test_dir*/
 _tests
+_include
