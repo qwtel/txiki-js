@@ -296,26 +296,12 @@ pub fn build(b: *std.Build) !void {
                 continue;
             }
 
-            const tjs_output = b.addInstallArtifact(tjs.?, .{
-                .dest_dir = .{
-                    .override = .{
-                        .custom = try q.zigTriple(b.allocator),
-                    },
-                },
-            });
-            const tjsc_output = b.addInstallArtifact(tjsc.?, .{
-                .dest_dir = .{
-                    .override = .{
-                        .custom = try q.zigTriple(b.allocator),
-                    },
-                },
-            });
+            const tjs_output = b.addInstallArtifact(tjs.?, .{ .dest_dir = .{ .override = .{ .custom = try q.zigTriple(b.allocator) } } });
+            const tjsc_output = b.addInstallArtifact(tjsc.?, .{ .dest_dir = .{ .override = .{ .custom = try q.zigTriple(b.allocator), }, } });
 
             b.getInstallStep().dependOn(&tjs_output.step);
             b.getInstallStep().dependOn(&tjsc_output.step);
         }
-
-        return;
     }
 
     const tjs, const tjsc = try build2(b, std_query, std_optimize, .{
