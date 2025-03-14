@@ -1,7 +1,7 @@
 .{
     .name = .tjs,
     .fingerprint = 0xfaa7ba353f17a3c0,
-    .version = "24.12.0-zig.4",
+    .version = "25.3.0",
     .dependencies = .{
         .sqlite3 = .{
             .path = "deps/sqlite3/",
