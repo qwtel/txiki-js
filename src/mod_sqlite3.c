@@ -346,7 +346,12 @@ static JSValue tjs__stmt2obj(JSContext *ctx, TJSSqlite3Stmt *h) {
 
         switch (sqlite3_column_type(h->stmt, i)) {
             case SQLITE_INTEGER: {
-                value = JS_NewInt64(ctx, sqlite3_column_int64(h->stmt, i));
+                int64_t val = sqlite3_column_int64(h->stmt, i);
+                if (val > 9007199254740991 || val < -9007199254740991) {
+                    value = JS_NewBigInt64(ctx, val);
+                } else {
+                    value = JS_NewInt64(ctx, val);
+                }
                 break;
             }
             case SQLITE_FLOAT: {
