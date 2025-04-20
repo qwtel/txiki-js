@@ -127,9 +127,15 @@ JSValue tjs_throw_sqlite3_errno(JSContext *ctx, int err, sqlite3 *db) {
     JSValue obj;
     char error_buffer[512];
     int extended_error_code = sqlite3_extended_errcode(db);
-    snprintf(error_buffer, sizeof(error_buffer), 
-            "SQLite error %d: %s (Extended code: %d)", 
-            err, sqlite3_errmsg(db), extended_error_code);
+    if (extended_error_code != err) {
+        snprintf(error_buffer, sizeof(error_buffer), 
+                "SQLite error %d: %s (Extended code: %d)", 
+                err, sqlite3_errmsg(db), extended_error_code);
+    } else {
+        snprintf(error_buffer, sizeof(error_buffer), 
+                "SQLite error %d: %s", 
+                err, sqlite3_errmsg(db));
+    }
     obj = JS_NewError(ctx);
     JS_DefinePropertyValueStr(ctx,
                               obj,
