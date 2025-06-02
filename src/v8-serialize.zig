@@ -12,6 +12,7 @@ extern fn JS_CompactBigInt(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
 extern fn js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
 extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
 extern fn js_bigint_from_string(ctx: ?*c.JSContext, str: [*c]const u8, radix: c_int) ?*z.JSBigInt;
+extern fn js_bigint_to_string1(ctx: ?*c.JSContext, val: c.JSValueConst, radix: c_int) c.JSValue;
 extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValueConst) c.JSValue;
 extern fn js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
@@ -32,6 +33,9 @@ extern fn _js_typed_array_get_byte_length(p: *c.JSObject) u32;
 extern fn _js_typed_array_get_byte_offset(p: *c.JSObject) u32;
 
 const kLatestVersion = 15;
+
+const cTRUE = 1;
+const cFALSE = 0;
 
 fn bytesNeededForVarint(comptime T: type, value: T) usize {
     comptime {
@@ -371,16 +375,11 @@ pub fn Serializer(comptime Delegate: type) type {
             //     shiftRightU64Slice(v8_limbs, right_shift_to_align);
             // } else {
 
+            // XXX: Always using the string-based serialization now, can't be bothered with the limb stuff a second time
             var v8_limbs = try std.ArrayListUnmanaged(u64).initCapacity(self.ac, 2);
             defer v8_limbs.deinit(self.ac);
 
-            const to_string_func = c.JS_GetPropertyStr(self.ctx, obj, "toString");
-            defer c.JS_FreeValue(self.ctx, to_string_func);
-
-            var argv: [1]c.JSValue = .{c.JS_NewInt32(self.ctx, 16)};
-            defer c.JS_FreeValue(self.ctx, argv[0]);
-
-            const result = c.JS_Call(self.ctx, to_string_func, obj, 1, &argv);
+            const result = js_bigint_to_string1(self.ctx, obj, 16);
             defer c.JS_FreeValue(self.ctx, result);
             if (c.JS_IsException(result)) return Error.DataCloneError;
 
@@ -394,14 +393,11 @@ pub fn Serializer(comptime Delegate: type) type {
             if (hex_str[0] == '0' and hex_str.len == 1) return self.writeVarint(u32, 0);
 
             var end: usize = hex_str.len;
-            // var v8_limbs_idx: usize = 0;
             while (end > 0) {
                 const start = if (end > 16) end - 16 else 0;
                 const hex_slice = hex_str[start..end];
-                // v8_limbs[v8_limbs_idx] = std.fmt.parseInt(u64, hex_slice, 16) catch unreachable;
                 try v8_limbs.append(self.ac, std.fmt.parseInt(u64, hex_slice, 16) catch unreachable);
                 end = start;
-                // v8_limbs_idx += 1;
             }
             // }
 
@@ -607,7 +603,7 @@ pub fn Serializer(comptime Delegate: type) type {
             //         for (props, 0..) |*prop, i| {
             //             const atom = prop.atom;
             //             const flags = prop.flags();
-            //             if (atom != c.JS_ATOM_NULL and _JS_AtomIsString(self.ctx, atom) == c.TRUE and (flags & c.JS_PROP_ENUMERABLE) != 0) {
+            //             if (atom != c.JS_ATOM_NULL and _JS_AtomIsString(self.ctx, atom) == cTRUE and (flags & c.JS_PROP_ENUMERABLE) != 0) {
             //                 if (pass == 0 and (flags & c.JS_PROP_TMASK) != 0) {
             //                     is_pojo = false;
             //                     break;
@@ -830,13 +826,13 @@ pub fn Serializer(comptime Delegate: type) type {
             var message_desc: c.JSPropertyDescriptor = undefined;
             const message = c.JS_NewAtom(self.ctx, "message");
             defer c.JS_FreeAtom(self.ctx, message);
-            const message_found = c.JS_GetOwnProperty(self.ctx, &message_desc, obj, message) == c.TRUE;
+            const message_found = c.JS_GetOwnProperty(self.ctx, &message_desc, obj, message) == cTRUE;
             defer if (message_found) c.JS_FreeValue(self.ctx, message_desc.value);
 
             var cause_desc: c.JSPropertyDescriptor = undefined;
             const cause = c.JS_NewAtom(self.ctx, "cause");
             defer c.JS_FreeAtom(self.ctx, cause);
-            const cause_found = c.JS_GetOwnProperty(self.ctx, &cause_desc, obj, cause) == c.TRUE;
+            const cause_found = c.JS_GetOwnProperty(self.ctx, &cause_desc, obj, cause) == cTRUE;
             defer if (cause_found) c.JS_FreeValue(self.ctx, cause_desc.value);
 
             try self.writeTag(.@"error");
@@ -906,7 +902,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 // This could happen if a getter deleted the property.
                 const ret = c.JS_HasProperty(self.ctx, obj, prop.atom);
                 if (ret == -1) return Error.DataCloneError;
-                if (ret == c.FALSE) continue;
+                if (ret == cFALSE) continue;
 
                 try self.writeObject(key);
                 try self.writeObject(value);

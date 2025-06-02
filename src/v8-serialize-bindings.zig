@@ -5,6 +5,9 @@ const builtin = @import("builtin");
 pub const z = @import("v8-qjs-structs.zig");
 pub const c = z.c;
 
+const cTRUE = 1;
+const cFALSE = 0;
+
 const QuickJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
 
 fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) void {
@@ -114,7 +117,7 @@ fn jsSerializerWriteHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
 fn jsSerializerSetTreatArrayBufferViewsAsHostObjects(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
     const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
-    ser.setTreatArrayBufferViewsAsHostObjects(c.JS_ToBool(ctx, argv[0]) == c.TRUE);
+    ser.setTreatArrayBufferViewsAsHostObjects(c.JS_ToBool(ctx, argv[0]) == cTRUE);
     return z.JS_UNDEFINED;
 }
 
