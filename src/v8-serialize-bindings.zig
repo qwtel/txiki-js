@@ -21,20 +21,20 @@ const NodeDelegate = struct {
         const js_func = c.JS_GetPropertyStr(ctx, self.this_obj, "_writeHostObject");
         defer c.JS_FreeValue(ctx, js_func);
 
-        if (c.JS_IsFunction(ctx, js_func) == c.FALSE) return error.NotImplemented;
+        if (!c.JS_IsFunction(ctx, js_func)) return error.NotImplemented;
 
         var argv = [1]c.JSValue{obj};
         const js_result = c.JS_Call(ctx, js_func, self.this_obj, 1, &argv);
         defer c.JS_FreeValue(ctx, js_result);
 
-        if (c.JS_IsException(js_result) == c.TRUE) return error.JSError;
+        if (c.JS_IsException(js_result)) return error.JSError;
     }
 
     pub fn readHostObject(self: Self, ctx: ?*c.JSContext) !c.JSValue {
         const js_func = c.JS_GetPropertyStr(ctx, self.this_obj, "_readHostObject");
         defer c.JS_FreeValue(ctx, js_func);
 
-        if (c.JS_IsFunction(ctx, js_func) == c.FALSE) return error.NotImplemented;
+        if (!c.JS_IsFunction(ctx, js_func)) return error.NotImplemented;
 
         var argv = [0]c.JSValue{};
         const js_result = c.JS_Call(ctx, js_func, self.this_obj, 0, &argv);
@@ -76,7 +76,7 @@ fn initDeserializer(ctx: ?*c.JSContext, obj: c.JSValue, js_view: c.JSValue) !*De
 }
 
 fn jsSerializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
-    if (c.JS_IsConstructor(ctx, new_target) == 0) {
+    if (!c.JS_IsConstructor(ctx, new_target)) {
         return c.JS_ThrowTypeError(ctx, "not a constructor");
     }
     const proto = c.JS_GetPropertyStr(ctx, new_target, "prototype");
@@ -188,7 +188,7 @@ fn jsSerializerReleaseBuffer(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc:
     };
     _ = argc;
     _ = argv;
-    return c.JS_NewUint8Array(ctx, bytes.ptr, bytes.len, &freeFunc, null, 0); // return c.JS_NewUint8ArrayCopy(ctx, bytes.ptr, bytes.len);
+    return c.JS_NewUint8Array(ctx, bytes.ptr, bytes.len, &freeFunc, null, false);
 }
 
 const serializer_class = c.JSClassDef{
@@ -207,7 +207,7 @@ const serializer_proto_funcs = [_]c.JSCFunctionListEntry{
 };
 
 fn jsDeserializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
-    if (c.JS_IsConstructor(ctx, new_target) == 0) {
+    if (!c.JS_IsConstructor(ctx, new_target)) {
         return c.JS_ThrowTypeError(ctx, "not a constructor");
     }
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");

@@ -32,7 +32,7 @@ pub fn main() !void {
     // const js_code = "BigInt(0xffff_ffff_ffff_ffff)";
     const js_code = "new DataView(new Uint8Array([1,2,3]).buffer)";
     const eval_result = evalJS(ctx, js_code);
-    if (c.JS_IsException(eval_result) == c.TRUE) std.debug.print("Exception\n", .{});
+    if (c.JS_IsException(eval_result)) std.debug.print("Exception\n", .{});
     defer c.JS_FreeValue(ctx, eval_result);
 
     var ser = try Serializer.init(allocator, ctx);
@@ -83,7 +83,7 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
     const js_expected = evalJS(ctx, expected);
     defer c.JS_FreeValue(ctx, js_expected);
 
-    try testing.expect(c.JS_IsException(js_expected) == 0);
+    try testing.expect(c.JS_IsException(js_expected) == false);
 
     const view = c.JS_NewUint8ArrayCopy(ctx, buf.ptr, buf.len);
     defer c.JS_FreeValue(ctx, view);
@@ -95,7 +95,7 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
     const js_actual = try des.readObject();
     defer c.JS_FreeValue(ctx, js_actual);
 
-    try testing.expect(c.JS_IsException(js_actual) == 0);
+    try testing.expect(c.JS_IsException(js_actual) == false);
 
     const func_obj = evalJS(ctx,
         \\ (function deepEqual(a, b) {
@@ -128,7 +128,7 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
         \\ })
     );
     defer c.JS_FreeValue(ctx, func_obj);
-    try testing.expect(c.JS_IsFunction(ctx, func_obj) == 1);
+    try testing.expect(c.JS_IsFunction(ctx, func_obj));
 
     var argv = [_]c.JSValue{ js_expected, js_actual };
     const res = c.JS_Call(ctx, func_obj, z.JS_NULL, argv.len, &argv);

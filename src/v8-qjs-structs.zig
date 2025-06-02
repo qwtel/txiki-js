@@ -7,20 +7,12 @@ pub const c = @cImport({
     @cInclude("cutils.h");
     @cInclude("list.h");
     @cInclude("libregexp.h");
-    @cInclude("libbf.h");
+    @cInclude("xsum.h");
     @cInclude("quickjs.h");
 });
 
 pub const JSString = opaque {}; 
-
-pub const JSRefCountHeader = extern struct {
-    ref_count: c_int,
-};
-
-pub const JSBigInt = extern struct {
-    header: JSRefCountHeader,
-    num: c.bf_t,
-};
+pub const JSBigInt = opaque {};
 
 pub const JSRegExp = extern struct {
     pattern: *JSString,
@@ -29,7 +21,7 @@ pub const JSRegExp = extern struct {
 
 pub const JSMapRecord = extern struct {
     ref_count: c_int, // used during enumeration to avoid freeing the record
-    empty: c_int, // TRUE if the record is deleted
+    empty: bool, // TRUE if the record is deleted
     map: *JSMapState,
     link: c.list_head,
     hash_link: c.list_head,
@@ -38,7 +30,7 @@ pub const JSMapRecord = extern struct {
 };
 
 pub const JSMapState = extern struct {
-    is_weak: c_int,
+    is_weak: bool,
     records: c.list_head,
     record_count: u32,
     hash_table: *c.list_head,

@@ -58,11 +58,11 @@
 //         goto end;
 //     }
 
-//     /* XXX: could propagate the exception */
-//     js_module_set_import_meta(ctx, func_val, FALSE, FALSE);
-//     /* the module is already referenced, so we must free it */
-//     m = JS_VALUE_GET_PTR(func_val);
-//     JS_FreeValue(ctx, func_val);
+//    /* XXX: could propagate the exception */
+//    js_module_set_import_meta(ctx, func_val, false, false);
+//    /* the module is already referenced, so we must free it */
+//    m = JS_VALUE_GET_PTR(func_val);
+//    JS_FreeValue(ctx, func_val);
 
 // end:
 //     /* free the memory we allocated */
@@ -126,7 +126,7 @@ JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *op
     }
 
     /* XXX: could propagate the exception */
-    js_module_set_import_meta(ctx, func_val, TRUE, FALSE);
+    js_module_set_import_meta(ctx, func_val, true, false);
     /* the module is already referenced, so we must free it */
     m = JS_VALUE_GET_PTR(func_val);
     JS_FreeValue(ctx, func_val);
@@ -144,7 +144,7 @@ JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *op
 #define TJS__PATHSEP_STR "/"
 #endif
 
-int js_module_set_import_meta(JSContext *ctx, JSValue func_val, JS_BOOL use_realpath, JS_BOOL is_main) {
+int js_module_set_import_meta(JSContext *ctx, JSValue func_val, bool use_realpath, bool is_main) {
     JSModuleDef *m;
     char buf[PATH_MAX + 16] = { 0 };
     int r;

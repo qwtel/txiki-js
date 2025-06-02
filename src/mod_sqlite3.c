@@ -474,7 +474,7 @@ static JSValue tjs__sqlite3_bind_param(JSContext *ctx, sqlite3_stmt *stmt, int i
 static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSValue params) {
     sqlite3_clear_bindings(stmt);
 
-    if (JS_IsArray(ctx, params)) {
+    if (JS_IsArray(params)) {
         JSValue js_length = JS_GetPropertyStr(ctx, params, "length");
         uint64_t len;
         if (JS_ToIndex(ctx, &len, js_length)) {
@@ -503,7 +503,7 @@ static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSVa
             JSAtom patom = ptab[i].atom;
             JSValue prop = JS_GetProperty(ctx, params, patom);
             if (JS_IsException(prop)) {
-                JS_FreePropEnum(ctx, ptab, plen);
+                JS_FreePropertyEnum(ctx, ptab, plen);
                 return JS_EXCEPTION;
             }
             const char *key = JS_AtomToCString(ctx, patom);
@@ -514,13 +514,13 @@ static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSVa
                 }
                 JS_FreeValue(ctx, prop);
                 JS_FreeCString(ctx, key);
-                JS_FreePropEnum(ctx, ptab, plen);
+                JS_FreePropertyEnum(ctx, ptab, plen);
                 return JS_EXCEPTION;
             }
             JS_FreeValue(ctx, prop);
             JS_FreeCString(ctx, key);
         }
-        JS_FreePropEnum(ctx, ptab, plen);
+        JS_FreePropertyEnum(ctx, ptab, plen);
     } else {
         return JS_ThrowTypeError(ctx, "Invalid bind parameters type: expected object or array");
     }

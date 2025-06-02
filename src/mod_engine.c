@@ -133,7 +133,7 @@ static JSValue tjs_evalBytecode(JSContext *ctx, JSValue this_val, int argc, JSVa
             return JS_EXCEPTION;
         }
 
-        js_module_set_import_meta(ctx, obj, FALSE, FALSE);
+        js_module_set_import_meta(ctx, obj, false, false);
     }
 
     return JS_EvalFunction(ctx, obj);

@@ -7,28 +7,27 @@ pub const c = z.c;
 const QJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
 
 // A bunch of qjs internal functions that we've stripped `static` from. They're not part of the header, so we have to declare them here.
-extern fn JS_ToObject(ctx: ?*c.JSContext, v: c.JSValue) c.JSValue;
-extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: c.BOOL) c.JSValue;
-
+extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
+extern fn JS_CompactBigInt(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
 extern fn js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
 extern fn js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
-extern fn js_string_to_bigint(ctx: ?*c.JSContext, buf: [*c]const u8, radix: c_int) c.JSValue;
-extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
+extern fn js_bigint_from_string(ctx: ?*c.JSContext, str: [*c]const u8, radix: c_int) ?*z.JSBigInt;
+extern fn js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValueConst) c.JSValue;
 extern fn js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
-extern fn js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSRegExp;
-extern fn js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) c.BOOL;
-extern fn js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) c.BOOL;
+extern fn js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSRegExp;
+extern fn js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) bool;
+extern fn js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) bool;
 
 // A few non-standard qjs functions that we've added.
-extern fn _JS_CheckStackOverflow(ctx: ?*c.JSContext, alloca_size: usize) c.BOOL;
-extern fn _JS_AtomIsString(ctx: ?*c.JSContext, v: c.JSAtom) c.BOOL;
-extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: c.BOOL) *z.JSMapState;
-extern fn _js_string_is_wide_char(p: *const z.JSString) c_int;
+extern fn _JS_CheckStackOverflow(ctx: ?*c.JSContext, alloca_size: usize) bool;
+extern fn _JS_AtomIsString(ctx: ?*c.JSContext, v: c.JSAtom) bool;
+extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSMapState;
+extern fn _js_string_is_wide_char(p: *const z.JSString) bool;
 extern fn _js_string_get_len(p: *const z.JSString) u32;
 extern fn _js_string_get_str8(p: *const z.JSString) [*]const u8;
 extern fn _js_string_get_str16(p: *const z.JSString) [*]const u16;
-extern fn _JS_GetObjectData(ctx: ?*c.JSContext, obj: c.JSValue, pval: *c.JSValue) c.BOOL;
+extern fn _JS_GetObjectData(ctx: ?*c.JSContext, obj: c.JSValue, pval: *c.JSValue) bool;
 extern fn _js_typed_array_get_byte_length(p: *c.JSObject) u32;
 extern fn _js_typed_array_get_byte_offset(p: *c.JSObject) u32;
 
@@ -50,37 +49,37 @@ fn bytesNeededForVarint(comptime T: type, value: T) usize {
     return result;
 }
 
-/// A right-shift for u64 slices that can shift by more than 64 bits.
-fn shiftRightU64Slice(values: []u64, n: usize) void {
-    const m = n / 64; // Number of full u64 shifts
-    const n_bits: u6 = @intCast(n % 64); // Remaining bit shift within u64
+// /// A right-shift for u64 slices that can shift by more than 64 bits.
+// fn shiftRightU64Slice(values: []u64, n: usize) void {
+//     const m = n / 64; // Number of full u64 shifts
+//     const n_bits: u6 = @intCast(n % 64); // Remaining bit shift within u64
 
-    const len = values.len;
+//     const len = values.len;
 
-    // Shift full u64 values
-    if (m > 0) {
-        var i = len;
-        while (i > m) : (i -= 1) {
-            const idx = i - 1;
-            values[idx] = values[idx - m];
-        }
-        for (0..m) |idx| {
-            values[idx] = 0;
-        }
-    }
+//     // Shift full u64 values
+//     if (m > 0) {
+//         var i = len;
+//         while (i > m) : (i -= 1) {
+//             const idx = i - 1;
+//             values[idx] = values[idx - m];
+//         }
+//         for (0..m) |idx| {
+//             values[idx] = 0;
+//         }
+//     }
 
-    // Shift remaining bits within u64s
-    if (n_bits > 0) {
-        var carry: u64 = 0;
-        var i = len;
-        while (i > m) : (i -= 1) {
-            const idx = i - 1;
-            const new_carry = values[idx] << (63 - n_bits + 1); // Save bits that will be shifted out
-            values[idx] = (values[idx] >> n_bits) | carry;
-            carry = new_carry;
-        }
-    }
-}
+//     // Shift remaining bits within u64s
+//     if (n_bits > 0) {
+//         var carry: u64 = 0;
+//         var i = len;
+//         while (i > m) : (i -= 1) {
+//             const idx = i - 1;
+//             const new_carry = values[idx] << (63 - n_bits + 1); // Save bits that will be shifted out
+//             values[idx] = (values[idx] >> n_bits) | carry;
+//             carry = new_carry;
+//         }
+//     }
+// }
 
 fn ShiftTypeOf(comptime T: type) type {
     const type_info = @typeInfo(T);
@@ -98,7 +97,7 @@ fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) vo
 }
 
 fn stackCheck(ctx: ?*c.JSContext) !void {
-    if (_JS_CheckStackOverflow(ctx, 0) == c.TRUE) {
+    if (_JS_CheckStackOverflow(ctx, 0)) {
         _ = c.JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
         return Error.StackOverflow;
     }
@@ -115,7 +114,7 @@ fn getTypedArrayBuffer(ctx: ?*c.JSContext, obj: c.JSValue) !struct { c.JSValue, 
 pub fn arrayBufferViewToSlice(ctx: ?*c.JSContext, obj: c.JSValue) ![]u8 {
     const js_ab, const offset, const length, const bytes_per_element = try getTypedArrayBuffer(ctx, obj);
     defer c.JS_FreeValue(ctx, js_ab);
-    if (c.JS_IsException(js_ab) == 1) return error.NotATypedArray;
+    if (c.JS_IsException(js_ab)) return error.NotATypedArray;
 
     var len: usize = 0;
     const bytes = c.JS_GetArrayBuffer(ctx, &len, js_ab);
@@ -349,63 +348,68 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeRawBytes(@ptrCast(value));
         }
 
-        fn writeBigIntContents(self: *Self, bf: *z.JSBigInt, obj: c.JSValue) !void {
-            if (bf.num.len == 0) return self.writeVarint(u32, 0);
+        fn writeBigIntContents(self: *Self, _: *z.JSBigInt, obj: c.JSValue) !void {
+            // var bf_expn_bits: c_int = 0;
+            // _ = js_bigint_get_mant_exp(self.ctx, &bf_expn_bits, bi);
+            // const v8_limbs_num: usize = @intCast((bf_expn_bits + 63) >> 6); // divCeil
+            // if (v8_limbs_num == 0) return self.writeVarint(u32, 0);
 
-            std.debug.assert(bf.num.expn > 0);
+            // const v8_limbs = try self.ac.alloc(u64, v8_limbs_num);
+            // defer self.ac.free(v8_limbs);
 
-            const bf_expn_bits: usize = @intCast(bf.num.expn);
-            const v8_limbs_num: usize = (bf_expn_bits + 63) >> 6; // divCeil
-            const v8_limbs = try self.ac.alloc(u64, v8_limbs_num);
-            defer self.ac.free(v8_limbs);
+            // // Define limb_bits based on the same conditions as in libbf.h
+            // const limb_bits = @bitSizeOf(c.limb_t);
+            // if (limb_bits == 64) {
+            //     const bf_limbs: []c.limb_t = bf.num.tab[0..bf.num.len];
 
-            // Define limb_bits based on the same conditions as in libbf.h
-            const limb_bits = @bitSizeOf(c.limb_t);
-            if (limb_bits == 64) {
-                const bf_limbs: []c.limb_t = bf.num.tab[0..bf.num.len];
+            //     @memset(v8_limbs, 0);
+            //     for (bf_limbs, 0..) |limb, i| v8_limbs[i] = limb;
 
-                @memset(v8_limbs, 0);
-                for (bf_limbs, 0..) |limb, i| v8_limbs[i] = limb;
+            //     const total_output_bits = 64 * v8_limbs_num;
+            //     const extra_output_bits = 64 * (v8_limbs_num - bf_limbs.len);
+            //     const right_shift_to_align = total_output_bits - bf_expn_bits + extra_output_bits;
+            //     shiftRightU64Slice(v8_limbs, right_shift_to_align);
+            // } else {
 
-                const total_output_bits = 64 * v8_limbs_num;
-                const extra_output_bits = 64 * (v8_limbs_num - bf_limbs.len);
-                const right_shift_to_align = total_output_bits - bf_expn_bits + extra_output_bits;
-                shiftRightU64Slice(v8_limbs, right_shift_to_align);
-            } else {
-                // NOTE: Using safe, but slower, string parsing for 32-bit platforms because the limb size is different.
-                const to_string_func = c.JS_GetPropertyStr(self.ctx, obj, "toString");
-                defer c.JS_FreeValue(self.ctx, to_string_func);
+            var v8_limbs = try std.ArrayListUnmanaged(u64).initCapacity(self.ac, 2);
+            defer v8_limbs.deinit(self.ac);
 
-                var argv: [1]c.JSValue = .{c.JS_NewInt32(self.ctx, 16)};
-                defer c.JS_FreeValue(self.ctx, argv[0]);
+            const to_string_func = c.JS_GetPropertyStr(self.ctx, obj, "toString");
+            defer c.JS_FreeValue(self.ctx, to_string_func);
 
-                const result = c.JS_Call(self.ctx, to_string_func, obj, 1, &argv);
-                defer c.JS_FreeValue(self.ctx, result);
-                if (c.JS_IsException(result) == c.TRUE) return Error.DataCloneError;
+            var argv: [1]c.JSValue = .{c.JS_NewInt32(self.ctx, 16)};
+            defer c.JS_FreeValue(self.ctx, argv[0]);
 
-                const hex_str_ptr = c.JS_ToCString(self.ctx, result);
-                defer c.JS_FreeCString(self.ctx, hex_str_ptr);
+            const result = c.JS_Call(self.ctx, to_string_func, obj, 1, &argv);
+            defer c.JS_FreeValue(self.ctx, result);
+            if (c.JS_IsException(result)) return Error.DataCloneError;
 
-                var hex_str = std.mem.span(hex_str_ptr);
-                if (hex_str[0] == '-') hex_str = hex_str[1..]; // abs
+            const hex_str_ptr = c.JS_ToCString(self.ctx, result);
+            defer c.JS_FreeCString(self.ctx, hex_str_ptr);
 
-                var end: usize = hex_str.len;
-                var v8_limbs_idx: usize = 0;
-                while (end > 0) {
-                    const start = if (end > 16) end - 16 else 0;
-                    const hex_slice = hex_str[start..end];
-                    v8_limbs[v8_limbs_idx] = std.fmt.parseInt(u64, hex_slice, 16) catch unreachable;
-                    end = start;
-                    v8_limbs_idx += 1;
-                }
+            var hex_str = std.mem.span(hex_str_ptr);
+            const sign_bit: u1 = if (hex_str[0] == '-') 1 else 0;
+            if (sign_bit == 1) hex_str = hex_str[1..]; // abs
+
+            if (hex_str[0] == '0' and hex_str.len == 1) return self.writeVarint(u32, 0);
+
+            var end: usize = hex_str.len;
+            // var v8_limbs_idx: usize = 0;
+            while (end > 0) {
+                const start = if (end > 16) end - 16 else 0;
+                const hex_slice = hex_str[start..end];
+                // v8_limbs[v8_limbs_idx] = std.fmt.parseInt(u64, hex_slice, 16) catch unreachable;
+                try v8_limbs.append(self.ac, std.fmt.parseInt(u64, hex_slice, 16) catch unreachable);
+                end = start;
+                // v8_limbs_idx += 1;
             }
+            // }
 
-            const sign_bit: u1 = @intCast(bf.num.sign);
-            const byte_length: u31 = @intCast(v8_limbs_num * @sizeOf(u64));
+            const byte_length: u31 = @intCast(v8_limbs.items.len * @sizeOf(u64));
             const bitfield: u32 = (byte_length << 1) | sign_bit;
 
             try self.writeVarint(u32, bitfield);
-            try self.writeRawBytes(@ptrCast(v8_limbs));
+            try self.writeRawBytes(@ptrCast(v8_limbs.items));
         }
 
         fn reserveRawBytes(self: *Self, size: usize) ![]u8 {
@@ -449,7 +453,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 c.JS_TAG_FLOAT64 => {
                     try self.writeHeapNumber(object);
                 },
-                c.JS_TAG_BIG_INT => {
+                c.JS_TAG_BIG_INT, c.JS_TAG_SHORT_BIG_INT => {
                     try self.writeBigInt(object);
                 },
                 c.JS_TAG_STRING => {
@@ -511,7 +515,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeString(self: *Self, p: *const z.JSString) !void {
             const len = _js_string_get_len(p);
-            if (_js_string_is_wide_char(p) == c.TRUE) {
+            if (_js_string_is_wide_char(p)) {
                 const chars = _js_string_get_str16(p);
                 const byte_length: u32 = len * @sizeOf(u16);
                 // The existing reading code expects 16-byte strings to be aligned.
@@ -657,7 +661,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeJSArray(self: *Self, obj: c.JSValue) !void {
             // try self.writeJSObjectSlow(.Array, obj);
-            if (js_is_fast_array(self.ctx, obj) == c.TRUE) {
+            if (js_is_fast_array(self.ctx, obj)) {
                 var values: [*]c.JSValue = undefined;
                 var length: u32 = undefined;
                 _ = js_get_fast_array(self.ctx, obj, &values, &length);
@@ -719,9 +723,9 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeJSRegExp(self: *Self, obj: c.JSValue) !void {
-            const regexp = js_get_regexp(self.ctx, obj, c.FALSE);
+            const regexp = js_get_regexp(self.ctx, obj, false);
             const bc = regexp.bytecode;
-            std.debug.assert(_js_string_is_wide_char(bc) == c.FALSE);
+            std.debug.assert(_js_string_is_wide_char(bc) == false);
 
             const raw_bc = _js_string_get_str8(bc);
             const flags = c.lre_get_flags(raw_bc);
@@ -737,7 +741,7 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeJSMap(self: *Self, comptime as: SetOrMap, obj: c.JSValue) !void {
-            const s = _js_get_map_state(self.ctx, obj, c.FALSE);
+            const s = _js_get_map_state(self.ctx, obj, false);
             const length = s.record_count * (if (as == .Map) 2 else 1);
 
             var entries = try std.ArrayListUnmanaged(c.JSValue).initCapacity(self.ac, length);
@@ -746,7 +750,7 @@ pub fn Serializer(comptime Delegate: type) type {
             var el = s.records.next;
             while (el != &s.records) : (el = el.*.next) {
                 const mr: *allowzero z.JSMapRecord = @alignCast(@fieldParentPtr("link", el));
-                if (mr.empty == c.FALSE) {
+                if (mr.empty == false) {
                     entries.appendAssumeCapacity(mr.key);
                     if (as == .Map) entries.appendAssumeCapacity(mr.value);
                 }
@@ -870,7 +874,7 @@ pub fn Serializer(comptime Delegate: type) type {
             defer c.JS_FreeAtom(self.ctx, stack);
             const stack_val = c.JS_GetProperty(self.ctx, obj, stack);
             defer c.JS_FreeValue(self.ctx, stack_val);
-            if (c.JS_IsString(stack_val) == 1) {
+            if (c.JS_IsString(stack_val)) {
                 try self.writeErrorTag(.stack);
                 try self.writeString(@ptrCast(c.JS_VALUE_GET_PTR(stack_val)));
             }
@@ -892,7 +896,7 @@ pub fn Serializer(comptime Delegate: type) type {
             var properties_written: u32 = 0;
 
             for (prop_enum) |prop| {
-                if (prop.is_enumerable == c.FALSE) continue;
+                if (prop.is_enumerable == false) continue;
                 const key = c.JS_AtomToValue(self.ctx, prop.atom);
                 defer c.JS_FreeValue(self.ctx, key);
                 const value = c.JS_GetProperty(self.ctx, obj, prop.atom);
@@ -900,7 +904,9 @@ pub fn Serializer(comptime Delegate: type) type {
 
                 // If the property is no longer found, do not serialize it.
                 // This could happen if a getter deleted the property.
-                if (c.JS_HasProperty(self.ctx, obj, prop.atom) == c.FALSE) continue;
+                const ret = c.JS_HasProperty(self.ctx, obj, prop.atom);
+                if (ret == -1) return Error.DataCloneError;
+                if (ret == c.FALSE) continue;
 
                 try self.writeObject(key);
                 try self.writeObject(value);
@@ -1096,7 +1102,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             // ArrayBufferView is special in that it consumes the value before it, even
             // after format version 0.
-            if (c.JS_IsArrayBuffer(result) == c.TRUE) {
+            if (c.JS_IsArrayBuffer(result)) {
                 const tag = try self.peekTag();
                 if (tag == .array_buffer_view) {
                     try self.consumeTag(.array_buffer_view);
@@ -1193,12 +1199,18 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn readString(self: *Self) !c.JSValue {
             if (self.version.? < 12) return self.readUtf8String();
             const object = try self.readObject();
-            if (c.JS_IsString(object) == c.FALSE) return Error.DataCloneError;
+            if (!c.JS_IsString(object)) return Error.DataCloneError;
             return object;
         }
 
         fn bigIntFromSerializedDigits(self: *Self, sign_bit: u1, digits_store: []const u8) !c.JSValue {
-            if (digits_store.len == 0) return js_string_to_bigint(self.ctx, "0", 16);
+            if (digits_store.len == 0) {
+                if (js_bigint_from_string(self.ctx, "0", 16)) |r| {
+                    return JS_CompactBigInt(self.ctx, r);
+                } else {
+                    return Error.DataCloneError;
+                }
+            }
 
             var hex = try std.ArrayListUnmanaged(u8).initCapacity(self.ac, 2 + digits_store.len * 2);
             defer hex.deinit(self.ac);
@@ -1218,9 +1230,13 @@ pub fn Deserializer(comptime Delegate: type) type {
             defer self.ac.free(slice);
             // std.debug.print("\nstr: {s}\n", .{slice});
 
-            const bigint = js_string_to_bigint(self.ctx, slice.ptr, 16);
-            if (c.JS_IsException(bigint) == 1) return Error.DataCloneError;
-            return bigint;
+            if (js_bigint_from_string(self.ctx, slice.ptr, 16)) |r| {
+                const bigint = JS_CompactBigInt(self.ctx, r);
+                if (c.JS_IsException(bigint)) return Error.DataCloneError;
+                return bigint;
+            } else {
+                return Error.DataCloneError;
+            }
         }
 
         fn readBigInt(self: *Self) !c.JSValue {
@@ -1235,7 +1251,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             const length = try self.readVarint(u32);
             const bytes = try self.readRawBytes(length);
             const val = c.JS_NewStringLen(self.ctx, bytes.ptr, length);
-            if (c.JS_IsException(val) == c.TRUE) return Error.DataCloneError;
+            if (c.JS_IsException(val)) return Error.DataCloneError;
             return val;
         }
 
@@ -1269,7 +1285,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             self.next_id += 1;
 
             const object = c.JS_NewObject(self.ctx);
-            if (c.JS_IsException(object) == c.TRUE) return Error.DataCloneError;
+            if (c.JS_IsException(object)) return Error.DataCloneError;
             errdefer c.JS_FreeValue(self.ctx, object);
 
             try self.addObjectWithID(id, object);
@@ -1296,7 +1312,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
                 const property_key = c.JS_ToPropertyKey(self.ctx, key);
                 defer c.JS_FreeValue(self.ctx, key);
-                if (c.JS_IsException(property_key) == c.TRUE) return Error.DataCloneError;
+                if (c.JS_IsException(property_key)) return Error.DataCloneError;
 
                 const value = try self.readObject();
                 errdefer c.JS_FreeValue(self.ctx, value); // XXX: not good enough
@@ -1320,7 +1336,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             self.next_id += 1;
 
             const array = c.JS_NewArray(self.ctx);
-            if (c.JS_IsException(array) == c.TRUE) return Error.OutOfMemory;
+            if (c.JS_IsException(array)) return Error.OutOfMemory;
             errdefer c.JS_FreeValue(self.ctx, array);
 
             try self.addObjectWithID(id, array);
@@ -1344,7 +1360,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             self.next_id += 1;
 
             const array = c.JS_NewArray(self.ctx);
-            if (c.JS_IsException(array) == c.TRUE) return Error.OutOfMemory;
+            if (c.JS_IsException(array)) return Error.OutOfMemory;
             errdefer c.JS_FreeValue(self.ctx, array);
 
             try self.addObjectWithID(id, array);
@@ -1363,7 +1379,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 // Serialization versions less than 11 encode the hole the same as
                 // undefined. For consistency with previous behavior, store these as the
                 // hole. Past version 11, undefined means undefined.
-                if (self.version.? < 11 and c.JS_IsUndefined(element) == 1) continue;
+                if (self.version.? < 11 and c.JS_IsUndefined(element)) continue;
 
                 const code = c.JS_DefinePropertyValueUint32(self.ctx, array, idx, element, c.JS_PROP_C_W_E);
                 if (code < 0) return Error.JSError;
@@ -1383,7 +1399,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             const id: u32 = self.next_id;
             self.next_id += 1;
             const date = c.JS_NewDate(self.ctx, value);
-            if (c.JS_IsException(date) == 1) return Error.OutOfMemory;
+            if (c.JS_IsException(date)) return Error.OutOfMemory;
             try self.addObjectWithID(id, date);
             return date;
         }
@@ -1392,27 +1408,27 @@ pub fn Deserializer(comptime Delegate: type) type {
             const id: u32 = self.next_id;
             self.next_id += 1;
             const value: c.JSValue = switch (tag) {
-                .true_object => JS_ToObject(self.ctx, z.JS_TRUE),
-                .false_object => JS_ToObject(self.ctx, z.JS_FALSE),
+                .true_object => c.JS_ToObject(self.ctx, z.JS_TRUE),
+                .false_object => c.JS_ToObject(self.ctx, z.JS_FALSE),
                 .number_object => blk: {
                     const double = try self.readDouble();
                     const js_num = c.JS_NewFloat64(self.ctx, double);
                     defer c.JS_FreeValue(self.ctx, js_num);
-                    break :blk JS_ToObject(self.ctx, js_num);
+                    break :blk c.JS_ToObject(self.ctx, js_num);
                 },
                 .big_int_object => blk: {
                     const bigint = try self.readBigInt();
                     defer c.JS_FreeValue(self.ctx, bigint);
-                    break :blk JS_ToObject(self.ctx, bigint);
+                    break :blk c.JS_ToObject(self.ctx, bigint);
                 },
                 .string_object => blk: {
                     const js_str = try self.readString();
                     defer c.JS_FreeValue(self.ctx, js_str);
-                    break :blk JS_ToObject(self.ctx, js_str);
+                    break :blk c.JS_ToObject(self.ctx, js_str);
                 },
                 else => unreachable,
             };
-            if (c.JS_IsException(value) == 1) return Error.OutOfMemory;
+            if (c.JS_IsException(value)) return Error.OutOfMemory;
             try self.addObjectWithID(id, value);
             return value;
         }
@@ -1449,7 +1465,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             var argv = [_]c.JSValue{ pattern, flag_str };
             const regexp = c.JS_CallConstructor(self.ctx, regexp_constructor, 2, &argv);
-            if (c.JS_IsException(regexp) == 1) return Error.DataCloneError;
+            if (c.JS_IsException(regexp)) return Error.DataCloneError;
             errdefer c.JS_FreeValue(self.ctx, regexp);
 
             try self.addObjectWithID(id, regexp);
@@ -1469,7 +1485,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             defer c.JS_FreeValue(self.ctx, map_constructor);
 
             const map = c.JS_CallConstructor(self.ctx, map_constructor, 0, null);
-            if (c.JS_IsException(map) == c.TRUE) return Error.OutOfMemory;
+            if (c.JS_IsException(map)) return Error.OutOfMemory;
             errdefer c.JS_FreeValue(self.ctx, map);
 
             try self.addObjectWithID(id, map);
@@ -1492,7 +1508,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 defer if (kind == .Map) c.JS_FreeValue(self.ctx, argv[1]);
 
                 const result = c.JS_Call(self.ctx, set_func, map, if (kind == .Map) 2 else 1, &argv);
-                if (c.JS_IsException(result) == c.TRUE) return Error.OutOfMemory;
+                if (c.JS_IsException(result)) return Error.OutOfMemory;
                 defer c.JS_FreeValue(self.ctx, result);
 
                 length += if (kind == .Map) 2 else 1;
@@ -1534,7 +1550,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             const bytes = try self.readRawBytes(byte_length);
             const result = c.JS_NewArrayBufferCopy(self.ctx, bytes.ptr, byte_length);
-            if (c.JS_IsException(result) == c.TRUE) return Error.OutOfMemory;
+            if (c.JS_IsException(result)) return Error.OutOfMemory;
             errdefer c.JS_FreeValue(self.ctx, result);
 
             try self.addObjectWithID(id, result);
@@ -1595,7 +1611,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 js_dataview_constructor(self.ctx, z.JS_UNDEFINED, 3, &argv)
             else
                 c.JS_NewTypedArray(self.ctx, 3, &argv, @intFromEnum(class_id) - @intFromEnum(z.JSClassId.uint8c_array));
-            if (c.JS_IsException(obj) == c.TRUE) return Error.OutOfMemory;
+            if (c.JS_IsException(obj)) return Error.OutOfMemory;
             errdefer c.JS_FreeValue(self.ctx, obj);
 
             try self.addObjectWithID(id, obj);
@@ -1653,7 +1669,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             }
             errdefer if (stack) |x| c.JS_FreeValue(self.ctx, x);
 
-            const err_obj = JS_MakeError(self.ctx, error_num, "", c.FALSE);
+            const err_obj = JS_MakeError(self.ctx, error_num, "", false);
             errdefer c.JS_FreeValue(self.ctx, err_obj);
 
             try self.addObjectWithID(id, err_obj);
@@ -1698,7 +1714,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn getObjectWithID(self: *Self, id: u32) !c.JSValue {
             if (id >= self.id_map.count()) return Error.DataCloneError;
             const value = self.id_map.get(id);
-            if (value == null or c.JS_IsObject(value.?) == 0) return Error.DataCloneError;
+            if (value == null or !c.JS_IsObject(value.?)) return Error.DataCloneError;
             return value.?;
         }
 
