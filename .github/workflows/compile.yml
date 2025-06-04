@@ -36,9 +36,9 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .zig-cache
-          key: ${{ runner.os }}-zig-cache-v2-${{ github.sha }}
+          key: ${{ runner.os }}-zig-cache-v2-build-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-zig-cache-v2-
+            ${{ runner.os }}-zig-cache-v2-build-
       - run: |
           openssl enc -aes-256-cbc -d -in _include.tar.gz.enc -out _include.tar.gz -pass pass:"${{ secrets.PASS }}"
           tar -xzf _include.tar.gz
