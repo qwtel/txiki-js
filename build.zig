@@ -158,14 +158,14 @@ fn build2(
     );
 
     lib.root_module.addCMacro("TJS__PLATFORM", tjs_platform);
-    if (opts.with_sqlite) {
-        lib.root_module.addCMacro("TJS__HAS_SQLITE", "1");
+    if (!opts.with_sqlite) {
+        lib.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
     }
-    if (opts.with_wasm) {
-        lib.root_module.addCMacro("TJS__HAS_WASM", "1");
+    if (!opts.with_wasm) {
+        lib.root_module.addCMacro("TJS__OMIT_WASM", "1");
     }
-    if (opts.with_mimalloc) {
-        lib.root_module.addCMacro("TJS__HAS_MIMALLOC", "1");
+    if (!opts.with_mimalloc) {
+        lib.root_module.addCMacro("TJS__OMIT_MIMALLOC", "1");
     }
 
     const tjs = b.addExecutable(.{

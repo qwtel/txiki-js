@@ -28,13 +28,13 @@
 #include "cutils.h"
 #include "tjs.h"
 #include "utils.h"
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
 #include "wasm.h"
 #endif
 
 // #include <curl/curl.h>
 #include <quickjs.h>
-#ifdef TJS__HAS_SQLITE
+#ifndef TJS__OMIT_SQLITE
 #include <sqlite3.h>
 #endif
 #include <stdbool.h>
@@ -59,7 +59,7 @@ struct TJSRuntime {
     //     CURLM *curlm_h;
     //     uv_timer_t timer;
     // } curl_ctx;
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
     struct {
         IM3Environment env;
     } wasm_ctx;
@@ -83,14 +83,14 @@ void tjs__mod_fswatch_init(JSContext *ctx, JSValue ns);
 void tjs__mod_os_init(JSContext *ctx, JSValue ns);
 void tjs__mod_process_init(JSContext *ctx, JSValue ns);
 void tjs__mod_signals_init(JSContext *ctx, JSValue ns);
-#ifdef TJS__HAS_SQLITE
+#ifndef TJS__OMIT_SQLITE
 void tjs__mod_sqlite3_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
 void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_worker_init(JSContext *ctx, JSValue ns);

@@ -129,14 +129,14 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_os_init(ctx, ns);
     tjs__mod_process_init(ctx, ns);
     tjs__mod_signals_init(ctx, ns);
-#ifdef TJS__HAS_SQLITE
+#ifndef TJS__OMIT_SQLITE
     tjs__mod_sqlite3_init(ctx, ns);
 #endif
     tjs__mod_streams_init(ctx, ns);
     tjs__mod_sys_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
     tjs__mod_udp_init(ctx, ns);
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
     tjs__mod_wasm_init(ctx, ns);
 #endif
     tjs__mod_worker_init(ctx, ns);
@@ -325,7 +325,7 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     JS_FreeValue(ctx, core_sym);
     JS_FreeValue(ctx, global_obj);
 
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
     /* WASM */
     qrt->wasm_ctx.env = m3_NewEnvironment();
 #endif
@@ -366,7 +366,7 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     //     qrt->curl_ctx.curlm_h = NULL;
     // }
 
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
     /* Destroy WASM runtime. */
     m3_FreeEnvironment(qrt->wasm_ctx.env);
     qrt->wasm_ctx.env = NULL;

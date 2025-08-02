@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
 #include "wasm.h"
 
 #include "mem.h"

@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
 #ifndef TJS_WASM_H
 #define TJS_WASM_H
 

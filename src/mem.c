@@ -28,12 +28,12 @@
 
 #include <stdlib.h>
 
-#ifdef TJS__HAS_MIMALLOC
+#ifndef TJS__OMIT_MIMALLOC
 #include <mimalloc.h>
 #endif
 
 size_t tjs__malloc_usable_size(const void *ptr) {
-#if defined(TJS__HAS_MIMALLOC)
+#if !defined(TJS__OMIT_MIMALLOC)
     return mi_malloc_usable_size(ptr);
 #else
     return js__malloc_usable_size(ptr);
@@ -41,7 +41,7 @@ size_t tjs__malloc_usable_size(const void *ptr) {
 }
 
 void *tjs__malloc(size_t size) {
-#ifdef TJS__HAS_MIMALLOC
+#ifndef TJS__OMIT_MIMALLOC
     return mi_malloc(size);
 #else
     return malloc(size);
@@ -53,7 +53,7 @@ void *tjs__mallocz(size_t size) {
 }
 
 void *tjs__calloc(size_t count, size_t size) {
-#ifdef TJS__HAS_MIMALLOC
+#ifndef TJS__OMIT_MIMALLOC
     return mi_calloc(count, size);
 #else
     return calloc(count, size);
@@ -61,7 +61,7 @@ void *tjs__calloc(size_t count, size_t size) {
 }
 
 void tjs__free(void *ptr) {
-#ifdef TJS__HAS_MIMALLOC
+#ifndef TJS__OMIT_MIMALLOC
     mi_free(ptr);
 #else
     free(ptr);
@@ -69,7 +69,7 @@ void tjs__free(void *ptr) {
 }
 
 void *tjs__realloc(void *ptr, size_t size) {
-#ifdef TJS__HAS_MIMALLOC
+#ifndef TJS__OMIT_MIMALLOC
     return mi_realloc(ptr, size);
 #else
     return realloc(ptr, size);

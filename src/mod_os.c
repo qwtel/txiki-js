@@ -24,7 +24,7 @@
 
 #include "private.h"
 #include "utils.h"
-#ifdef TJS__HAS_WASM
+#ifndef TJS__OMIT_WASM
 #include "wasm.h"
 #endif
 

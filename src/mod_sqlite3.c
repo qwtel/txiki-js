@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#ifdef TJS__HAS_SQLITE
+#ifndef TJS__OMIT_SQLITE
 #include "private.h"
 
 #include <sqlite3.h>
