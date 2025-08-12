@@ -6,6 +6,7 @@
 * @module tjs:sqlite
 */
 declare module 'tjs:sqlite'{
+    /** @deprecated */
     export interface IStatement {
         /**
          * Runs the SQL statement, ignoring the result. This is commonly used for
@@ -49,11 +50,6 @@ declare module 'tjs:sqlite'{
         readOnly: boolean;
     }
 
-    export interface ITransaction extends Function {
-        deferred: Function;
-        immediate: Function;
-        exclusive: Function;
-    }
 
     export class Database {
         /**
@@ -70,53 +66,21 @@ declare module 'tjs:sqlite'{
          *
          * @param sql - The SQL statement(s) that will run.
          */
-        exec(sql: string): void;
+        exec(sql: string, options?: { signal?: AbortSignal }): Promise<void>;
+
+        /**
+         * Execute a query and return all rows as an array of objects.
+         * Prepares internally; parameters can be passed as an array (positional) or object (named, e.g. {$txt: 'foo'}).
+         */
+        all(sql: string, params?: any[] | Record<string, any>, options?: { signal?: AbortSignal }): Promise<any[]>;
 
         /**
          * Create a prepared statement, to run SQL queries.
          *
          * @param sql - The SQL query that will run.
          */
+        /** @deprecated */
         prepare(sql: string): IStatement;
-
-        /**
-         * Wrap the given function so it runs in a [transaction](https://sqlite.org/lang_transaction.html).
-         * When the (returned) function is invoked, it will start a new transaction. When the function returns,
-         * the transaction will be committed. If an exception is thrown, the transaction will be rolled back.
-         *
-         * ```js
-         * const ins = db.prepare('INSERT INTO test (txt, int) VALUES(?, ?)');
-         * const insMany = db.transaction(datas => {
-         *     for (const data of datas) {
-         *         ins.run(data);
-         *     }
-         * });
-         *
-         * insMany([
-         *     [ '1234', 1234 ],
-         *     [ '4321', 4321 ],
-         * ]);
-         * ```
-         * Transaction functions can be called from inside other transaction functions. When doing so,
-         * the inner transaction becomes a [savepoint](https://www.sqlite.org/lang_savepoint.html). If an error
-         * is thrown inside of a nested transaction function, the nested transaction function will roll back
-         * to the state just before the savepoint. If the error is not caught in the outer transaction function,
-         * this will cause the outer transaction function to roll back as well.
-         *
-         * Transactions also come with deferred, immediate, and exclusive versions:
-         *
-         * ```js
-         * insertMany(datas); // uses "BEGIN"
-         * insertMany.deferred(datas); // uses "BEGIN DEFERRED"
-         * insertMany.immediate(datas); // uses "BEGIN IMMEDIATE"
-         * insertMany.exclusive(datas); // uses "BEGIN EXCLUSIVE"
-         * ```
-         *
-         * NOTE: This implementation was mostly taken from [better-sqlite3](https://github.com/WiseLibs/better-sqlite3/blob/6acc3fcebe469969aa29319714b187a53ada0934/docs/api.md#transactionfunction---function).
-         *
-         * @param fn - The function to be wrapped in a transaction.
-         */
-        transaction(fn: Function): ITransaction;
 
         /**
          * Closes the database. No further operations can be performed afterwards.
