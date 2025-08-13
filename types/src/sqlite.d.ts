@@ -66,7 +66,7 @@ declare module 'tjs:sqlite'{
          *
          * @param sql - The SQL statement(s) that will run.
          */
-        exec(sql: string, options?: { signal?: AbortSignal }): Promise<void>;
+        exec(sql: string, params?: any[] | Record<string, any>, options?: { signal?: AbortSignal }): Promise<void>;
 
         /**
          * Execute a query and return all rows as an array of objects.

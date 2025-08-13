@@ -29,9 +29,15 @@ class Database {
         }
     }
 
-    exec(sql, options = {}) {
+    exec(sql, params, options = {}) {
         if (!this[kSqlite3Handle]) {
             throw new Error('Invalid DB');
+        }
+
+        if (params && typeof params === 'object' && !Array.isArray(params)) {
+            // allow calling with (sql, { $a: 1 })
+        } else if (params === undefined) {
+            params = undefined;
         }
 
         const { signal } = options;
@@ -41,7 +47,7 @@ class Database {
 
         const handle = this[kSqlite3Handle];
         const p = this.#queue.then(() => {
-            const promise = sqlite3.exec_async(handle, sql);
+            const promise = sqlite3.exec_async(handle, sql, params);
             if (signal) {
                 const onAbort = () => sqlite3.set_abort(handle);
                 if (signal.aborted) onAbort();
