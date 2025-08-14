@@ -259,19 +259,15 @@ static JSValue tjs_new_sqlite3_error(JSContext *ctx, int err, sqlite3 *db) {
         JS_FreeValue(ctx, global);
         JSValue ex;
         if (JS_IsFunction(ctx, ctor)) {
-            JSValue args[2] = { JS_NewString(ctx, "Aborted"), JS_NewString(ctx, "AbortError") };
+            JSValue args[2] = { JS_NewString(ctx, "AbortError: Aborted"), JS_NewString(ctx, "AbortError") };
             ex = JS_CallConstructor(ctx, ctor, 2, args);
             JS_FreeValue(ctx, args[0]);
             JS_FreeValue(ctx, args[1]);
             JS_FreeValue(ctx, ctor);
-            if (JS_IsException(ex)) {
-                ex = JS_NewError(ctx);
-            }
         } else {
             if (!JS_IsUndefined(ctor)) JS_FreeValue(ctx, ctor);
-            ex = JS_NewError(ctx);
+            ex = JS_MakeError(ctx, JS_PLAIN_ERROR, "AbortError: Aborted", false);
             JS_DefinePropertyValueStr(ctx, ex, "name", JS_NewString(ctx, "AbortError"), JS_PROP_C_W_E);
-            JS_DefinePropertyValueStr(ctx, ex, "message", JS_NewString(ctx, "Aborted"), JS_PROP_C_W_E);
         }
         return ex;
     }
@@ -287,8 +283,7 @@ static JSValue tjs_new_sqlite3_error(JSContext *ctx, int err, sqlite3 *db) {
                  "SQLite error %d: %s",
                  err, sqlite3_errmsg(db));
     }
-    obj = JS_NewError(ctx);
-    JS_DefinePropertyValueStr(ctx, obj, "message", JS_NewString(ctx, error_buffer), JS_PROP_C_W_E);
+    obj = JS_MakeError(ctx, JS_PLAIN_ERROR, error_buffer, false);
     JS_DefinePropertyValueStr(ctx, obj, "errno", JS_NewInt32(ctx, err), JS_PROP_C_W_E);
     return obj;
 }
@@ -379,11 +374,11 @@ static JSValue tjs_sqlite3_exec_async(JSContext *ctx, JSValue this_val, int argc
     int q = uv_queue_work(tjs_get_loop(ctx), &w->req, tjs__work_run, tjs__after_run);
     if (q != 0) {
         h->in_flight = false;
-        JSValue err = JS_ThrowInternalError(ctx, "uv_queue_work failed: %d", q);
+        JSValue err = JS_MakeError(ctx, JS_INTERNAL_ERROR, "uv_queue_work failed", false);
         TJS_RejectPromise(ctx, &w->promise, 1, (JSValue[]){ err });
         sqlite3_finalize(stmt);
         js_free(ctx, w);
-        return JS_EXCEPTION;
+        return promise;
     }
 
     return promise;
@@ -650,11 +645,11 @@ static JSValue tjs_sqlite3_all_async(JSContext *ctx, JSValue this_val, int argc,
     h->in_flight = true;
     int q = uv_queue_work(tjs_get_loop(ctx), &w->req, tjs__work_all, tjs__after_all);
     if (q != 0) {
-        JSValue err = JS_ThrowInternalError(ctx, "uv_queue_work failed: %d", q);
+        JSValue err = JS_MakeError(ctx, JS_INTERNAL_ERROR, "uv_queue_work failed", false);
         TJS_RejectPromise(ctx, &w->promise, 1, (JSValue[]){ err });
         sqlite3_finalize(stmt);
         js_free(ctx, w);
-        return JS_EXCEPTION;
+        return promise;
     }
 
     return promise;
