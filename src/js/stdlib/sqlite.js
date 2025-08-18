@@ -3,6 +3,17 @@ const sqlite3 = core.sqlite3;
 
 const kSqlite3Handle = Symbol('kSqlite3Handle');
 
+function attachAbortSignal(handle, promise, signal) {
+    if (signal) {
+        const onAbort = () => sqlite3.set_abort(handle);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+        promise.finally(() => {
+            if (!signal.aborted) signal.removeEventListener('abort', onAbort);
+        }).catch(() => {});
+    }
+}
+
 class Database {
     #queue;
 
@@ -34,28 +45,13 @@ class Database {
             throw new Error('Invalid DB');
         }
 
-        if (params && typeof params === 'object' && !Array.isArray(params)) {
-            // allow calling with (sql, { $a: 1 })
-        } else if (params === undefined) {
-            params = undefined;
-        }
-
-        const { signal } = options;
-
         // Lazily create a per-connection queue to serialize ops
         this.#queue ||= Promise.resolve();
 
         const handle = this[kSqlite3Handle];
         const p = this.#queue.then(() => {
             const promise = sqlite3.exec_async(handle, sql, params);
-            if (signal) {
-                const onAbort = () => sqlite3.set_abort(handle);
-                if (signal.aborted) onAbort();
-                else signal.addEventListener('abort', onAbort, { once: true });
-                promise.finally(() => {
-                    if (!signal.aborted) signal.removeEventListener('abort', onAbort);
-                }).catch(() => {});
-            }
+            attachAbortSignal(handle, promise, options.signal);
             return promise;
         });
 
@@ -82,27 +78,13 @@ class Database {
             throw new Error('Invalid DB');
         }
 
-        if (params && typeof params === 'object' && !Array.isArray(params)) {
-            // allow calling with (sql, { $a: 1 })
-        } else if (params === undefined) {
-            params = undefined;
-        }
-
         // Serialize per-connection
         this.#queue ||= Promise.resolve();
-        const handle = this[kSqlite3Handle];
-        const { signal } = options;
 
+        const handle = this[kSqlite3Handle];
         const p = this.#queue.then(() => {
             const promise = sqlite3.all_async(handle, sql, params);
-            if (signal) {
-                const onAbort = () => sqlite3.set_abort(handle);
-                if (signal.aborted) onAbort();
-                else signal.addEventListener('abort', onAbort, { once: true });
-                promise.finally(() => {
-                    if (!signal.aborted) signal.removeEventListener('abort', onAbort);
-                }).catch(() => {});
-            }
+            attachAbortSignal(handle, promise, options.signal);
             return promise;
         });
 
