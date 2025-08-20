@@ -186,7 +186,7 @@ class Statement {
 function attachAbortSignal(handle, promise, signal) {
     if (signal) {
         const onAbort = () => sqlite3_async.set_abort(handle);
-        if (signal.aborted) onAbort();
+        if (signal.aborted) return onAbort();
         else signal.addEventListener('abort', onAbort, { once: true });
         promise.finally(() => {
             if (!signal.aborted) signal.removeEventListener('abort', onAbort);
@@ -196,7 +196,7 @@ function attachAbortSignal(handle, promise, signal) {
 
 
 class AsyncDatabase {
-    #queue;
+    #queue = Promise.resolve();
 
     constructor(dbName = ':memory:', options = { create: true, readOnly: false }) {
         let flags = 0;
@@ -225,23 +225,21 @@ class AsyncDatabase {
         return sqlite3_async.load_extension(this[kSqlite3AsyncHandle], file, entrypoint);
     }
 
-    exec(sql, params, options = {}) {
+    run(sql, params, options = {}) {
         if (!this[kSqlite3AsyncHandle]) {
             throw new Error('Invalid DB');
         }
 
-        this.#queue ||= Promise.resolve();
-
         const handle = this[kSqlite3AsyncHandle];
-        const p = this.#queue.then(() => {
+        const result = this.#queue.then(() => {
             const promise = sqlite3_async.exec_async(handle, sql, params);
             attachAbortSignal(handle, promise, options.signal);
             return promise;
         });
 
         // Update queue to ensure sequential execution
-        this.#queue = p.catch(() => {});
-        return p;
+        this.#queue = result.catch(() => {});
+        return result;
     }
 
     all(sql, params, options = {}) {
@@ -249,18 +247,16 @@ class AsyncDatabase {
             throw new Error('Invalid DB');
         }
 
-        this.#queue ||= Promise.resolve();
-
         const handle = this[kSqlite3AsyncHandle];
-        const p = this.#queue.then(() => {
+        const result = this.#queue.then(() => {
             const promise = sqlite3_async.all_async(handle, sql, params);
             attachAbortSignal(handle, promise, options.signal);
             return promise;
         });
 
         // Update queue to ensure sequential execution
-        this.#queue = p.catch(() => {});
-        return p;
+        this.#queue = result.catch(() => {});
+        return result;
     }
 }
 

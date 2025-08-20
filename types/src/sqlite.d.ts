@@ -149,7 +149,7 @@ declare module 'tjs:sqlite'{
          * @param params - The bound parameters for the statement.
          * @param options - Options for the query.
          */
-        exec(sql: string, params?: any[], options?: { signal?: AbortSignal }): Promise<void>;
+        run(sql: string, params?: any[], options?: { signal?: AbortSignal }): Promise<void>;
 
         /**
          * Run the given SQL query, returning an array of objects with the name of the

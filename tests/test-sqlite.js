@@ -242,13 +242,13 @@ async function testAllOnNewDb() {
     try {
         const db = new AsyncDatabase(dbPath, { create: true });
 
-        await db.exec('PRAGMA journal_mode = WAL;');
-        await db.exec('CREATE TABLE test (txt TEXT NOT NULL, int INTEGER, double FLOAT, data BLOB)');
+        await db.run('PRAGMA journal_mode = WAL;');
+        await db.run('CREATE TABLE test (txt TEXT NOT NULL, int INTEGER, double FLOAT, data BLOB)');
 
-        await db.exec('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['foo', 42, 4.2, new Uint8Array(16).fill(42)]);
-        await db.exec('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['foo', 43, 4.3, new Uint8Array(16).fill(43)]);
-        await db.exec('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['bar', 69, 6.9, new Uint8Array(16).fill(69)]);
-        await db.exec('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['baz', 666, 6.6, null]);
+        await db.run('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['foo', 42, 4.2, new Uint8Array(16).fill(42)]);
+        await db.run('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['foo', 43, 4.3, new Uint8Array(16).fill(43)]);
+        await db.run('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['bar', 69, 6.9, new Uint8Array(16).fill(69)]);
+        await db.run('INSERT INTO test (txt, int, double, data) VALUES (?, ?, ?, ?)', ['baz', 666, 6.6, null]);
 
         const data1 = await db.all('SELECT * FROM test');
         const data2 = await db.all('SELECT * FROM test WHERE txt = ?', ['foo']);
