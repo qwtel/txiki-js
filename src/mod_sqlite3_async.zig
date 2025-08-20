@@ -1,7 +1,7 @@
 const std = @import("std");
-const QuickJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
+const QuickJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 
-pub const z = @import("v8-qjs-structs.zig");
+pub const z = @import("tjs_structs.zig");
 pub const c = z.c;
 
 var handle_class_id: c.JSClassID = undefined;

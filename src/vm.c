@@ -25,7 +25,7 @@
 #include "mem.h"
 #include "private.h"
 #include "tjs.h"
-#include "v8-serialize-bindings.h"
+#include "zig_c_bindings.h"
 
 #include <signal.h>
 #include <stdatomic.h>

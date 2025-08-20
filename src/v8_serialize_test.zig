@@ -3,10 +3,10 @@ const builtin = @import("builtin");
 
 const testing = std.testing;
 
-const Serializer = @import("v8-serialize.zig").DefaultSerializer;
-const Deserializer = @import("v8-serialize.zig").DefaultDeserializer;
-const c = @import("v8-serialize.zig").c;
-const z = @import("v8-serialize.zig").z;
+const Serializer = @import("v8_serialize.zig").DefaultSerializer;
+const Deserializer = @import("v8_serialize.zig").DefaultDeserializer;
+const c = @import("v8_serialize.zig").c;
+const z = @import("v8_serialize.zig").z;
 
 fn evalJS(ctx: ?*c.JSContext, code: []const u8) c.JSValue {
     return c.JS_Eval(ctx, code.ptr, code.len, "<input>", c.JS_EVAL_TYPE_GLOBAL);

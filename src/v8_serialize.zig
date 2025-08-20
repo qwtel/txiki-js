@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const z = @import("v8-qjs-structs.zig");
+pub const z = @import("tjs_structs.zig");
 pub const c = z.c;
 
-const QJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
+const QJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 
 // A bunch of qjs internal functions that we've stripped `static` from. They're not part of the header, so we have to declare them here.
 extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;

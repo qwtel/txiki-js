@@ -60,7 +60,7 @@ fn build2(
 
     const lib = b.addStaticLibrary(.{
         .name = "tjs",
-        .root_source_file = b.path("src/v8-serialize-bindings.zig"),
+        .root_source_file = b.path("src/zig_c_bindings.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -211,7 +211,7 @@ fn build2(
     if (!opts.matrix) {
         const exe = b.addExecutable(.{
             .name = "playground",
-            .root_source_file = b.path("src/v8-serialize-test.zig"),
+            .root_source_file = b.path("src/v8_serialize_test.zig"),
             .target = target,
             .optimize = optimize,
         });
@@ -237,7 +237,7 @@ fn build2(
 
         const test_step = b.step("test", "Run unit tests for zig modules");
         const unit_tests = b.addTest(.{
-            .root_source_file = b.path("src/v8-serialize-test.zig"),
+            .root_source_file = b.path("src/v8_serialize_test.zig"),
             .target = target,
             .optimize = optimize,
         });

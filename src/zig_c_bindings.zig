@@ -2,13 +2,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const z = @import("v8-qjs-structs.zig");
+pub const z = @import("tjs_structs.zig");
 pub const c = z.c;
 
 const cTRUE = 1;
 const cFALSE = 0;
 
-const QuickJSAllocator = @import("v8-qjs-allocator.zig").QJSAllocator;
+const QuickJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 
 fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) void {
     c.js_free_rt(rt, ptr);
@@ -54,12 +54,12 @@ const NodeDelegate = struct {
     }
 };
 
-const Serializer = @import("v8-serialize.zig").Serializer(NodeDelegate);
-const Deserializer = @import("v8-serialize.zig").Deserializer(NodeDelegate);
+const Serializer = @import("v8_serialize.zig").Serializer(NodeDelegate);
+const Deserializer = @import("v8_serialize.zig").Deserializer(NodeDelegate);
 
-const Error = @import("v8-serialize.zig").Error;
+const Error = @import("v8_serialize.zig").Error;
 
-const arrayBufferViewToSlice = @import("v8-serialize.zig").arrayBufferViewToSlice;
+const arrayBufferViewToSlice = @import("v8_serialize.zig").arrayBufferViewToSlice;
 
 var serializer_class_id: c.JSClassID = undefined;
 var deserializer_class_id: c.JSClassID = undefined;
