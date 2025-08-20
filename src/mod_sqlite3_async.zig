@@ -93,7 +93,7 @@ fn jsOpenImpl(ctx: ?*c.JSContext, name: [*:0]const u8, flags: c_int, ec: *ErrCtx
     }
 
     const obj = c.JS_NewObjectClass(ctx, @intCast(handle_class_id));
-    if (c.JS_IsException(obj)) return error.OutOfMemory;
+    if (c.JS_IsException(obj)) return error.JSException;
     errdefer c.JS_FreeValue(ctx, obj);
 
     const ac = QuickJSAllocator.allocator(ctx);
@@ -123,6 +123,7 @@ fn jsOpen(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValu
         error.OpenError => return c.JS_ThrowTypeError(ctx, "Failed to open database"),
         error.SQLiteError => return throwSqliteErr(ctx, ec.rc, ec.db),
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        error.JSException => return z.JS_EXCEPTION, // quickjs already in exception state
     };
     return result;
 }
@@ -402,30 +403,32 @@ fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
     return arr;
 }
 
+inline fn newOOMException(ctx: ?*c.JSContext) c.JSValue {
+    _ = c.JS_ThrowOutOfMemory(ctx);
+    return c.JS_GetException(ctx);
+}
+
 fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.C) void {
     const w: *AllWork = @ptrCast(@alignCast(req.*.data));
     defer QuickJSAllocator.allocator(w.ctx).destroy(w);
 
+    var is_rejected = false;
     var ec: ErrCtx = .{};
-    const res = afterAllCallbackImpl(w, &ec) catch |e| switch (e) {
-        error.SQLiteError => {
-            const err = newSqliteError(w.ctx, ec.rc, ec.db);
-            var argv = [_]c.JSValue{ err };
-            return c.TJS_RejectPromise(w.ctx, &w.promise, 1, &argv);
-        },
-        error.JSException => {
-            var argv = [_]c.JSValue{ c.JS_GetException(w.ctx) };
-            return c.TJS_RejectPromise(w.ctx, &w.promise, 1, &argv);
-        },
-        error.OutOfMemory => {
-            _ = c.JS_ThrowOutOfMemory(w.ctx);
-            var argv = [_]c.JSValue{ c.JS_GetException(w.ctx) };
-            return c.TJS_RejectPromise(w.ctx, &w.promise, 1, &argv);
-        },
+    const res = afterAllCallbackImpl(w, &ec) catch |e| blk: {
+        is_rejected = true;
+        break :blk switch (e) {
+            error.SQLiteError => newSqliteError(w.ctx, ec.rc, ec.db),
+            error.OutOfMemory => newOOMException(w.ctx),
+            error.JSException => c.JS_GetException(w.ctx),
+        };
     };
 
     var argv = [_]c.JSValue{ res };
-    c.TJS_ResolvePromise(w.ctx, &w.promise, 1, &argv);
+    if (!is_rejected) {
+        c.TJS_ResolvePromise(w.ctx, &w.promise, 1, &argv);
+    } else {
+        c.TJS_RejectPromise(w.ctx, &w.promise, 1, &argv);
+    }
 }
 
 fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params: c.JSValue, ec: *ErrCtx) !c.JSValue {
@@ -439,7 +442,7 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
 
     if (!c.JS_IsUndefined(params)) {
         if (c.JS_IsException(tjs_sqlite3_bind_params_public(ctx, stmt, params))) {
-            return error.BindParamsError;
+            return error.JSException;
         }
     }
 
@@ -461,7 +464,7 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
     };
 
     const promise = c.TJS_InitPromise(ctx, &w.promise);
-    if (c.JS_IsException(promise)) return error.OutOfMemory;
+    if (c.JS_IsException(promise)) return error.JSException;
     w.req.data = @ptrCast(w);
 
     h.in_flight = true;
@@ -487,7 +490,7 @@ fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, param
 
     if (!c.JS_IsUndefined(params)) {
         if (c.JS_IsException(tjs_sqlite3_bind_params_public(ctx, stmt, params))) {
-            return error.BindParamsError;
+            return error.JSException;
         }
     }
 
@@ -505,7 +508,7 @@ fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, param
     };
 
     const promise = c.TJS_InitPromise(ctx, &w.promise);
-    if (c.JS_IsException(promise)) return error.OutOfMemory;
+    if (c.JS_IsException(promise)) return error.JSException;
     w.req.data = @ptrCast(w);
 
     h.in_flight = true;
@@ -537,7 +540,7 @@ fn jsExecAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.J
         error.SQLiteError => return throwSqliteErr(ctx, ec.rc, ec.db),
         error.UVError => return c.JS_ThrowInternalError(ctx, "sqlite exec_async failed"),
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
-        error.BindParamsError => return c.JS_ThrowTypeError(ctx, "Invalid arguments"),
+        error.JSException => return z.JS_EXCEPTION, // quickjs already in exception state
     };
     return promise;
 }
@@ -559,7 +562,7 @@ fn jsAllAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JS
         error.SQLiteError => return throwSqliteErr(ctx, ec.rc, ec.db),
         error.UVError => return c.JS_ThrowInternalError(ctx, "sqlite all_async failed"),
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
-        error.BindParamsError => return c.JS_ThrowTypeError(ctx, "Invalid arguments"),
+        error.JSException => z.JS_EXCEPTION, // quickjs already in exception state
     };
     return promise;
 }
