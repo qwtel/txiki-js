@@ -139,10 +139,6 @@ pub fn JS_PROP_INT32_DEF(comptime name: [*c]const u8, comptime value: i32, compt
     };
 }
 
-pub fn TJS_CONST(comptime name: [*c]const u8, comptime value: i32) c.JSCFunctionListEntry {
-    return JS_PROP_INT32_DEF(name, value, c.JS_PROP_ENUMERABLE);
-}
-
 pub fn JS_CGETSET_DEF(
     comptime name: [*c]const u8,
     comptime fgetter: ?*const fn (?*c.JSContext, c.JSValue) callconv(.C) c.JSValue,
