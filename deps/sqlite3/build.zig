@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) !void {
         "-DSQLITE_LIKE_DOESNT_MATCH_BLOBS",
         "-DSQLITE_OMIT_DEPRECATED",
         // "-DSQLITE_OMIT_GET_TABLE",
-        "-DSQLITE_OMIT_PROGRESS_CALLBACK",
+        // "-DSQLITE_OMIT_PROGRESS_CALLBACK",
         // "-DSQLITE_OMIT_UTF16",
         "-DSQLITE_OMIT_SHARED_CACHE",
         "-DSQLITE_OMIT_TCL_VARIABLE",

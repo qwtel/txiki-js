@@ -216,6 +216,19 @@ fn build2(
             .optimize = optimize,
         });
         exe.linkLibrary(dep_quickjs.artifact("qjs"));
+        // <<<<<< ai slop
+        exe.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        exe.linkLibrary(dep_libuv.artifact("uv_a"));
+        exe.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+        exe.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
+        exe.addIncludePath(b.path("src"));
+        if (opts.with_wasm) {
+            exe.linkLibrary(dep_wasm3.artifact("m3"));
+            exe.installLibraryHeaders(dep_wasm3.artifact("m3"));
+        } else {
+            exe.root_module.addCMacro("TJS__OMIT_WASM", "1");
+        }
+        // >>>>>> ai slop
         b.installArtifact(exe);
 
         const art_run = b.addRunArtifact(exe);
@@ -230,6 +243,23 @@ fn build2(
         });
         // unit_tests.root_module.addCMacro("DUMP_LEAKS", "1");
         unit_tests.linkLibrary(dep_quickjs.artifact("qjs"));
+        // <<<<<< ai slop
+        unit_tests.linkLibrary(dep_libuv.artifact("uv_a"));
+        unit_tests.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+        if (opts.with_sqlite) {
+            unit_tests.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+            unit_tests.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
+        } else {
+            unit_tests.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
+        }
+        if (opts.with_wasm) {
+            unit_tests.linkLibrary(dep_wasm3.artifact("m3"));
+            unit_tests.installLibraryHeaders(dep_wasm3.artifact("m3"));
+        } else {
+            unit_tests.root_module.addCMacro("TJS__OMIT_WASM", "1");
+        }
+        unit_tests.addIncludePath(b.path("src"));
+        // >>>>>> ai slop
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_unit_tests.step);

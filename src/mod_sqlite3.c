@@ -26,19 +26,12 @@
 #include "private.h"
 
 #include <sqlite3.h>
-#include <string.h>
 
 
 static JSClassID tjs_sqlite3_class_id;
 
-/* forward */
-static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSValue params);
-
-/* old TJSAsyncSQLiteWork removed */
-
 typedef struct {
     sqlite3 *handle;
-    bool in_flight; /* true while an async op is running */
 } TJSSqlite3Handle;
 
 static void tjs_sqlite3_finalizer(JSRuntime *rt, JSValue val) {
@@ -73,7 +66,6 @@ static JSValue tjs_new_sqlite3(JSContext *ctx, sqlite3 *handle) {
     }
 
     h->handle = handle;
-    h->in_flight = false;
 
     JS_SetOpaque(obj, h);
     return obj;
@@ -131,10 +123,26 @@ static TJSSqlite3Stmt *tjs_sqlite3_stmt_get(JSContext *ctx, JSValue obj) {
     return JS_GetOpaque2(ctx, obj, tjs_sqlite3_stmt_class_id);
 }
 
-static JSValue tjs_new_sqlite3_error(JSContext *ctx, int err, sqlite3 *db);
-
 JSValue tjs_throw_sqlite3_errno(JSContext *ctx, int err, sqlite3 *db) {
-    JSValue obj = tjs_new_sqlite3_error(ctx, err, db);
+    JSValue obj;
+    char error_buffer[512];
+    int extended_error_code = sqlite3_extended_errcode(db);
+    if (extended_error_code != err) {
+        snprintf(error_buffer, sizeof(error_buffer), 
+                "SQLite error %d: %s (Extended code: %d)", 
+                err, sqlite3_errmsg(db), extended_error_code);
+    } else {
+        snprintf(error_buffer, sizeof(error_buffer), 
+                "SQLite error %d: %s", 
+                err, sqlite3_errmsg(db));
+    }
+    obj = JS_NewError(ctx);
+    JS_DefinePropertyValueStr(ctx,
+                              obj,
+                              "message",
+                              JS_NewString(ctx, error_buffer),
+                              JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(ctx, obj, "errno", JS_NewInt32(ctx, err), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     if (JS_IsException(obj)) {
         obj = JS_NULL;
     }
@@ -250,409 +258,6 @@ static JSValue tjs_sqlite3_exec(JSContext *ctx, JSValue this_val, int argc, JSVa
     }
 
     return JS_UNDEFINED;
-}
-
-static JSValue tjs_new_sqlite3_error(JSContext *ctx, int err, sqlite3 *db) {
-    if (err == SQLITE_INTERRUPT) {
-        JSValue global = JS_GetGlobalObject(ctx);
-        JSValue ctor = JS_GetPropertyStr(ctx, global, "DOMException");
-        JS_FreeValue(ctx, global);
-        JSValue ex;
-        if (JS_IsFunction(ctx, ctor)) {
-            JSValue args[2] = { JS_NewString(ctx, "AbortError: Aborted"), JS_NewString(ctx, "AbortError") };
-            ex = JS_CallConstructor(ctx, ctor, 2, args);
-            JS_FreeValue(ctx, args[0]);
-            JS_FreeValue(ctx, args[1]);
-            JS_FreeValue(ctx, ctor);
-        } else {
-            if (!JS_IsUndefined(ctor)) JS_FreeValue(ctx, ctor);
-            ex = JS_MakeError(ctx, JS_PLAIN_ERROR, "AbortError: Aborted", false);
-            JS_DefinePropertyValueStr(ctx, ex, "name", JS_NewString(ctx, "AbortError"), JS_PROP_C_W_E);
-        }
-        return ex;
-    }
-    JSValue obj;
-    char error_buffer[512];
-    int extended_error_code = sqlite3_extended_errcode(db);
-    if (extended_error_code != err) {
-        snprintf(error_buffer, sizeof(error_buffer),
-                 "SQLite error %d: %s (Extended code: %d)",
-                 err, sqlite3_errmsg(db), extended_error_code);
-    } else {
-        snprintf(error_buffer, sizeof(error_buffer),
-                 "SQLite error %d: %s",
-                 err, sqlite3_errmsg(db));
-    }
-    obj = JS_MakeError(ctx, JS_PLAIN_ERROR, error_buffer, false);
-    JS_DefinePropertyValueStr(ctx, obj, "errno", JS_NewInt32(ctx, err), JS_PROP_C_W_E);
-    return obj;
-}
-
-
-typedef struct TJSAsyncRunWork {
-    uv_work_t req;
-    JSContext *ctx;
-    TJSPromise promise;
-    sqlite3 *db;
-    TJSSqlite3Handle *handleRef;
-    sqlite3_stmt *stmt;
-    int result;
-} TJSAsyncRunWork;
-
-static void tjs__work_run(uv_work_t *req) {
-    TJSAsyncRunWork *w = (TJSAsyncRunWork *) req->data;
-    int rc;
-    while ((rc = sqlite3_step(w->stmt)) == SQLITE_ROW) {
-        /* ignore rows */
-    }
-    if (rc == SQLITE_DONE || rc == SQLITE_OK) w->result = SQLITE_OK;
-    else w->result = rc;
-}
-
-static void tjs__after_run(uv_work_t *req, int status) {
-    TJSAsyncRunWork *w = (TJSAsyncRunWork *) req->data;
-    JSContext *ctx = w->ctx;
-    if (w->handleRef) w->handleRef->in_flight = false;
-    if (w->stmt) {
-        sqlite3_finalize(w->stmt);
-        w->stmt = NULL;
-    }
-    if (w->result == SQLITE_OK) {
-        JSValue undef = JS_UNDEFINED;
-        TJS_ResolvePromise(ctx, &w->promise, 1, (JSValue[]){ JS_DupValue(ctx, undef) });
-    } else {
-        JSValue err = tjs_new_sqlite3_error(ctx, w->result, w->db);
-        TJS_RejectPromise(ctx, &w->promise, 1, (JSValue[]){ err });
-    }
-    js_free(ctx, w);
-}
-/* async exec(sql) => Promise<void> */
-/* Legacy exec worker no longer used */
-
-static JSValue tjs_sqlite3_exec_async(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
-    TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
-    if (!h) return JS_EXCEPTION;
-
-    const char *sql = JS_ToCString(ctx, argv[1]);
-    if (!sql) return JS_EXCEPTION;
-
-    sqlite3_stmt *stmt = NULL;
-    int r = sqlite3_prepare_v2(h->handle, sql, -1, &stmt, NULL);
-    JS_FreeCString(ctx, sql);
-    if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r, h->handle);
-    }
-
-    if (argc >= 3 && !JS_IsUndefined(argv[2])) {
-        if (JS_IsException(tjs__sqlite3_bind_params(ctx, stmt, argv[2]))) {
-            sqlite3_finalize(stmt);
-            return JS_EXCEPTION;
-        }
-    }
-
-    TJSAsyncRunWork *w = js_mallocz(ctx, sizeof(*w));
-    if (!w) {
-        sqlite3_finalize(stmt);
-        return JS_EXCEPTION;
-    }
-    w->ctx = ctx;
-    w->db = h->handle;
-    w->handleRef = h;
-    w->stmt = stmt;
-    w->result = SQLITE_OK;
-
-    JSValue promise = TJS_InitPromise(ctx, &w->promise);
-    if (JS_IsException(promise)) {
-        sqlite3_finalize(stmt);
-        js_free(ctx, w);
-        return JS_EXCEPTION;
-    }
-    w->req.data = w;
-
-    h->in_flight = true;
-
-    int q = uv_queue_work(tjs_get_loop(ctx), &w->req, tjs__work_run, tjs__after_run);
-    if (q != 0) {
-        h->in_flight = false;
-        JSValue err = JS_MakeError(ctx, JS_INTERNAL_ERROR, "uv_queue_work failed", false);
-        TJS_RejectPromise(ctx, &w->promise, 1, (JSValue[]){ err });
-        sqlite3_finalize(stmt);
-        js_free(ctx, w);
-        return promise;
-    }
-
-    return promise;
-}
-
-static JSValue tjs_sqlite3_set_abort(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
-    TJSSqlite3Handle *h = JS_GetOpaque2(ctx, argv[0], tjs_sqlite3_class_id);
-    if (h && h->handle) {
-        if (h->in_flight) {
-            sqlite3_interrupt(h->handle);
-        }
-        return JS_UNDEFINED;
-    }
-    return JS_UNDEFINED;
-}
-
-/* -------- async all(sql, params?) -------- */
-
-typedef enum {
-    TJS_COL_NULL = 0,
-    TJS_COL_INT64,
-    TJS_COL_FLOAT64,
-    TJS_COL_TEXT,
-    TJS_COL_BLOB,
-} TJSColType;
-
-typedef struct {
-    TJSColType type;
-    union {
-        int64_t i64;
-        double f64;
-        struct { char *ptr; int len; } text;
-        struct { uint8_t *ptr; int len; } blob;
-    } as;
-} TJSColValue;
-
-typedef struct {
-    int num_cols;
-    TJSColValue *values; /* length: num_cols */
-} TJSRow;
-
-typedef struct {
-    uv_work_t req;
-    JSContext *ctx;
-    TJSPromise promise;
-    sqlite3 *db;
-    TJSSqlite3Handle *handleRef;
-    sqlite3_stmt *stmt;
-    /* results */
-    int num_cols;
-    char **col_names; /* length: num_cols */
-    int num_rows;
-    int cap_rows;
-    TJSRow *rows;
-    int result;
-} TJSAsyncAllWork;
-
-static void tjs__free_all_result(JSContext *ctx, TJSAsyncAllWork *w) {
-    if (w->rows) {
-        for (int r = 0; r < w->num_rows; r++) {
-            TJSRow *row = &w->rows[r];
-            if (row->values) {
-                for (int c = 0; c < row->num_cols; c++) {
-                    TJSColValue *cv = &row->values[c];
-                    if (cv->type == TJS_COL_TEXT && cv->as.text.ptr) {
-                        js_free(ctx, cv->as.text.ptr);
-                    } else if (cv->type == TJS_COL_BLOB && cv->as.blob.ptr) {
-                        js_free(ctx, cv->as.blob.ptr);
-                    }
-                }
-                js_free(ctx, row->values);
-            }
-        }
-        js_free(ctx, w->rows);
-    }
-    if (w->col_names) {
-        for (int i = 0; i < w->num_cols; i++) {
-            if (w->col_names[i]) js_free(ctx, w->col_names[i]);
-        }
-        js_free(ctx, w->col_names);
-    }
-}
-
-static void tjs__work_all(uv_work_t *req) {
-    TJSAsyncAllWork *w = (TJSAsyncAllWork *) req->data;
-    sqlite3_stmt *stmt = w->stmt;
-
-    w->result = sqlite3_reset(stmt);
-    if (w->result != SQLITE_OK) {
-        return;
-    }
-
-    /* capture column info */
-    w->num_cols = sqlite3_column_count(stmt);
-    w->col_names = (char **) js_malloc(w->ctx, sizeof(char *) * (w->num_cols));
-    if (!w->col_names) {
-        w->result = SQLITE_NOMEM;
-        return;
-    }
-    for (int i = 0; i < w->num_cols; i++) {
-        const char *name = sqlite3_column_name(stmt, i);
-        size_t nl = strlen(name);
-        w->col_names[i] = (char *) js_malloc(w->ctx, nl + 1);
-        if (!w->col_names[i]) { w->result = SQLITE_NOMEM; return; }
-        memcpy(w->col_names[i], name, nl + 1);
-    }
-
-    /* step rows */
-    w->rows = NULL;
-    w->num_rows = 0;
-    w->cap_rows = 0;
-
-    int rc;
-    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-        if (w->num_rows == w->cap_rows) {
-            int new_cap = w->cap_rows ? w->cap_rows * 2 : 16;
-            TJSRow *nr = (TJSRow *) js_realloc(w->ctx, w->rows, sizeof(TJSRow) * new_cap);
-            if (!nr) { w->result = SQLITE_NOMEM; return; }
-            w->rows = nr;
-            w->cap_rows = new_cap;
-        }
-        TJSRow *row = &w->rows[w->num_rows++];
-        row->num_cols = w->num_cols;
-        row->values = (TJSColValue *) js_malloc(w->ctx, sizeof(TJSColValue) * w->num_cols);
-        if (!row->values) { w->result = SQLITE_NOMEM; return; }
-        for (int c = 0; c < w->num_cols; c++) {
-            int ct = sqlite3_column_type(stmt, c);
-            TJSColValue *cv = &row->values[c];
-            switch (ct) {
-                case SQLITE_INTEGER: {
-                    cv->type = TJS_COL_INT64;
-                    cv->as.i64 = sqlite3_column_int64(stmt, c);
-                    break;
-                }
-                case SQLITE_FLOAT: {
-                    cv->type = TJS_COL_FLOAT64;
-                    cv->as.f64 = sqlite3_column_double(stmt, c);
-                    break;
-                }
-                case SQLITE_TEXT: {
-                    const unsigned char *tp = sqlite3_column_text(stmt, c);
-                    int tl = sqlite3_column_bytes(stmt, c);
-                    cv->type = TJS_COL_TEXT;
-                    cv->as.text.ptr = (char *) js_malloc(w->ctx, tl + 1);
-                    if (!cv->as.text.ptr) { w->result = SQLITE_NOMEM; return; }
-                    memcpy(cv->as.text.ptr, tp, tl);
-                    cv->as.text.ptr[tl] = '\0';
-                    cv->as.text.len = tl;
-                    break;
-                }
-                case SQLITE_BLOB: {
-                    const void *bp = sqlite3_column_blob(stmt, c);
-                    int bl = sqlite3_column_bytes(stmt, c);
-                    cv->type = TJS_COL_BLOB;
-                    cv->as.blob.ptr = (uint8_t *) js_malloc(w->ctx, bl);
-                    if (!cv->as.blob.ptr) { w->result = SQLITE_NOMEM; return; }
-                    memcpy(cv->as.blob.ptr, bp, bl);
-                    cv->as.blob.len = bl;
-                    break;
-                }
-                default: {
-                    cv->type = TJS_COL_NULL;
-                    break;
-                }
-            }
-        }
-    }
-    w->result = (rc == SQLITE_DONE) ? SQLITE_OK : rc;
-}
-
-static void tjs__after_all(uv_work_t *req, int status) {
-    TJSAsyncAllWork *w = (TJSAsyncAllWork *) req->data;
-    JSContext *ctx = w->ctx;
-    if (w->handleRef) {
-        w->handleRef->in_flight = false;
-    }
-
-    /* finalize statement */
-    if (w->stmt) {
-        sqlite3_finalize(w->stmt);
-        w->stmt = NULL;
-    }
-
-    if (w->result == SQLITE_OK) {
-        JSValue arr = JS_NewArray(ctx);
-        for (int r = 0; r < w->num_rows; r++) {
-            JSValue obj = JS_NewObjectProto(ctx, JS_NULL);
-            TJSRow *row = &w->rows[r];
-            for (int c = 0; c < w->num_cols; c++) {
-                TJSColValue *cv = &row->values[c];
-                JSValue v;
-                switch (cv->type) {
-                    case TJS_COL_INT64: {
-                        int64_t val = cv->as.i64;
-                        if (val > 9007199254740991LL || val < -9007199254740991LL) v = JS_NewBigInt64(ctx, val);
-                        else v = JS_NewInt64(ctx, val);
-                        break;
-                    }
-                    case TJS_COL_FLOAT64: v = JS_NewFloat64(ctx, cv->as.f64); break;
-                    case TJS_COL_TEXT: v = JS_NewStringLen(ctx, cv->as.text.ptr, cv->as.text.len); break;
-                    case TJS_COL_BLOB: v = JS_NewUint8ArrayCopy(ctx, cv->as.blob.ptr, cv->as.blob.len); break;
-                    default: v = JS_NULL; break;
-                }
-                JS_DefinePropertyValueStr(ctx, obj, w->col_names[c], v, JS_PROP_C_W_E);
-            }
-            JS_DefinePropertyValueUint32(ctx, arr, (uint32_t) r, obj, JS_PROP_C_W_E);
-        }
-        TJS_ResolvePromise(ctx, &w->promise, 1, (JSValue[]){ arr });
-    } else {
-        JSValue err = tjs_new_sqlite3_error(ctx, w->result, w->db);
-        TJS_RejectPromise(ctx, &w->promise, 1, (JSValue[]){ err });
-    }
-
-    tjs__free_all_result(ctx, w);
-    js_free(ctx, w);
-}
-
-static JSValue tjs_sqlite3_all_async(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
-    TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
-    if (!h) return JS_EXCEPTION;
-
-    const char *sql = JS_ToCString(ctx, argv[1]);
-    if (!sql) return JS_EXCEPTION;
-
-    sqlite3_stmt *stmt = NULL;
-    int r = sqlite3_prepare_v2(h->handle, sql, -1, &stmt, NULL);
-    JS_FreeCString(ctx, sql);
-    if (r != SQLITE_OK) {
-        return tjs_throw_sqlite3_errno(ctx, r, h->handle);
-    }
-
-    /* bind params if given */
-    if (argc >= 3 && !JS_IsUndefined(argv[2])) {
-        if (JS_IsException(tjs__sqlite3_bind_params(ctx, stmt, argv[2]))) {
-            sqlite3_finalize(stmt);
-            return JS_EXCEPTION;
-        }
-    }
-
-    TJSAsyncAllWork *w = js_mallocz(ctx, sizeof(*w));
-    if (!w) {
-        sqlite3_finalize(stmt);
-        return JS_EXCEPTION;
-    }
-    w->ctx = ctx;
-    w->db = h->handle;
-    w->handleRef = h;
-    w->stmt = stmt;
-    w->rows = NULL;
-    w->num_rows = 0;
-    w->cap_rows = 0;
-    w->col_names = NULL;
-    w->num_cols = 0;
-    w->result = SQLITE_OK;
-
-    JSValue promise = TJS_InitPromise(ctx, &w->promise);
-    if (JS_IsException(promise)) {
-        sqlite3_finalize(stmt);
-        js_free(ctx, w);
-        return JS_EXCEPTION;
-    }
-    w->req.data = w;
-
-    h->in_flight = true;
-    int q = uv_queue_work(tjs_get_loop(ctx), &w->req, tjs__work_all, tjs__after_all);
-    if (q != 0) {
-        JSValue err = JS_MakeError(ctx, JS_INTERNAL_ERROR, "uv_queue_work failed", false);
-        TJS_RejectPromise(ctx, &w->promise, 1, (JSValue[]){ err });
-        sqlite3_finalize(stmt);
-        js_free(ctx, w);
-        return promise;
-    }
-
-    return promise;
 }
 
 static JSValue tjs_sqlite3_prepare(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
@@ -923,6 +528,10 @@ static JSValue tjs__sqlite3_bind_params(JSContext *ctx, sqlite3_stmt *stmt, JSVa
     return JS_UNDEFINED;
 }
 
+JSValue tjs_sqlite3_bind_params_public(JSContext *ctx, sqlite3_stmt *stmt, JSValue params) {
+    return tjs__sqlite3_bind_params(ctx, stmt, params);
+}
+
 static JSValue tjs_sqlite3_stmt_all(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Stmt *h = tjs_sqlite3_stmt_get(ctx, argv[0]);
 
@@ -1000,10 +609,6 @@ static const JSCFunctionListEntry tjs_sqlite3_funcs[] = {
     TJS_CFUNC_DEF("load_extension", 3, tjs_sqlite3_load_extension),
     TJS_CFUNC_DEF("close", 1, tjs_sqlite3_close),
     TJS_CFUNC_DEF("exec", 2, tjs_sqlite3_exec),
-    TJS_CFUNC_DEF("exec_async", 2, tjs_sqlite3_exec_async),
-    TJS_CFUNC_DEF("set_abort", 1, tjs_sqlite3_set_abort),
-    TJS_CFUNC_DEF("all_async", 3, tjs_sqlite3_all_async),
-
     TJS_CFUNC_DEF("prepare", 2, tjs_sqlite3_prepare),
     TJS_CFUNC_DEF("in_transaction", 1, tjs_sqlite3_in_transaction),
     TJS_CFUNC_DEF("stmt_finalize", 1, tjs_sqlite3_stmt_finalize),

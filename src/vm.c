@@ -131,6 +131,7 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_signals_init(ctx, ns);
 #ifndef TJS__OMIT_SQLITE
     tjs__mod_sqlite3_init(ctx, ns);
+    zig__mod_sqlite3_async_init(ctx, ns);
 #endif
     tjs__mod_streams_init(ctx, ns);
     tjs__mod_sys_init(ctx, ns);

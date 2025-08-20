@@ -362,3 +362,9 @@ export fn zig__mod_v8_compat_init(ctx: ?*c.JSContext, ns: c.JSValue) callconv(.C
     _ = c.JS_DefinePropertyValueStr(ctx, ns, "Serializer", ser_ctor, c.JS_PROP_C_W_E);
     _ = c.JS_DefinePropertyValueStr(ctx, ns, "Deserializer", des_ctor, c.JS_PROP_C_W_E);
 }
+
+pub const sqlite_async = @import("mod_sqlite3_async.zig");
+
+export fn zig__mod_sqlite3_async_init(ctx: ?*c.JSContext, ns: c.JSValue) callconv(.C) void {
+    return sqlite_async.initModSqlite3Async(ctx, ns);
+}

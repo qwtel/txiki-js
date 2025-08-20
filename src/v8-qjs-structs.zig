@@ -9,6 +9,9 @@ pub const c = @cImport({
     @cInclude("libregexp.h");
     @cInclude("xsum.h");
     @cInclude("quickjs.h");
+    @cInclude("sqlite3.h");
+    @cInclude("uv.h");
+    @cInclude("private.h");
 });
 
 pub const JSString = opaque {}; 
@@ -123,6 +126,21 @@ pub fn JS_CFUNC_DEF(comptime name: [*c]const u8, comptime length: u8, comptime f
         .magic = 0,
         .u = .{ .func = .{ .length = length, .cproto = c.JS_CFUNC_generic, .cfunc = .{ .generic = func1 } } },
     };
+}
+
+
+pub fn JS_PROP_INT32_DEF(comptime name: [*c]const u8, comptime value: i32, comptime flags: u8) c.JSCFunctionListEntry {
+    return .{
+        .name = name,
+        .prop_flags = flags,
+        .def_type = c.JS_DEF_PROP_INT32,
+        .magic = 0,
+        .u = .{ .i32 = value },
+    };
+}
+
+pub fn TJS_CONST(comptime name: [*c]const u8, comptime value: i32) c.JSCFunctionListEntry {
+    return JS_PROP_INT32_DEF(name, value, c.JS_PROP_ENUMERABLE);
 }
 
 pub fn JS_CGETSET_DEF(

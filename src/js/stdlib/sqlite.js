@@ -1,22 +1,13 @@
 const core = globalThis[Symbol.for('tjs.internal.core')];
 const sqlite3 = core.sqlite3;
+const sqlite3_async = core.sqlite3_async;
 
 const kSqlite3Handle = Symbol('kSqlite3Handle');
+const kSqlite3AsyncHandle = Symbol('kSqlite3AsyncHandle');
 
-function attachAbortSignal(handle, promise, signal) {
-    if (signal) {
-        const onAbort = () => sqlite3.set_abort(handle);
-        if (signal.aborted) onAbort();
-        else signal.addEventListener('abort', onAbort, { once: true });
-        promise.finally(() => {
-            if (!signal.aborted) signal.removeEventListener('abort', onAbort);
-        }).catch(() => {});
-    }
-}
+let controllers;
 
 class Database {
-    #queue;
-
     constructor(dbName = ':memory:', options = { create: true, readOnly: false }) {
         let flags = 0;
 
@@ -40,27 +31,14 @@ class Database {
         }
     }
 
-    exec(sql, params, options = {}) {
+    exec(sql) {
         if (!this[kSqlite3Handle]) {
             throw new Error('Invalid DB');
         }
 
-        // Lazily create a per-connection queue to serialize ops
-        this.#queue ||= Promise.resolve();
-
-        const handle = this[kSqlite3Handle];
-        const p = this.#queue.then(() => {
-            const promise = sqlite3.exec_async(handle, sql, params);
-            attachAbortSignal(handle, promise, options.signal);
-            return promise;
-        });
-
-        // Update queue to ensure sequential execution
-        this.#queue = p.catch(() => {});
-        return p;
+        sqlite3.exec(this[kSqlite3Handle], sql);
     }
 
-    /** @deprecated */
     prepare(sql) {
         if (!this[kSqlite3Handle]) {
             throw new Error('Invalid DB');
@@ -69,34 +47,112 @@ class Database {
         return new Statement(sqlite3.prepare(this[kSqlite3Handle], sql));
     }
 
+    // Code for transactions is largely copied from better-sqlite3 and Bun
+    // https://github.com/JoshuaWise/better-sqlite3/blob/master/lib/methods/transaction.js
+    // https://github.com/oven-sh/bun/blob/main/src/js/bun/sqlite.ts
+
+    get inTransaction() {
+        if (!this[kSqlite3Handle]) {
+            return false;
+        }
+
+        return sqlite3.in_transaction(this[kSqlite3Handle]);
+    }
+
+    transaction(fn) {
+        if (typeof fn !== 'function') {
+            throw new TypeError('Expected first argument to be a function');
+        }
+
+        const db = this;
+        const controller = getController(db);
+
+        // Each version of the transaction function has these same properties.
+        const properties = {
+            default: { value: wrapTransaction(fn, db, controller.default) },
+            deferred: { value: wrapTransaction(fn, db, controller.deferred) },
+            immediate: { value: wrapTransaction(fn, db, controller.immediate) },
+            exclusive: { value: wrapTransaction(fn, db, controller.exclusive) },
+        };
+
+        Object.defineProperties(properties.default.value, properties);
+        Object.defineProperties(properties.deferred.value, properties);
+        Object.defineProperties(properties.immediate.value, properties);
+        Object.defineProperties(properties.exclusive.value, properties);
+
+        // Return the default version of the transaction function.
+        return properties.default.value;
+    }
+
     loadExtension(file, entrypoint=undefined) {
         return sqlite3.load_extension(this[kSqlite3Handle],file,entrypoint);
     }
-
-    all(sql, params, options = {}) {
-        if (!this[kSqlite3Handle]) {
-            throw new Error('Invalid DB');
-        }
-
-        // Serialize per-connection
-        this.#queue ||= Promise.resolve();
-
-        const handle = this[kSqlite3Handle];
-        const p = this.#queue.then(() => {
-            const promise = sqlite3.all_async(handle, sql, params);
-            attachAbortSignal(handle, promise, options.signal);
-            return promise;
-        });
-
-        this.#queue = p.catch(() => {});
-        return p;
-    }
 }
 
+// Return the database's cached transaction controller, or create a new one.
+const getController = db => {
+    let controller = (controllers ||= new WeakMap()).get(db);
+
+    if (!controller) {
+        const shared = {
+            commit: db.prepare('COMMIT'),
+            rollback: db.prepare('ROLLBACK'),
+            savepoint: db.prepare('SAVEPOINT `\t_bs3.\t`'),
+            release: db.prepare('RELEASE `\t_bs3.\t`'),
+            rollbackTo: db.prepare('ROLLBACK TO `\t_bs3.\t`'),
+        };
+
+        controller = {
+            default: Object.assign({ begin: db.prepare('BEGIN') }, shared),
+            deferred: Object.assign({ begin: db.prepare('BEGIN DEFERRED') }, shared),
+            immediate: Object.assign({ begin: db.prepare('BEGIN IMMEDIATE') }, shared),
+            exclusive: Object.assign({ begin: db.prepare('BEGIN EXCLUSIVE') }, shared),
+        };
+
+        controllers.set(db, controller);
+    }
+
+    return controller;
+};
+
+// Return a new transaction function by wrapping the given function.
+const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) =>
+    function transaction() {
+        let before, after, undo;
+
+        if (db.inTransaction) {
+            before = savepoint;
+            after = release;
+            undo = rollbackTo;
+        } else {
+            before = begin;
+            after = commit;
+            undo = rollback;
+        }
+
+        try {
+            before.run();
+
+            const result = Function.prototype.apply.call(fn, this, arguments);
+
+            after.run();
+
+            return result;
+        } catch (ex) {
+            if (db.inTransaction) {
+                undo.run();
+
+                if (undo !== rollback) {
+                    after.run();
+                }
+            }
+
+            throw ex;
+        }
+    };
 
 const kSqlite3Stmt = Symbol('kSqlite3Stmt');
 
-/** @deprecated */
 class Statement {
     constructor(stmt) {
         this[kSqlite3Stmt] = stmt;
@@ -123,9 +179,89 @@ class Statement {
             args = args[0];
         }
 
-        return sqlite3.stmt_run(this[kSqlite3Stmt], args);
+        sqlite3.stmt_run(this[kSqlite3Stmt], args);
+    }
+}
+
+function attachAbortSignal(handle, promise, signal) {
+    if (signal) {
+        const onAbort = () => sqlite3_async.set_abort(handle);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+        promise.finally(() => {
+            if (!signal.aborted) signal.removeEventListener('abort', onAbort);
+        }).catch(() => {});
     }
 }
 
 
-export { Database };
+class AsyncDatabase {
+    #queue;
+
+    constructor(dbName = ':memory:', options = { create: true, readOnly: false }) {
+        let flags = 0;
+
+        if (options.create) {
+            flags |= sqlite3_async.SQLITE_OPEN_CREATE;
+        }
+
+        if (options.readOnly) {
+            flags |= sqlite3_async.SQLITE_OPEN_READONLY;
+        } else {
+            flags |= sqlite3_async.SQLITE_OPEN_READWRITE;
+        }
+
+        this[kSqlite3AsyncHandle] = sqlite3_async.open(dbName, flags);
+    }
+
+    close() {
+        if (this[kSqlite3AsyncHandle]) {
+            sqlite3_async.close(this[kSqlite3AsyncHandle]);
+            this[kSqlite3AsyncHandle] = null;
+        }
+    }
+
+    loadExtension(file, entrypoint=undefined) {
+        return sqlite3_async.load_extension(this[kSqlite3AsyncHandle], file, entrypoint);
+    }
+
+    exec(sql, params, options = {}) {
+        if (!this[kSqlite3AsyncHandle]) {
+            throw new Error('Invalid DB');
+        }
+
+        this.#queue ||= Promise.resolve();
+
+        const handle = this[kSqlite3AsyncHandle];
+        const p = this.#queue.then(() => {
+            const promise = sqlite3_async.exec_async(handle, sql, params);
+            attachAbortSignal(handle, promise, options.signal);
+            return promise;
+        });
+
+        // Update queue to ensure sequential execution
+        this.#queue = p.catch(() => {});
+        return p;
+    }
+
+    all(sql, params, options = {}) {
+        if (!this[kSqlite3AsyncHandle]) {
+            throw new Error('Invalid DB');
+        }
+
+        this.#queue ||= Promise.resolve();
+
+        const handle = this[kSqlite3AsyncHandle];
+        const p = this.#queue.then(() => {
+            const promise = sqlite3_async.all_async(handle, sql, params);
+            attachAbortSignal(handle, promise, options.signal);
+            return promise;
+        });
+
+        // Update queue to ensure sequential execution
+        this.#queue = p.catch(() => {});
+        return p;
+    }
+}
+
+export { Database, AsyncDatabase };
