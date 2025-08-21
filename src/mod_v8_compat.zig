@@ -5,10 +5,11 @@ const builtin = @import("builtin");
 const z = @import("tjs_structs.zig");
 const c = z.c;
 
-const Serializer = @import("v8_serialize.zig").Serializer(NodeDelegate);
-const Deserializer = @import("v8_serialize.zig").Deserializer(NodeDelegate);
+const v8_serialize = @import("v8_serialize.zig");
+const Serializer = v8_serialize.Serializer(NodeDelegate);
+const Deserializer = v8_serialize.Deserializer(NodeDelegate);
 
-const Error = @import("v8_serialize.zig").Error;
+const Error = v8_serialize.Error;
 
 const QuickJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 
@@ -31,7 +32,7 @@ const NodeDelegate = struct {
         const js_result = c.JS_Call(ctx, js_func, self.this_obj, 1, &argv);
         defer c.JS_FreeValue(ctx, js_result);
 
-        if (c.JS_IsException(js_result)) return error.JSError;
+        if (c.JS_IsException(js_result)) return error.JSException;
     }
 
     pub fn readHostObject(self: Self, ctx: ?*c.JSContext) !c.JSValue {
@@ -55,22 +56,22 @@ const NodeDelegate = struct {
     }
 };
 
-const arrayBufferViewToSlice = @import("v8_serialize.zig").arrayBufferViewToSlice;
+const arrayBufferViewToSlice = v8_serialize.arrayBufferViewToSlice;
 
 var serializer_class_id: c.JSClassID = undefined;
 var deserializer_class_id: c.JSClassID = undefined;
 
 fn initSerializer(ctx: ?*c.JSContext, obj: c.JSValue) !*Serializer {
-    const allocator = QuickJSAllocator.allocator(ctx);
-    const ser: *Serializer = try allocator.create(Serializer);
-    ser.* = try Serializer.initDelegate(allocator, ctx, .{ .this_obj = obj });
+    const ac = QuickJSAllocator.allocator(ctx);
+    const ser: *Serializer = try ac.create(Serializer);
+    ser.* = try Serializer.initDelegate(ac, ctx, .{ .this_obj = obj });
     return ser;
 }
 
 fn initDeserializer(ctx: ?*c.JSContext, obj: c.JSValue, js_view: c.JSValue) !*Deserializer {
-    const allocator = QuickJSAllocator.allocator(ctx);
-    const des: *Deserializer = try allocator.create(Deserializer);
-    des.* = try Deserializer.initDelegate(allocator, ctx, js_view, .{ .this_obj = obj });
+    const ac = QuickJSAllocator.allocator(ctx);
+    const des: *Deserializer = try ac.create(Deserializer);
+    des.* = try Deserializer.initDelegate(ac, ctx, js_view, .{ .this_obj = obj });
     return des;
 }
 
@@ -83,8 +84,9 @@ fn jsSerializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc:
 
     const obj = c.JS_NewObjectProtoClass(ctx, proto, serializer_class_id);
 
-    const ser: *Serializer = initSerializer(ctx, obj) catch {
-        return c.JS_ThrowTypeError(ctx, "Could not create Serializer");
+    const ser: *Serializer = initSerializer(ctx, obj) catch |err| switch (err) {
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not create Serializer"),
     };
 
     _ = c.JS_SetOpaque(obj, ser);
@@ -102,8 +104,9 @@ fn jsSerializerFinalizer(_: ?*c.JSRuntime, this_val: c.JSValue) callconv(.C) voi
 
 fn jsSerializerWriteHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
     const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
-    ser.writeHeader() catch {
-        return c.JS_ThrowTypeError(ctx, "Could not write header");
+    ser.writeHeader() catch |err| switch (err) {
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not write header"),
     };
     _ = argc;
     _ = argv;
@@ -122,8 +125,9 @@ fn jsSerializerWriteDouble(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     var dbl: f64 = undefined;
     _ = c.JS_ToFloat64(ctx, &dbl, argv[0]);
-    ser.writeDouble(dbl) catch {
-        return c.JS_ThrowTypeError(ctx, "Could not write double");
+    ser.writeDouble(dbl) catch |err| switch (err) {
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not write double"),
     };
     return z.JS_UNDEFINED;
 }
@@ -132,7 +136,13 @@ fn jsSerializerWriteValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_
     const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     ser.writeObject(argv[0]) catch |err| switch (err) {
+        Error.JSException => return z.JS_EXCEPTION,
+        Error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
         Error.NotImplemented => return c.JS_ThrowTypeError(ctx, "Method _writeHostObject not implemented"),
+        Error.IdCheckFailed => return c.JS_ThrowTypeError(ctx, "Id check failed"),
+        Error.OutOfData => return c.JS_ThrowTypeError(ctx, "Out of data"),
+        Error.UnknownTag => return c.JS_ThrowTypeError(ctx, "Unknown tag"),
+        Error.ValidationFailed => return c.JS_ThrowTypeError(ctx, "Validation failed"),
         else => return c.JS_ThrowTypeError(ctx, "Could not write value"),
     };
     return z.JS_UNDEFINED;
@@ -142,12 +152,15 @@ fn jsSerializerWriteRawBytes(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc:
     const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
 
-    const slice = arrayBufferViewToSlice(ctx, argv[0]) catch {
-        return c.JS_ThrowTypeError(ctx, "Could not read bytes");
+    const slice = arrayBufferViewToSlice(ctx, argv[0]) catch |err| switch (err) {
+        error.JSException => return z.JS_EXCEPTION,
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        else => return c.JS_ThrowTypeError(ctx, "Could not read bytes"),
     };
 
-    ser.writeRawBytes(slice) catch {
-        return c.JS_ThrowTypeError(ctx, "Could not write raw bytes");
+    ser.writeRawBytes(slice) catch |err| switch (err) {
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not write raw bytes"),
     };
     return z.JS_UNDEFINED;
 }
@@ -157,8 +170,9 @@ fn jsSerializerWriteUint32(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     var num: u32 = undefined;
     if (c.JS_ToUint32(ctx, &num, argv[0]) != 0) return c.JS_ThrowTypeError(ctx, "Could not convert argument to integer");
-    ser.writeUint32(num) catch {
-        return c.JS_ThrowTypeError(ctx, "Could not write double");
+    ser.writeUint32(num) catch |err| switch (err) {
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not write double"),
     };
     return z.JS_UNDEFINED;
 }
@@ -174,8 +188,9 @@ fn jsSerializerWriteUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
     }
     const hi_64: u64 = @intCast(hi);
     const num: u64 = (hi_64 << 32) | lo;
-    ser.writeUint64(num) catch {
-        return c.JS_ThrowTypeError(ctx, "Could not write double");
+    ser.writeUint64(num) catch |err| switch (err) {
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not write double"),
     };
     return z.JS_UNDEFINED;
 }
@@ -186,8 +201,9 @@ fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) vo
 
 fn jsSerializerReleaseBuffer(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
     const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
-    const bytes = ser.release() catch {
-        return c.JS_ThrowTypeError(ctx, "Could not release buffer");
+    const bytes = ser.release() catch |err| switch (err) {
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not release buffer"),
     };
     _ = argc;
     _ = argv;
@@ -220,8 +236,10 @@ fn jsDeserializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, arg
 
     const obj = c.JS_NewObjectProtoClass(ctx, proto, deserializer_class_id);
 
-    const des: *Deserializer = initDeserializer(ctx, obj, argv[0]) catch {
-        return c.JS_ThrowTypeError(ctx, "Could not create Deserializer");
+    const des: *Deserializer = initDeserializer(ctx, obj, argv[0]) catch |err| switch (err) {
+        error.JSException => return z.JS_EXCEPTION,
+        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        else => return c.JS_ThrowTypeError(ctx, "Could not create Deserializer"),
     };
 
     _ = c.JS_SetOpaque(obj, des);
@@ -284,8 +302,14 @@ fn jsDeserializerReadUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_i
 fn jsDeserializerReadValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.C) c.JSValue {
     const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     const val = des.readObject() catch |err| switch (err) {
-        Error.NotImplemented => return c.JS_ThrowTypeError(ctx, "Method _readHostObject not implemented"),
-        else => return c.JS_ThrowTypeError(ctx, "Could not read value"),
+        Error.JSException => z.JS_EXCEPTION,
+        Error.OutOfMemory => c.JS_ThrowOutOfMemory(ctx),
+        Error.NotImplemented => c.JS_ThrowTypeError(ctx, "Method _readHostObject not implemented"),
+        Error.IdCheckFailed => c.JS_ThrowTypeError(ctx, "Id check failed"),
+        Error.OutOfData => c.JS_ThrowTypeError(ctx, "Out of data"),
+        Error.UnknownTag => c.JS_ThrowTypeError(ctx, "Unknown tag"),
+        Error.ValidationFailed => c.JS_ThrowTypeError(ctx, "Validation failed"),
+        else => c.JS_ThrowTypeError(ctx, "Could not read value"),
     };
     return val;
 }
