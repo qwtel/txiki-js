@@ -43,6 +43,7 @@ fn build2(
     const dep_quickjs = b.dependency("quickjs", .{
         .target = target,
         .optimize = optimize,
+        .extras = true,
     });
     const dep_libuv = b.dependency("libuv", .{
         .target = target,
