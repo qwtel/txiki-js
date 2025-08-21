@@ -4,6 +4,8 @@ const QuickJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 pub const z = @import("tjs_structs.zig");
 pub const c = z.c;
 
+extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
+
 var handle_class_id: c.JSClassID = undefined;
 
 // Negative values are never used by SQLite result codes; safe for internal signals
@@ -33,8 +35,6 @@ const handle_class = c.JSClassDef{
     .class_name = "Handle",
     .finalizer = jsSqliteHandleFinalizer,
 };
-
-extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
 
 fn newSqliteError(ctx: ?*c.JSContext, err: c_int, db: ?*c.sqlite3) c.JSValue {
     if (err == c.SQLITE_INTERRUPT) {
