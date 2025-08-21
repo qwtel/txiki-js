@@ -278,23 +278,23 @@ function testNewDbNoCreateAsync() {
 
 }
 
+// A recursive CTE that does a lot of work
+const SlowSql = `WITH RECURSIVE t(x) AS (
+    VALUES(0)
+    UNION ALL
+    SELECT x+1 FROM t
+    LIMIT 100000000
+) SELECT count(*) as c FROM t`;
+
 async function testPreAbortAll() {
     const db = new AsyncDatabase();
-
-    // A recursive CTE that does a lot of work
-    const sql = `WITH RECURSIVE t(x) AS (
-        VALUES(0)
-        UNION ALL
-        SELECT x+1 FROM t
-        LIMIT 100000000
-    ) SELECT count(*) as c FROM t`;
 
     const ac = new AbortController();
     ac.abort();
 
     let threw = false;
     try {
-        await db.all(sql, [], { signal: ac.signal });
+        await db.all(SlowSql, [], { signal: ac.signal });
     } catch (e) {
         threw = true;
         assert.ok(
@@ -310,16 +310,8 @@ async function testPreAbortAll() {
 async function testAbortAll(n) {
     const db = new AsyncDatabase();
 
-    // A recursive CTE that does a lot of work
-    const sql = `WITH RECURSIVE t(x) AS (
-        VALUES(0)
-        UNION ALL
-        SELECT x+1 FROM t
-        LIMIT 100000000
-    ) SELECT count(*) as c FROM t`;
-
     const ac = new AbortController();
-    const p = db.all(sql, [], { signal: ac.signal });
+    const p = db.all(SlowSql, [], { signal: ac.signal });
     p.catch(() => {});
 
     // Abort shortly after starting; give the worker time to enter sqlite3_step
@@ -338,6 +330,27 @@ async function testAbortAll(n) {
     assert.ok(aborted, `all() rejects when aborting after ${n}ms`);
 }
 
+async function testConcurrentExec() {
+    const db = new AsyncDatabase();
+
+    const p1 = db.all('SELECT 1');
+    const p2 = db.all('SELECT 2');
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    assert.eq(r1[0]?.['1'], 1);
+    assert.eq(r2[0]?.['2'], 2);
+
+    db.close();
+}
+
+async function testConcurrentExec2() {
+    const db = new AsyncDatabase();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    assert.eq(r1.length, 1);
+    assert.eq(r2.length, 1);
+    db.close();
+}
 
 await testExistingDBAll();
 await testAllOnNewDb();
@@ -346,4 +359,5 @@ await testPreAbortAll();
 await testAbortAll(1);
 await testAbortAll(10);
 await testAbortAll(100);
+await testConcurrentExec();
 
