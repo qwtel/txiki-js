@@ -9,29 +9,29 @@ const QJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
 
 // A bunch of qjs internal functions that we've re-exported with a different prefix.
-extern fn qjs_compact_bigint(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
-extern fn qjs_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
-extern fn qjs_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
-extern fn qjs_bigint_from_string(ctx: ?*c.JSContext, str: [*c]const u8, radix: c_int) ?*z.JSBigInt;
-extern fn qjs_bigint_to_string1(ctx: ?*c.JSContext, val: c.JSValueConst, radix: c_int) c.JSValue;
-extern fn qjs_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValueConst) c.JSValue;
-extern fn qjs_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
-extern fn qjs_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
-extern fn qjs_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSRegExp;
-extern fn qjs_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) bool;
-extern fn qjs_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) bool;
+extern fn _js_compact_bigint(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
+extern fn _js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
+extern fn _js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
+extern fn _js_bigint_from_string(ctx: ?*c.JSContext, str: [*c]const u8, radix: c_int) ?*z.JSBigInt;
+extern fn _js_bigint_to_string1(ctx: ?*c.JSContext, val: c.JSValueConst, radix: c_int) c.JSValue;
+extern fn _js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValueConst) c.JSValue;
+extern fn _js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
+extern fn _js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
+extern fn _js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSRegExp;
+extern fn _js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) bool;
+extern fn _js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) bool;
 
 // A few non-standard qjs functions that we've added.
-extern fn qjs_check_stack_overflow(ctx: ?*c.JSContext, alloca_size: usize) bool;
-extern fn qjs_atom_is_string(ctx: ?*c.JSContext, v: c.JSAtom) bool;
-extern fn qjs_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSMapState;
-extern fn qjs_string_is_wide_char(p: *const z.JSString) bool;
-extern fn qjs_string_get_len(p: *const z.JSString) u32;
-extern fn qjs_string_get_str8(p: *const z.JSString) [*]const u8;
-extern fn qjs_string_get_str16(p: *const z.JSString) [*]const u16;
-extern fn qjs_get_object_data(ctx: ?*c.JSContext, obj: c.JSValue, pval: *c.JSValue) bool;
-extern fn qjs_typed_array_get_byte_length(p: *c.JSObject) u32;
-extern fn qjs_typed_array_get_byte_offset(p: *c.JSObject) u32;
+extern fn _js_check_stack_overflow(ctx: ?*c.JSContext, alloca_size: usize) bool;
+extern fn _js_atom_is_string(ctx: ?*c.JSContext, v: c.JSAtom) bool;
+extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSMapState;
+extern fn _js_string_is_wide_char(p: *const z.JSString) bool;
+extern fn _js_string_get_len(p: *const z.JSString) u32;
+extern fn _js_string_get_str8(p: *const z.JSString) [*]const u8;
+extern fn _js_string_get_str16(p: *const z.JSString) [*]const u16;
+extern fn _js_get_object_data(ctx: ?*c.JSContext, obj: c.JSValue, pval: *c.JSValue) bool;
+extern fn _js_typed_array_get_byte_length(p: *c.JSObject) u32;
+extern fn _js_typed_array_get_byte_offset(p: *c.JSObject) u32;
 
 const kLatestVersion = 15;
 
@@ -112,7 +112,7 @@ fn ShiftTypeOf(comptime T: type) type {
 // }
 
 fn stackCheck(ctx: ?*c.JSContext) !void {
-    if (qjs_check_stack_overflow(ctx, 0)) {
+    if (_js_check_stack_overflow(ctx, 0)) {
         _ = c.JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
         return Error.JSException;
     }
@@ -375,7 +375,7 @@ pub fn Serializer(comptime Delegate: type) type {
             var v8_limbs = try std.ArrayListUnmanaged(u64).initCapacity(self.ac, 2);
             defer v8_limbs.deinit(self.ac);
 
-            const result = qjs_bigint_to_string1(self.ctx, obj, 16);
+            const result = _js_bigint_to_string1(self.ctx, obj, 16);
             if (c.JS_IsException(result)) return Error.JSException;
             defer c.JS_FreeValue(self.ctx, result);
 
@@ -463,7 +463,7 @@ pub fn Serializer(comptime Delegate: type) type {
                         @intFromEnum(z.JSClassId.uint8c_array)...@intFromEnum(z.JSClassId.dataview) => {
                             if (!self.id_map.contains(p) and !self.treat_array_buffer_views_as_host_objects) {
                                 const is_dataview = class_id == @intFromEnum(z.JSClassId.dataview);
-                                const ab_val = if (is_dataview) qjs_dataview_get_buffer(self.ctx, object) else qjs_typed_array_get_buffer(self.ctx, object);
+                                const ab_val = if (is_dataview) _js_dataview_get_buffer(self.ctx, object) else _js_typed_array_get_buffer(self.ctx, object);
                                 defer c.JS_FreeValue(self.ctx, ab_val);
                                 try self.writeJSReceiver(ab_val, @ptrCast(c.JS_VALUE_GET_PTR(ab_val)));
                             }
@@ -507,9 +507,9 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeString(self: *Self, p: *const z.JSString) !void {
-            const len = qjs_string_get_len(p);
-            if (qjs_string_is_wide_char(p)) {
-                const chars = qjs_string_get_str16(p);
+            const len = _js_string_get_len(p);
+            if (_js_string_is_wide_char(p)) {
+                const chars = _js_string_get_str16(p);
                 const byte_length: u32 = len * @sizeOf(u16);
                 // The existing reading code expects 16-byte strings to be aligned.
                 if (((self.buffer.items.len + 1 + bytesNeededForVarint(u32, byte_length)) & 1) != 0) {
@@ -518,7 +518,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 try self.writeTag(.two_byte_string);
                 try self.writeTwoByteString(chars[0..len]);
             } else {
-                const chars = qjs_string_get_str8(p);
+                const chars = _js_string_get_str8(p);
                 try self.writeTag(.one_byte_string);
                 try self.writeOneByteString(chars[0..len]);
             }
@@ -574,7 +574,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 .array_buffer, .shared_array_buffer => {
                     try self.writeJSArrayBuffer(obj);
                 },
-                .uint8c_array, .int8_array, .uint8_array, .int16_array, .uint16_array, .int32_array, .uint32_array, 
+                .uint8c_array, .int8_array, .uint8_array, .int16_array, .uint16_array, .int32_array, .uint32_array,
                 .big_int64_array, .big_uint64_array, .float16_array, .float32_array, .float64_array, .dataview => {
                     try self.writeJSArrayBufferView(obj, class_id);
                 },
@@ -600,7 +600,7 @@ pub fn Serializer(comptime Delegate: type) type {
             //         for (props, 0..) |*prop, i| {
             //             const atom = prop.atom;
             //             const flags = prop.flags();
-            //             if (atom != c.JS_ATOM_NULL and qjs_atom_is_string(self.ctx, atom) == cTRUE and (flags & c.JS_PROP_ENUMERABLE) != 0) {
+            //             if (atom != c.JS_ATOM_NULL and _js_atom_is_string(self.ctx, atom) == cTRUE and (flags & c.JS_PROP_ENUMERABLE) != 0) {
             //                 if (pass == 0 and (flags & c.JS_PROP_TMASK) != 0) {
             //                     is_pojo = false;
             //                     break;
@@ -654,10 +654,10 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeJSArray(self: *Self, obj: c.JSValue) !void {
             // try self.writeJSObjectSlow(.Array, obj);
-            if (qjs_is_fast_array(self.ctx, obj)) {
+            if (_js_is_fast_array(self.ctx, obj)) {
                 var values: [*]c.JSValue = undefined;
                 var length: u32 = undefined;
-                _ = qjs_get_fast_array(self.ctx, obj, &values, &length);
+                _ = _js_get_fast_array(self.ctx, obj, &values, &length);
                 try self.writeTag(.begin_dense_js_array);
                 try self.writeVarint(u32, length);
                 for (0..length) |i| {
@@ -682,7 +682,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeJSDate(self: *Self, obj: c.JSValue) !void {
             var date: c.JSValue = undefined;
-            _ = qjs_get_object_data(self.ctx, obj, &date);
+            _ = _js_get_object_data(self.ctx, obj, &date);
             defer c.JS_FreeValue(self.ctx, date);
             try self.writeTag(.date);
             try self.writeDouble(c.JS_VALUE_GET_FLOAT64(date));
@@ -690,7 +690,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeJSPrimitiveWrapper(self: *Self, obj: c.JSValue) !void {
             var value: c.JSValue = undefined;
-            _ = qjs_get_object_data(self.ctx, obj, &value);
+            _ = _js_get_object_data(self.ctx, obj, &value);
             defer c.JS_FreeValue(self.ctx, value);
 
             const tag = c.JS_VALUE_GET_NORM_TAG(value);
@@ -716,11 +716,11 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeJSRegExp(self: *Self, obj: c.JSValue) !void {
-            const regexp = qjs_get_regexp(self.ctx, obj, false);
+            const regexp = _js_get_regexp(self.ctx, obj, false);
             const bc = regexp.bytecode;
-            std.debug.assert(qjs_string_is_wide_char(bc) == false);
+            std.debug.assert(_js_string_is_wide_char(bc) == false);
 
-            const raw_bc = qjs_string_get_str8(bc);
+            const raw_bc = _js_string_get_str8(bc);
             const flags = c.lre_get_flags(raw_bc);
 
             var v8_flags = flags & 0b111; // first 3 falgs are identical (/gmi)
@@ -734,7 +734,7 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeJSMap(self: *Self, comptime as: SetOrMap, obj: c.JSValue) !void {
-            const s = qjs_get_map_state(self.ctx, obj, false);
+            const s = _js_get_map_state(self.ctx, obj, false);
             const length = s.record_count * (if (as == .Map) 2 else 1);
 
             var entries = try std.ArrayListUnmanaged(c.JSValue).initCapacity(self.ac, length);
@@ -777,12 +777,12 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeTag(.array_buffer_view);
 
             const is_dataview = class_id == .dataview;
-            const ab_val = if (is_dataview) qjs_dataview_get_buffer(self.ctx, val) else qjs_typed_array_get_buffer(self.ctx, val);
+            const ab_val = if (is_dataview) _js_dataview_get_buffer(self.ctx, val) else _js_typed_array_get_buffer(self.ctx, val);
             defer c.JS_FreeValue(self.ctx, ab_val);
 
             const p: *c.JSObject = @ptrCast(c.JS_VALUE_GET_PTR(val));
-            const byte_offset = qjs_typed_array_get_byte_offset(p);
-            const byte_length = qjs_typed_array_get_byte_length(p);
+            const byte_offset = _js_typed_array_get_byte_offset(p);
+            const byte_length = _js_typed_array_get_byte_length(p);
 
             // XXX: out of bounds check?
 
@@ -1202,8 +1202,8 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         fn bigIntFromSerializedDigits(self: *Self, sign_bit: u1, digits_store: []const u8) !c.JSValue {
             if (digits_store.len == 0) {
-                if (qjs_bigint_from_string(self.ctx, "0", 16)) |r| {
-                    return qjs_compact_bigint(self.ctx, r);
+                if (_js_bigint_from_string(self.ctx, "0", 16)) |r| {
+                    return _js_compact_bigint(self.ctx, r);
                 } else {
                     return Error.DataCloneError;
                 }
@@ -1227,8 +1227,8 @@ pub fn Deserializer(comptime Delegate: type) type {
             defer self.ac.free(slice);
             // std.debug.print("\nstr: {s}\n", .{slice});
 
-            if (qjs_bigint_from_string(self.ctx, slice.ptr, 16)) |r| {
-                const bigint = qjs_compact_bigint(self.ctx, r);
+            if (_js_bigint_from_string(self.ctx, slice.ptr, 16)) |r| {
+                const bigint = _js_compact_bigint(self.ctx, r);
                 if (c.JS_IsException(bigint)) return Error.JSException;
                 return bigint;
             } else {
@@ -1255,7 +1255,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn readOneByteString(self: *Self) !c.JSValue {
             const length = try self.readVarint(u32);
             const bytes = try self.readRawBytes(length);
-            return qjs_new_string8_len(self.ctx, bytes.ptr, @intCast(length));
+            return _js_new_string8_len(self.ctx, bytes.ptr, @intCast(length));
         }
 
         fn readTwoByteString(self: *Self) !c.JSValue {
@@ -1267,10 +1267,10 @@ pub fn Deserializer(comptime Delegate: type) type {
                 defer self.ac.free(aligned_bytes);
                 @memcpy(aligned_bytes, bytes);
                 const bytes_u16: []const u16 = @ptrCast(aligned_bytes);
-                return qjs_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
+                return _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
             } else {
                 const bytes_u16: []const u16 = @alignCast(@ptrCast(bytes));
-                return qjs_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
+                return _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
             }
         }
 
@@ -1613,7 +1613,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             defer c.JS_FreeValue(self.ctx, argv[1]);
             defer c.JS_FreeValue(self.ctx, argv[2]);
             const obj = if (tag_enum == .data_view)
-                qjs_dataview_constructor(self.ctx, z.JS_UNDEFINED, 3, &argv)
+                _js_dataview_constructor(self.ctx, z.JS_UNDEFINED, 3, &argv)
             else
                 c.JS_NewTypedArray(self.ctx, 3, &argv, @intFromEnum(class_id) - @intFromEnum(z.JSClassId.uint8c_array));
             if (c.JS_IsException(obj)) return Error.JSException;
