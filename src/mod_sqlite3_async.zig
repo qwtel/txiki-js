@@ -178,15 +178,20 @@ fn jsSetAbort(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JS
     return z.JS_UNDEFINED;
 }
 
-const RunWork = struct {
-    req: c.uv_work_t,
-    ctx: ?*c.JSContext,
-    promise: c.TJSPromise,
-    db: *c.sqlite3,
-    handle: ?*SqliteHandle,
-    stmt: ?*c.sqlite3_stmt,
-    result: c_int,
-};
+fn Work(comptime Result: type) type {
+    return struct {
+        req: c.uv_work_t,
+        ctx: ?*c.JSContext,
+        promise: c.TJSPromise,
+        db: *c.sqlite3,
+        handle: ?*SqliteHandle,
+        stmt: ?*c.sqlite3_stmt,
+        rc: c_int,
+        result: Result, // extension payload, zero-sized if Extra is empty
+    };
+}
+
+const RunWork = Work(struct {});
 
 fn runCallback(req: [*c]c.uv_work_t) callconv(.c) void {
     const w: *RunWork = @ptrCast(@alignCast(req.*.data));
@@ -195,7 +200,7 @@ fn runCallback(req: [*c]c.uv_work_t) callconv(.c) void {
         rc = c.sqlite3_step(w.stmt);
         if (rc != c.SQLITE_ROW) break;
     }
-    w.result = if (rc == c.SQLITE_DONE or rc == c.SQLITE_OK) c.SQLITE_OK else rc;
+    w.rc = if (rc == c.SQLITE_DONE or rc == c.SQLITE_OK) c.SQLITE_OK else rc;
 }
 
 fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
@@ -210,11 +215,11 @@ fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     }
     if (w.stmt) |stmt| _ = c.sqlite3_finalize(stmt);
 
-    if (w.result == c.SQLITE_OK) {
+    if (w.rc == c.SQLITE_OK) {
         var argv = [_]c.JSValue{ z.JS_UNDEFINED };
         c.TJS_ResolvePromise(ctx, &w.promise, 1, &argv);
     } else {
-        const err = newSqliteError(ctx, w.result, w.db);
+        const err = newSqliteError(ctx, w.rc, w.db);
         var argv = [_]c.JSValue{ err };
         c.TJS_RejectPromise(ctx, &w.promise, 1, &argv);
     }
@@ -234,21 +239,12 @@ const Row = struct {
     values: []ColValue,
 };
 
-const AllWork = struct {
-    req: c.uv_work_t,
-    ctx: ?*c.JSContext,
-    promise: c.TJSPromise,
-    db: *c.sqlite3,
-    handle: ?*SqliteHandle,
-    stmt: ?*c.sqlite3_stmt,
-    result: c_int,
-    //--------------------------
+const AllWork = Work(struct {
     num_cols: c_int,
     col_names: [][:0]u8,
     rows: []Row,
     arena: std.heap.ArenaAllocator,
-};
-
+});
 
 fn progressCallback(userdata: ?*anyopaque) callconv(.c) c_int {
     if (userdata == null) return 0;
@@ -259,23 +255,24 @@ fn progressCallback(userdata: ?*anyopaque) callconv(.c) c_int {
 fn allCallbackImpl(w: *AllWork) !void {
     const stmt = w.stmt.?;
 
-    w.result = c.sqlite3_reset(stmt);
-    if (w.result != c.SQLITE_OK) return error.SqliteError;
+    w.rc = c.sqlite3_reset(stmt);
+    if (w.rc != c.SQLITE_OK) return error.SqliteError;
 
-    const ac = w.arena.allocator();
+    const wr = &w.result;
+    const ac = wr.arena.allocator();
 
     // Capture column info
-    w.num_cols = c.sqlite3_column_count(stmt);
-    w.col_names = try ac.alloc([:0]u8, @intCast(w.num_cols));
+    wr.num_cols = c.sqlite3_column_count(stmt);
+    wr.col_names = try ac.alloc([:0]u8, @intCast(wr.num_cols));
     var col_idx: c_int = 0;
-    while (col_idx < w.num_cols) : (col_idx += 1) {
+    while (col_idx < wr.num_cols) : (col_idx += 1) {
         const name_c = c.sqlite3_column_name(stmt, col_idx);
         if (name_c == null) return error.OutOfMemory;
         const name_z = std.mem.span(name_c);
         const buf = try ac.alloc(u8, name_z.len + 1);
         std.mem.copyForwards(u8, buf[0..name_z.len], name_z);
         buf[name_z.len] = 0;
-        w.col_names[@intCast(col_idx)] = buf[0..name_z.len :0];
+        wr.col_names[@intCast(col_idx)] = buf[0..name_z.len :0];
     }
 
     // Step rows
@@ -287,10 +284,10 @@ fn allCallbackImpl(w: *AllWork) !void {
         rc = c.sqlite3_step(stmt);
         if (rc != c.SQLITE_ROW) break;
 
-        var row_values = try ac.alloc(ColValue, @intCast(w.num_cols));
+        var row_values = try ac.alloc(ColValue, @intCast(wr.num_cols));
 
         col_idx = 0; // reset
-        while (col_idx < w.num_cols) : (col_idx += 1) {
+        while (col_idx < wr.num_cols) : (col_idx += 1) {
             const ct = c.sqlite3_column_type(stmt, col_idx);
             switch (ct) {
                 c.SQLITE_INTEGER => {
@@ -327,14 +324,14 @@ fn allCallbackImpl(w: *AllWork) !void {
         try rows_builder.append(ac, .{ .values = row_values });
     }
 
-    w.rows = try rows_builder.toOwnedSlice(ac);
-    w.result = if (rc == c.SQLITE_DONE) c.SQLITE_OK else rc;
+    wr.rows = try rows_builder.toOwnedSlice(ac);
+    w.rc = if (rc == c.SQLITE_DONE) c.SQLITE_OK else rc;
 }
 
 fn allCallback(req: [*c]c.uv_work_t) callconv(.c) void {
     const w: *AllWork = @ptrCast(@alignCast(req.*.data));
     allCallbackImpl(w) catch |e| switch (e) {
-        error.OutOfMemory => w.result = RESULT_ZIG_OOM,
+        error.OutOfMemory => w.rc = RESULT_ZIG_OOM,
         error.SqliteError => {}, // w.result already set
     };
 }
@@ -356,7 +353,8 @@ fn jsFromColValue(ctx: ?*c.JSContext, v: ColValue) c.JSValue {
 
 fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
     const ctx = w.ctx;
-    defer w.arena.deinit();
+    const wr = &w.result;
+    defer wr.arena.deinit();
 
     if (w.handle) |h| {
         h.in_flight = false;
@@ -365,11 +363,11 @@ fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
     if (w.stmt) |stmt| {
         _ = c.sqlite3_finalize(stmt);
     }
-	if (w.result == RESULT_ZIG_OOM) {
+	if (w.rc == RESULT_ZIG_OOM) {
         return error.OutOfMemory;
     }
-    if (w.result != c.SQLITE_OK) {
-        ec.* = .{ .rc = w.result, .db = w.db };
+    if (w.rc != c.SQLITE_OK) {
+        ec.* = .{ .rc = w.rc, .db = w.db };
         return error.SQLiteError;
     }
 
@@ -378,19 +376,19 @@ fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
     errdefer c.JS_FreeValue(ctx, arr);
 
     var row_idx: usize = 0;
-    while (row_idx < w.rows.len) : (row_idx += 1) {
+    while (row_idx < wr.rows.len) : (row_idx += 1) {
         const obj = c.JS_NewObjectProto(ctx, z.JS_NULL);
         if (c.JS_IsException(obj)) return error.JSException;
         errdefer c.JS_FreeValue(ctx, obj);
 
-        const row = w.rows[row_idx];
+        const row = wr.rows[row_idx];
         var col_idx: usize = 0;
-        while (col_idx < @as(usize, @intCast(w.num_cols))) : (col_idx += 1) {
+        while (col_idx < @as(usize, @intCast(wr.num_cols))) : (col_idx += 1) {
             const v = jsFromColValue(ctx, row.values[col_idx]);
             if (c.JS_IsException(v)) return error.JSException;
             errdefer c.JS_FreeValue(ctx, v);
 
-            if (c.JS_DefinePropertyValueStr(ctx, obj, &w.col_names[col_idx][0], v, c.JS_PROP_C_W_E) < 0) {
+            if (c.JS_DefinePropertyValueStr(ctx, obj, &wr.col_names[col_idx][0], v, c.JS_PROP_C_W_E) < 0) {
                 return error.JSException;
             }
 
@@ -402,7 +400,7 @@ fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
     return arr;
 }
 
-inline fn newOOMException(ctx: ?*c.JSContext) c.JSValue {
+inline fn oomException(ctx: ?*c.JSContext) c.JSValue {
     _ = c.JS_ThrowOutOfMemory(ctx);
     return c.JS_GetException(ctx);
 }
@@ -417,7 +415,7 @@ fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
         is_rejected = true;
         break :blk switch (e) {
             error.SQLiteError => newSqliteError(w.ctx, ec.rc, ec.db),
-            error.OutOfMemory => newOOMException(w.ctx),
+            error.OutOfMemory => oomException(w.ctx),
             error.JSException => c.JS_GetException(w.ctx),
         };
     };
@@ -455,11 +453,13 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
         .db = h.db.?,
         .handle = h,
         .stmt = stmt,
-        .result = c.SQLITE_OK,
-        .num_cols = 0,
-        .col_names = &.{},
-        .rows = &.{},
-        .arena = std.heap.ArenaAllocator.init(std.heap.c_allocator),
+        .rc = c.SQLITE_OK,
+        .result = .{
+            .num_cols = 0,
+            .col_names = &.{},
+            .rows = &.{},
+            .arena = std.heap.ArenaAllocator.init(std.heap.c_allocator),
+        },
     };
 
     const promise = c.TJS_InitPromise(ctx, &w.promise);
@@ -503,7 +503,8 @@ fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, param
         .db = h.db.?,
         .handle = h,
         .stmt = stmt,
-        .result = c.SQLITE_OK,
+        .rc = c.SQLITE_OK,
+        .result = .{},
     };
 
     const promise = c.TJS_InitPromise(ctx, &w.promise);
