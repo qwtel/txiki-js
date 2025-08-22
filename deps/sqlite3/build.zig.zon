@@ -1,0 +1,15 @@
+.{
+    .name = .sqlite3,
+    .version = "25.8.0",
+    .fingerprint = 0x6edcd711658a2b7f,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "sqlite3.c",
+        "sqlite3.h",
+        "sqlite3ext.h",
+        "sqlite3session.h",
+    },
+}

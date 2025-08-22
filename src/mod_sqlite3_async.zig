@@ -22,7 +22,7 @@ const ErrCtx = struct {
     db: ?*c.sqlite3 = null,
 };
 
-fn jsSqliteHandleFinalizer(_: ?*c.JSRuntime, val: c.JSValue) callconv(.C) void {
+fn jsSqliteHandleFinalizer(_: ?*c.JSRuntime, val: c.JSValue) callconv(.c) void {
     const oh: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque(val, handle_class_id)));
     if (oh) |h| {
         if (h.db) |db| _ = c.sqlite3_close(db);
@@ -108,7 +108,7 @@ fn jsOpenImpl(ctx: ?*c.JSContext, name: [*:0]const u8, flags: c_int, ec: *ErrCtx
     return obj;
 }
 
-fn jsOpen(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsOpen(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
 
     const db_name = c.JS_ToCString(ctx, argv[0]);
@@ -128,7 +128,7 @@ fn jsOpen(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValu
     return result;
 }
 
-fn jsClose(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsClose(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
     if (h == null) return z.JS_EXCEPTION;
@@ -142,7 +142,7 @@ fn jsClose(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSVal
     return z.JS_UNDEFINED;
 }
 
-fn jsLoadExtension(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsLoadExtension(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
     if (h == null or h.?.db == null) return z.JS_EXCEPTION;
@@ -161,11 +161,11 @@ fn jsLoadExtension(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c
     return z.JS_UNDEFINED;
 }
 
-fn jsNotImplemented(ctx: ?*c.JSContext, _: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsNotImplemented(ctx: ?*c.JSContext, _: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     return c.JS_ThrowTypeError(ctx, "Not implemented");
 }
 
-fn jsSetAbort(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsSetAbort(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
     const oh: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
     if (oh) |h| {
@@ -187,7 +187,7 @@ const RunWork = struct {
     result: c_int,
 };
 
-fn runCallback(req: [*c]c.uv_work_t) callconv(.C) void {
+fn runCallback(req: [*c]c.uv_work_t) callconv(.c) void {
     const w: *RunWork = @ptrCast(@alignCast(req.*.data));
     var rc: c_int = c.SQLITE_OK;
     while (true) {
@@ -197,7 +197,7 @@ fn runCallback(req: [*c]c.uv_work_t) callconv(.C) void {
     w.result = if (rc == c.SQLITE_DONE or rc == c.SQLITE_OK) c.SQLITE_OK else rc;
 }
 
-fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.C) void {
+fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     const w: *RunWork = @ptrCast(@alignCast(req.*.data));
     defer QuickJSAllocator.allocator(w.ctx).destroy(w);
 
@@ -219,7 +219,7 @@ fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.C) void {
     }
 }
 
-extern fn tjs_sqlite3_bind_params_public(ctx: ?*c.JSContext, stmt: ?*c.sqlite3_stmt, params: c.JSValue) callconv(.C) c.JSValue;
+extern fn tjs_sqlite3_bind_params_public(ctx: ?*c.JSContext, stmt: ?*c.sqlite3_stmt, params: c.JSValue) callconv(.c) c.JSValue;
 
 const ColType = enum { null_, int64, float64, text, blob };
 
@@ -251,7 +251,7 @@ const AllWork = struct {
 };
 
 
-fn progressCallback(userdata: ?*anyopaque) callconv(.C) c_int {
+fn progressCallback(userdata: ?*anyopaque) callconv(.c) c_int {
     if (userdata == null) return 0;
     const oh: ?*SqliteHandle = @ptrCast(@alignCast(userdata));
     return if (oh) |h| if (h.abort_requested) c.SQLITE_INTERRUPT else c.SQLITE_OK else c.SQLITE_OK;
@@ -287,7 +287,7 @@ fn allCallbackImpl(w: *AllWork) !void {
     while (true) {
         rc = c.sqlite3_step(stmt);
         if (rc != c.SQLITE_ROW) break;
-        
+
         var row_values = try ac.alloc(ColValue, @intCast(w.num_cols));
 
         col_idx = 0; // reset
@@ -332,7 +332,7 @@ fn allCallbackImpl(w: *AllWork) !void {
     w.result = if (rc == c.SQLITE_DONE) c.SQLITE_OK else rc;
 }
 
-fn allCallback(req: [*c]c.uv_work_t) callconv(.C) void {
+fn allCallback(req: [*c]c.uv_work_t) callconv(.c) void {
     const w: *AllWork = @ptrCast(@alignCast(req.*.data));
     allCallbackImpl(w) catch |e| switch (e) {
         error.OutOfMemory => w.result = RESULT_ZIG_OOM,
@@ -408,7 +408,7 @@ inline fn newOOMException(ctx: ?*c.JSContext) c.JSValue {
     return c.JS_GetException(ctx);
 }
 
-fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.C) void {
+fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     const w: *AllWork = @ptrCast(@alignCast(req.*.data));
     defer QuickJSAllocator.allocator(w.ctx).destroy(w);
 
@@ -497,13 +497,13 @@ fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, param
     const ac = QuickJSAllocator.allocator(ctx);
     var w = try ac.create(RunWork);
     errdefer ac.destroy(w);
-    w.* = .{ 
-        .req = undefined, 
-        .ctx = ctx, 
-        .promise = undefined, 
-        .db = h.db.?, 
-        .handle = h, 
-        .stmt = stmt, 
+    w.* = .{
+        .req = undefined,
+        .ctx = ctx,
+        .promise = undefined,
+        .db = h.db.?,
+        .handle = h,
+        .stmt = stmt,
         .result = c.SQLITE_OK,
     };
 
@@ -523,7 +523,7 @@ fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, param
     return promise;
 }
 
-fn jsExecAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsExecAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
 
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
@@ -545,7 +545,7 @@ fn jsExecAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.J
     return promise;
 }
 
-fn jsAllAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.C) c.JSValue {
+fn jsAllAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
 
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));

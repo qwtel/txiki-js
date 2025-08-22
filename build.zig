@@ -59,11 +59,14 @@ fn build2(
         .optimize = optimize,
     });
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
+        .linkage = .static,
         .name = "tjs",
-        .root_source_file = b.path("src/zig_c_bindings.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/zig_c_bindings.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     lib.linkLibrary(dep_quickjs.artifact("qjs"));
@@ -91,7 +94,7 @@ fn build2(
         lib.linkSystemLibrary("pthread");
     }
 
-    var cflags = std.ArrayList([]const u8).init(b.allocator);
+    var cflags = std.array_list.Managed([]const u8).init(b.allocator);
 
     try cflags.appendSlice(&.{
         "-Wall",
@@ -171,8 +174,10 @@ fn build2(
 
     const tjs = b.addExecutable(.{
         .name = "tjs",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     tjs.linkLibrary(lib);
     tjs.addCSourceFile(.{
@@ -182,8 +187,10 @@ fn build2(
 
     const tjsc = b.addExecutable(.{
         .name = "tjsc",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     tjsc.linkLibrary(dep_quickjs.artifact("qjs"));
     tjsc.addCSourceFile(.{
@@ -194,10 +201,13 @@ fn build2(
     lib.linkLibC();
 
     if (opts.with_sqlite and !opts.matrix) {
-        const sqlite_ext_test = b.addSharedLibrary(.{
+        const sqlite_ext_test = b.addLibrary(.{
+            .linkage = .dynamic,
             .name = "sqlite-test",
-            .target = target,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+            }),
         });
         sqlite_ext_test.addCSourceFile(.{ .file = b.path("tests/fixtures/sqlite-test-ext.c") });
         sqlite_ext_test.linkLibrary(dep_sqlite3.artifact("sqlite3"));
@@ -212,9 +222,11 @@ fn build2(
     if (!opts.matrix) {
         const exe = b.addExecutable(.{
             .name = "playground",
-            .root_source_file = b.path("src/v8_serialize_test.zig"),
-            .target = target,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/v8_serialize_test.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
         });
         exe.linkLibrary(dep_quickjs.artifact("qjs"));
         // <<<<<< ai slop
@@ -238,9 +250,11 @@ fn build2(
 
         const test_step = b.step("test", "Run unit tests for zig modules");
         const unit_tests = b.addTest(.{
-            .root_source_file = b.path("src/v8_serialize_test.zig"),
-            .target = target,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/v8_serialize_test.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
         });
         // unit_tests.root_module.addCMacro("DUMP_LEAKS", "1");
         unit_tests.linkLibrary(dep_quickjs.artifact("qjs"));
@@ -287,7 +301,7 @@ pub fn build(b: *std.Build) !void {
         const ac = b.allocator;
 
         const zon_file = try std.fs.cwd().openFile("build.zig.zon", .{});
-        const zon_buffer = try zon_file.readToEndAllocOptions(ac, 1024 * 1024, null, @alignOf(u8), 0);
+        const zon_buffer = try zon_file.readToEndAllocOptions(ac, 1024 * 1024, null, std.mem.Alignment.@"1", 0);
         const zon_parsed = try std.zon.parse.fromSlice(BuildZon, ac, zon_buffer, null, .{ .ignore_unknown_fields = true });
         const tjs_version = try std.SemanticVersion.parse(zon_parsed.version);
 

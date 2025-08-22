@@ -4,10 +4,13 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
+        .linkage = .static,
         .name = "sqlite3",
-        .target = target,
-        .optimize = mode,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = mode,
+        }),
     });
 
     lib.addIncludePath(b.path("."));

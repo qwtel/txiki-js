@@ -14,7 +14,7 @@ pub const c = @cImport({
     @cInclude("private.h");
 });
 
-pub const JSString = opaque {}; 
+pub const JSString = opaque {};
 pub const JSBigInt = opaque {};
 
 pub const JSRegExp = extern struct {
@@ -141,8 +141,8 @@ pub fn JS_PROP_INT32_DEF(comptime name: [*c]const u8, comptime value: i32, compt
 
 pub fn JS_CGETSET_DEF(
     comptime name: [*c]const u8,
-    comptime fgetter: ?*const fn (?*c.JSContext, c.JSValue) callconv(.C) c.JSValue,
-    comptime fsetter: ?*const fn (?*c.JSContext, c.JSValue, c.JSValue) callconv(.C) c.JSValue,
+    comptime fgetter: ?*const fn (?*c.JSContext, c.JSValue) callconv(.c) c.JSValue,
+    comptime fsetter: ?*const fn (?*c.JSContext, c.JSValue, c.JSValue) callconv(.c) c.JSValue,
 ) c.JSCFunctionListEntry {
     return .{
         .name = name,

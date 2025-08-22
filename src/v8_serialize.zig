@@ -107,7 +107,7 @@ fn ShiftTypeOf(comptime T: type) type {
     };
 }
 
-// fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.C) void {
+// fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) void {
 //     c.js_free_rt(rt, ptr);
 // }
 
@@ -1263,7 +1263,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             const bytes = try self.readRawBytes(byte_length);
             const c_length: c_int = @intCast(byte_length / @sizeOf(u16));
             if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) {
-                const aligned_bytes = try self.ac.alignedAlloc(u8, 2, byte_length);
+                const aligned_bytes = try self.ac.alignedAlloc(u8, std.mem.Alignment.@"2", byte_length);
                 defer self.ac.free(aligned_bytes);
                 @memcpy(aligned_bytes, bytes);
                 const bytes_u16: []const u16 = @ptrCast(aligned_bytes);
