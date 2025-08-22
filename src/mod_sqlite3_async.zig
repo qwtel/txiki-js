@@ -5,6 +5,7 @@ pub const z = @import("tjs_structs.zig");
 pub const c = z.c;
 
 extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
+extern fn tjs_sqlite3_bind_params_public(ctx: ?*c.JSContext, stmt: ?*c.sqlite3_stmt, params: c.JSValue) callconv(.c) c.JSValue;
 
 var handle_class_id: c.JSClassID = undefined;
 
@@ -218,8 +219,6 @@ fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
         c.TJS_RejectPromise(ctx, &w.promise, 1, &argv);
     }
 }
-
-extern fn tjs_sqlite3_bind_params_public(ctx: ?*c.JSContext, stmt: ?*c.sqlite3_stmt, params: c.JSValue) callconv(.c) c.JSValue;
 
 const ColType = enum { null_, int64, float64, text, blob };
 
