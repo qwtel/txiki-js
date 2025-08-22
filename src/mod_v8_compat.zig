@@ -66,14 +66,14 @@ var deserializer_class_id: c.JSClassID = undefined;
 fn initSerializer(ctx: ?*c.JSContext, obj: c.JSValue) !*Serializer {
     const ac = QuickJSAllocator.allocator(ctx);
     const ser: *Serializer = try ac.create(Serializer);
-    ser.* = try Serializer.initDelegate(ac, ctx, .{ .this_obj = obj });
+    ser.* = try Serializer.init(ac, ctx, .{ .this_obj = obj });
     return ser;
 }
 
 fn initDeserializer(ctx: ?*c.JSContext, obj: c.JSValue, js_view: c.JSValue) !*Deserializer {
     const ac = QuickJSAllocator.allocator(ctx);
     const des: *Deserializer = try ac.create(Deserializer);
-    des.* = try Deserializer.initDelegate(ac, ctx, js_view, .{ .this_obj = obj });
+    des.* = try Deserializer.init(ac, ctx, js_view, .{ .this_obj = obj });
     return des;
 }
 

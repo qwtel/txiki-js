@@ -111,7 +111,7 @@ fn ShiftTypeOf(comptime T: type) type {
 //     c.js_free_rt(rt, ptr);
 // }
 
-fn stackCheck(ctx: ?*c.JSContext) !void {
+inline fn stackCheck(ctx: ?*c.JSContext) !void {
     if (_js_check_stack_overflow(ctx, 0)) {
         _ = c.JS_ThrowRangeError(ctx, "Maximum call stack size exceeded");
         return Error.JSException;
@@ -261,25 +261,14 @@ pub fn Serializer(comptime Delegate: type) type {
 
         const Self = @This();
 
-        pub fn init(allocator: std.mem.Allocator, ctx: ?*c.JSContext) !Self {
+        pub fn init(allocator: std.mem.Allocator, ctx: ?*c.JSContext, delegate: ?Delegate) !Self {
             return Self{
                 .ac = allocator,
                 .ctx = ctx,
                 .buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, 2),
                 .id_map = .empty,
-                .has_custom_objects = false,
-                .delegate = null,
-            };
-        }
-
-        pub fn initDelegate(allocator: std.mem.Allocator, ctx: ?*c.JSContext, delegate: Delegate) !Self {
-            return Self{
-                .ac = allocator,
-                .ctx = ctx,
-                .buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, 2),
-                .id_map = .empty,
-                .has_custom_objects = delegate.hasCustomHostObject(),
                 .delegate = delegate,
+                .has_custom_objects = if (delegate) |d| d.hasCustomHostObject() else false,
             };
         }
 
@@ -950,19 +939,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         const Self = @This();
 
-        pub fn init(allocator: std.mem.Allocator, ctx: ?*c.JSContext, buffer_view: c.JSValue) !Self {
-            const slice = try arrayBufferViewToSlice(ctx, buffer_view);
-            return Self{
-                .ac = allocator,
-                .ctx = ctx,
-                .js_view = c.JS_DupValue(ctx, buffer_view), // XXX: should probably create our own view
-                .data = slice,
-                .id_map = .empty,
-                .delegate = null,
-            };
-        }
-
-        pub fn initDelegate(allocator: std.mem.Allocator, ctx: ?*c.JSContext, buffer_view: c.JSValue, delegate: Delegate) !Self {
+        pub fn init(allocator: std.mem.Allocator, ctx: ?*c.JSContext, buffer_view: c.JSValue, delegate: ?Delegate) !Self {
             const slice = try arrayBufferViewToSlice(ctx, buffer_view);
             return Self{
                 .ac = allocator,

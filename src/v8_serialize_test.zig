@@ -35,7 +35,7 @@ pub fn main() !void {
     if (c.JS_IsException(eval_result)) std.debug.print("Exception\n", .{});
     defer c.JS_FreeValue(ctx, eval_result);
 
-    var ser = try Serializer.init(allocator, ctx);
+    var ser = try Serializer.init(allocator, ctx, null);
     defer ser.deinit();
     try ser.writeHeader();
     try ser.writeObject(eval_result);
@@ -43,7 +43,7 @@ pub fn main() !void {
 
     // const x = c.JS_NewUint8ArrayCopy(ctx, &data, data.len);
     // defer c.JS_FreeValue(ctx, x);
-    // var des = try Deserializer.init(allocator, ctx, x);
+    // var des = try Deserializer.init(allocator, ctx, x, null);
     // defer des.deinit();
     // _ = try des.readHeader();
     // const res = try des.readObject();
@@ -61,7 +61,7 @@ fn testSerializeEvalJS(js_code: []const u8, expected: []const u8) !void {
     const eval_result = evalJS(ctx, js_code);
     defer c.JS_FreeValue(ctx, eval_result);
 
-    var ser = try Serializer.init(testing.allocator, ctx);
+    var ser = try Serializer.init(testing.allocator, ctx, null);
     defer ser.deinit();
 
     try ser.writeHeader();
@@ -88,7 +88,7 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
     const view = c.JS_NewUint8ArrayCopy(ctx, buf.ptr, buf.len);
     defer c.JS_FreeValue(ctx, view);
 
-    var des = try Deserializer.init(testing.allocator, ctx, view);
+    var des = try Deserializer.init(testing.allocator, ctx, view, null);
     defer des.deinit();
 
     _ = try des.readHeader();
