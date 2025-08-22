@@ -27,8 +27,7 @@ fn jsSqliteHandleFinalizer(_: ?*c.JSRuntime, val: c.JSValue) callconv(.c) void {
     const oh: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque(val, handle_class_id)));
     if (oh) |h| {
         if (h.db) |db| _ = c.sqlite3_close(db);
-        const ac = QuickJSAllocator.allocator(h.ctx);
-        ac.destroy(h);
+        QuickJSAllocator.allocator(h.ctx).destroy(h);
     }
 }
 
@@ -121,10 +120,10 @@ fn jsOpen(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValu
 
     var ec: ErrCtx = .{};
     const result = jsOpenImpl(ctx, db_name, flags, &ec) catch |e| switch (e) {
-        error.OpenError => return c.JS_ThrowTypeError(ctx, "Failed to open database"),
-        error.SQLiteError => return throwSqliteErr(ctx, ec.rc, ec.db),
-        error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
-        error.JSException => return z.JS_EXCEPTION, // quickjs already in exception state
+        error.OpenError => c.JS_ThrowTypeError(ctx, "Failed to open database"),
+        error.SQLiteError => throwSqliteErr(ctx, ec.rc, ec.db),
+        error.OutOfMemory => c.JS_ThrowOutOfMemory(ctx),
+        error.JSException => z.JS_EXCEPTION,
     };
     return result;
 }
@@ -132,12 +131,10 @@ fn jsOpen(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValu
 fn jsClose(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
-    if (h == null) return z.JS_EXCEPTION;
+    if (h == null) return c.JS_ThrowTypeError(ctx, "Illegal invocation");
     if (h.?.db) |db| {
         const rc = c.sqlite3_close(db);
-        if (rc != c.SQLITE_OK) {
-            return throwSqliteErr(ctx, rc, db);
-        }
+        if (rc != c.SQLITE_OK) return throwSqliteErr(ctx, rc, db);
         h.?.db = null;
     }
     return z.JS_UNDEFINED;
@@ -146,7 +143,7 @@ fn jsClose(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSVal
 fn jsLoadExtension(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
-    if (h == null or h.?.db == null) return z.JS_EXCEPTION;
+    if (h == null or h.?.db == null) return c.JS_ThrowTypeError(ctx, "Illegal invocation");
 
     const zFile = c.JS_ToCString(ctx, argv[1]);
     if (zFile == null) return z.JS_EXCEPTION;
@@ -174,7 +171,7 @@ fn jsSetAbort(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JS
         if (h.in_flight) {
             _ = c.sqlite3_interrupt(h.db);
         }
-    } else return z.JS_EXCEPTION;
+    } else return c.JS_ThrowTypeError(ctx, "Illegal invocation");
     return z.JS_UNDEFINED;
 }
 
@@ -431,7 +428,7 @@ fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
 fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params: c.JSValue, ec: *ErrCtx) !c.JSValue {
     var stmt: ?*c.sqlite3_stmt = null;
     const pr = c.sqlite3_prepare_v2(h.db, sql, -1, &stmt, null);
-    if (pr != c.SQLITE_OK) {
+    if (pr != c.SQLITE_OK or stmt == null) {
         ec.* = .{ .rc = pr, .db = h.db };
         return error.SQLiteError;
     }
@@ -481,7 +478,7 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
 fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params: c.JSValue, ec: *ErrCtx) !c.JSValue {
     var stmt: ?*c.sqlite3_stmt = null;
     const pr = c.sqlite3_prepare_v2(h.db, sql, -1, &stmt, null);
-    if (pr != c.SQLITE_OK) {
+    if (pr != c.SQLITE_OK or stmt == null) {
         ec.* = .{ .rc = pr, .db = h.db };
         return error.SQLiteError;
     }
@@ -527,7 +524,7 @@ fn jsExecAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.J
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
 
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
-    if (h == null or h.?.db == null) return z.JS_EXCEPTION;
+    if (h == null or h.?.db == null) return c.JS_ThrowTypeError(ctx, "Illegal invocation");
 
     const sql = c.JS_ToCString(ctx, argv[1]);
     if (sql == null) return z.JS_EXCEPTION;
@@ -549,7 +546,7 @@ fn jsAllAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JS
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
 
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
-    if (h == null or h.?.db == null) return z.JS_EXCEPTION;
+    if (h == null or h.?.db == null) return c.JS_ThrowTypeError(ctx, "Illegal invocation");
 
     const sql = c.JS_ToCString(ctx, argv[1]);
     if (sql == null) return z.JS_EXCEPTION;
