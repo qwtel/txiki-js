@@ -1675,6 +1675,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             errdefer if (stack) |x| c.JS_FreeValue(self.ctx, x);
 
             const err_obj = JS_MakeError(self.ctx, error_num, "", false);
+            if (c.JS_IsException(err_obj)) return Error.JSException;
             errdefer c.JS_FreeValue(self.ctx, err_obj);
 
             try self.addObjectWithID(id, err_obj);

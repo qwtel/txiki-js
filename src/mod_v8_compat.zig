@@ -24,6 +24,7 @@ const NodeDelegate = struct {
 
     pub fn writeHostObject(self: Self, ctx: ?*c.JSContext, obj: c.JSValue) !void {
         const js_func = c.JS_GetPropertyStr(ctx, self.this_obj, "_writeHostObject");
+        if (c.JS_IsException(js_func)) return error.JSException;
         defer c.JS_FreeValue(ctx, js_func);
 
         if (!c.JS_IsFunction(ctx, js_func)) return error.NotImplemented;
@@ -37,6 +38,7 @@ const NodeDelegate = struct {
 
     pub fn readHostObject(self: Self, ctx: ?*c.JSContext) !c.JSValue {
         const js_func = c.JS_GetPropertyStr(ctx, self.this_obj, "_readHostObject");
+        if (c.JS_IsException(js_func)) return error.JSException;
         defer c.JS_FreeValue(ctx, js_func);
 
         if (!c.JS_IsFunction(ctx, js_func)) return error.NotImplemented;
