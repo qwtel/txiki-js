@@ -1,5 +1,5 @@
 import assert from 'tjs:assert';
-import { serialize, deserialize } from 'tjs:v8';
+import { serialize, deserialize, Serializer, Deserializer } from 'tjs:v8';
 
 const structuredClone = (x) => deserialize(serialize(x));
 
@@ -203,4 +203,45 @@ function generateRandomObject(breadth, depth) {
   const pair = [...cloned.get(1).entries()][0];
   assert.equal(pair[1] instanceof Set, true);
   assert.deepEqual([...pair[1].values()], [1,2]);
+}
+
+// Delegate-provided DataCloneError (DOMException)
+{
+  class DataCloneError extends DOMException {
+    constructor(msg) {
+      super(msg, 'DataCloneError');
+    }
+  }
+
+  // Delegate-provided DataCloneError (DOMException) during serialization
+  {
+    const s = new Serializer();
+    s._getDataCloneError = () => DataCloneError;
+    s.writeHeader();
+    let thrown = false;
+    try {
+      s.writeValue(() => {})
+    } catch (err) {
+      thrown = true;
+      assert.equal(err instanceof DOMException, true);
+      assert.equal(err.name, 'DataCloneError');
+    }
+    assert.equal(thrown, true);
+  }
+
+  // Delegate-provided DataCloneError (DOMException) during deserialization
+  {
+    const bad = new Uint8Array(0);
+    const d = new Deserializer(bad);
+    d._getDataCloneError = () => DataCloneError;
+    let thrown = false;
+    try {
+      d.readValue();
+    } catch (err) {
+      thrown = true;
+      assert.equal(err instanceof DOMException, true);
+      assert.equal(err.name, 'DataCloneError');
+    }
+    assert.equal(thrown, true);
+  }
 }

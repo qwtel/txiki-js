@@ -41,12 +41,11 @@ const cFALSE = 0;
 
 pub const Error = std.mem.Allocator.Error || error{
     DataCloneError,
+    DataCloneErrorDetachedArrayBuffer,
+    DataCloneDeserializationError,
+    DataCloneDeserializationVersionError,
     NotImplemented,
     JSException,
-    OutOfData,
-    UnknownTag,
-    ValidationFailed,
-    IdCheckFailed,
 };
 
 fn bytesNeededForVarint(comptime T: type, value: T) usize {
@@ -229,6 +228,9 @@ pub const DefaultDelegate = struct {
         return Error.NotImplemented;
     }
     pub fn readHostObject(_: Self, _: ?*c.JSContext) !c.JSValue {
+        return Error.NotImplemented;
+    }
+    pub fn throwDataCloneError(_: Self, _: ?*c.JSContext, _: []const u8) !void {
         return Error.NotImplemented;
     }
 };
@@ -930,8 +932,15 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeHostObject(self: *Self, val: c.JSValue) !void {
-            try self.writeTag(.host_object);
-            return if (self.delegate) |del| try del.writeHostObject(self.ctx, val) else return Error.NotImplemented;
+            // Let delegate perform any custom serialization. If it throws, roll back.
+            const saved_len = self.buffer.items.len;
+            errdefer self.buffer.items.len = saved_len;
+            if (self.delegate) |del| {
+                try self.writeTag(.host_object);
+                try del.writeHostObject(self.ctx, val);
+            } else {
+                return Error.NotImplemented;
+            }
         }
 
         fn writeJSObjectPropertiesSlow(self: *Self, obj: c.JSValue, prop_enum: []c.JSPropertyEnum) !u32 {
@@ -964,14 +973,21 @@ pub fn Serializer(comptime Delegate: type) type {
             return if (self.delegate) |del| try del.isHostObject(self.ctx, val) else return Error.NotImplemented;
         }
 
-        fn throwDataCloneError(self: *Self) !void {
-            _ = c.JS_ThrowTypeError(self.ctx, "Could not clone data");
-            return Error.JSException;
+        fn throwDataCloneErrorMsg(self: *Self, comptime msg: []const u8) !noreturn {
+            if (self.delegate) |del| {
+                try del.throwDataCloneError(self.ctx, msg);
+            } else {
+                _ = c.JS_ThrowTypeError(self.ctx, msg.ptr);
+            }
+            return Error.DataCloneError;
         }
 
-        fn throwDataCloneErrorDetachedArrayBuffer(self: *Self) !void {
-            _ = c.JS_ThrowTypeError(self.ctx, "ArrayBuffer is detached");
-            return Error.JSException;
+        fn throwDataCloneError(self: *Self) !noreturn {
+            return self.throwDataCloneErrorMsg("Data clone error");
+        }
+
+        fn throwDataCloneErrorDetachedArrayBuffer(self: *Self) !noreturn {
+            return self.throwDataCloneErrorMsg("ArrayBuffer is detached");
         }
     };
 }
@@ -1018,7 +1034,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 try self.consumeTag(.version);
                 const version = try self.readVarint(u32);
                 if (version > kLatestVersion) {
-                    return Error.DataCloneError;
+                    try self.throwDataCloneDeserializationVersionError();
                 }
                 self.version = version;
             }
@@ -1038,7 +1054,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         fn consumeTag(self: *Self, tag: ?SerializationTag) !void {
             const actual_tag = self.readTag();
-            if (tag == null or actual_tag != tag) return Error.DataCloneError;
+            if (tag == null or actual_tag != tag) try self.throwDataCloneDeserializationError();
         }
 
         fn readTag(self: *Self) ?SerializationTag {
@@ -1063,7 +1079,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             var shift: ShiftT = 0;
             var has_another_byte: bool = true;
             while (has_another_byte) {
-                if (self.position >= self.data.len) return Error.OutOfData;
+                if (self.position >= self.data.len) try self.throwDataCloneDeserializationError();
                 const byte = self.data[self.position];
                 has_another_byte = (byte & 0x80) != 0;
                 if (shift < @sizeOf(T) * 8) {
@@ -1071,7 +1087,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                     value |= x << shift;
                     shift +%= 7; // allow wraparound since result isn't used anyway
                 } else {
-                    if (has_another_byte) return Error.DataCloneError;
+                    if (has_another_byte) try self.throwDataCloneDeserializationError();
                     return value;
                 }
                 self.position += 1;
@@ -1094,7 +1110,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         pub fn readDouble(self: *Self) !f64 {
-            if (self.position + @sizeOf(f64) > self.data.len) return Error.OutOfData;
+            if (self.position + @sizeOf(f64) > self.data.len) try self.throwDataCloneDeserializationError();
             const f64_bytes = self.data[self.position .. self.position + @sizeOf(f64)];
             const value = std.mem.bytesAsValue(f64, f64_bytes).*;
             self.position += @sizeOf(f64);
@@ -1102,7 +1118,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         pub fn readRawBytes(self: *Self, length: usize) ![]const u8 {
-            if (self.position + length > self.data.len) return Error.OutOfData;
+            if (self.position + length > self.data.len) try self.throwDataCloneDeserializationError();
             const slice = self.data[self.position .. self.position + length];
             self.position += length;
             return slice;
@@ -1110,7 +1126,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         pub fn readByte(self: *Self) !u8 {
             // std.debug.print("data: {any}, {}\n", .{ self.data, self.position });
-            if (self.data.len - self.position < @sizeOf(u8)) return Error.OutOfData;
+            if (self.data.len - self.position < @sizeOf(u8)) try self.throwDataCloneDeserializationError();
             const byte = self.data[self.position];
             self.position += 1;
             return byte;
@@ -1229,17 +1245,17 @@ pub fn Deserializer(comptime Delegate: type) type {
                         self.position -= 1;
                         return self.readObject();
                     };
-                    return Error.UnknownTag;
+                    try self.throwDataCloneDeserializationError();
                 },
             } else {
-                return Error.OutOfData;
+                try self.throwDataCloneDeserializationError();
             }
         }
 
         fn readString(self: *Self) !c.JSValue {
             if (self.version.? < 12) return self.readUtf8String();
             const object = try self.readObject();
-            if (!c.JS_IsString(object)) return Error.DataCloneError;
+            if (!c.JS_IsString(object)) try self.throwDataCloneDeserializationError();
             return object;
         }
 
@@ -1248,7 +1264,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 if (_js_bigint_from_string(self.ctx, "0", 16)) |r| {
                     return _js_compact_bigint(self.ctx, r);
                 } else {
-                    return Error.DataCloneError;
+                    try self.throwDataCloneDeserializationError();
                 }
             }
 
@@ -1275,7 +1291,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 if (c.JS_IsException(bigint)) return Error.JSException;
                 return bigint;
             } else {
-                return Error.DataCloneError;
+                try self.throwDataCloneDeserializationError();
             }
         }
 
@@ -1332,9 +1348,9 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             const num_properties = try self.readJSObjectProperties(object, .end_js_object);
             const expected_num_properties = try self.readVarint(u32);
-            if (num_properties != expected_num_properties) return Error.DataCloneError;
+            if (num_properties != expected_num_properties) try self.throwDataCloneDeserializationError();
 
-            if (!self.hasObjectWithID(id)) return Error.IdCheckFailed;
+            std.debug.assert(self.hasObjectWithID(id));
             return object;
         }
 
@@ -1363,7 +1379,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 // if the property already exists, something went wrong (probably getter/setter modified the object)
                 const has_property = c.JS_HasProperty(self.ctx, object, atom);
                 if (has_property < 0) return Error.JSException;
-                if (has_property == cTRUE) return Error.DataCloneError;
+                if (has_property == cTRUE) try self.throwDataCloneDeserializationError();
 
                 const code = c.JS_DefinePropertyValue(self.ctx, object, atom, value, c.JS_PROP_C_W_E);
                 if (code < 0) return Error.JSException;
@@ -1388,9 +1404,9 @@ pub fn Deserializer(comptime Delegate: type) type {
             const num_properties = try self.readJSObjectProperties(array, .end_sparse_js_array);
             const expected_num_properties = try self.readVarint(u32);
             const expected_length = try self.readVarint(u32);
-            if (num_properties != expected_num_properties or length != expected_length) return Error.DataCloneError;
+            if (num_properties != expected_num_properties or length != expected_length) try self.throwDataCloneDeserializationError();
 
-            if (!self.hasObjectWithID(id)) return Error.IdCheckFailed;
+            std.debug.assert(self.hasObjectWithID(id));
             return array;
         }
 
@@ -1398,7 +1414,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             try stackCheck(self.ctx);
 
             const length = try self.readVarint(u32);
-            if (length > self.data.len - self.position) return Error.OutOfData;
+            if (length > self.data.len - self.position) try self.throwDataCloneDeserializationError();
 
             const id = self.next_id;
             self.next_id += 1;
@@ -1432,9 +1448,8 @@ pub fn Deserializer(comptime Delegate: type) type {
             const num_properties = try self.readJSObjectProperties(array, .end_dense_js_array);
             const expected_num_properties = try self.readVarint(u32);
             const expected_length = try self.readVarint(u32);
-            if (num_properties != expected_num_properties or length != expected_length) return Error.ValidationFailed;
-
-            if (!self.hasObjectWithID(id)) return Error.IdCheckFailed;
+            if (num_properties != expected_num_properties or length != expected_length) try self.throwDataCloneDeserializationError();
+            std.debug.assert(self.hasObjectWithID(id));
             return array;
         }
 
@@ -1563,8 +1578,8 @@ pub fn Deserializer(comptime Delegate: type) type {
             }
 
             const expected_length = try self.readVarint(u32);
-            if (length != expected_length) return Error.DataCloneError;
-            if (!self.hasObjectWithID(id)) return Error.IdCheckFailed;
+            if (length != expected_length) try self.throwDataCloneDeserializationError();
+            std.debug.assert(self.hasObjectWithID(id));
             return map;
         }
 
@@ -1593,7 +1608,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             const byte_length = try self.readVarint(u32);
             if (is_resizable) {
                 const max_byte_length = try self.readVarint(u32);
-                if (byte_length > max_byte_length) return Error.DataCloneError;
+                if (byte_length > max_byte_length) try self.throwDataCloneDeserializationError();
             }
 
             const bytes = try self.readRawBytes(byte_length);
@@ -1613,7 +1628,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             const byte_offset = try self.readVarint(u32);
             const byte_length = try self.readVarint(u32);
             if (byte_offset > buffer_byte_length or byte_length > buffer_byte_length - byte_offset) {
-                return Error.DataCloneError;
+                try self.throwDataCloneDeserializationError();
             }
 
             const should_read_flags = self.version.? >= 14 or self.version_13_broken_data_mode;
@@ -1638,10 +1653,10 @@ pub fn Deserializer(comptime Delegate: type) type {
                 .float32_array => .{ .float32_array, 4 },
                 .float64_array => .{ .float64_array, 8 },
                 .data_view => .{ .dataview, 1 },
-                else => return Error.DataCloneError,
+                else => try self.throwDataCloneDeserializationError(),
             };
 
-            if (byte_offset % element_size != 0 or byte_length % element_size != 0) return Error.DataCloneError;
+            if (byte_offset % element_size != 0 or byte_length % element_size != 0) try self.throwDataCloneDeserializationError();
 
             //   bool is_length_tracking = false;
             //   bool is_backed_by_rab = false;
@@ -1726,23 +1741,23 @@ pub fn Deserializer(comptime Delegate: type) type {
             const no_enum = c.JS_PROP_WRITABLE | c.JS_PROP_CONFIGURABLE;
 
             if (stack) |x| if (c.JS_DefinePropertyValueStr(self.ctx, err_obj, "stack", x, no_enum) < 0) {
-                return Error.DataCloneError;
+                try self.throwDataCloneDeserializationError();
             };
             if (message) |x| if (c.JS_DefinePropertyValueStr(self.ctx, err_obj, "message", x, no_enum) < 0) {
-                return Error.DataCloneError;
+                try self.throwDataCloneDeserializationError();
             };
 
             var cause: ?c.JSValue = null;
             if (tag == .cause) {
                 cause = try self.readObject();
                 if (c.JS_DefinePropertyValueStr(self.ctx, err_obj, "cause", cause.?, no_enum) < 0) {
-                    return Error.DataCloneError;
+                    try self.throwDataCloneDeserializationError();
                 }
                 tag = @enumFromInt(try self.readVarint(u8));
             }
             errdefer if (cause) |x| c.JS_FreeValue(self.ctx, x);
 
-            if (tag != .end) return Error.DataCloneError;
+            if (tag != .end) try self.throwDataCloneDeserializationError();
             return err_obj;
         }
 
@@ -1761,15 +1776,33 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         fn getObjectWithID(self: *Self, id: u32) !c.JSValue {
-            if (id >= self.id_map.count()) return Error.DataCloneError;
+            if (id >= self.id_map.count()) try self.throwDataCloneDeserializationError();
             const value = self.id_map.get(id);
-            if (value == null or !c.JS_IsObject(value.?)) return Error.DataCloneError;
+            if (value == null or !c.JS_IsObject(value.?)) try self.throwDataCloneDeserializationError();
             return value.?;
         }
 
         fn addObjectWithID(self: *Self, id: u32, value: c.JSValue) !void {
-            if (self.hasObjectWithID(id)) return Error.DataCloneError;
+            std.debug.assert(!self.hasObjectWithID(id));
             try self.id_map.put(self.ac, id, value);
+        }
+
+        fn throwDataCloneDeserializationError(self: *Self) !noreturn {
+            if (self.delegate) |del| {
+                try del.throwDataCloneError(self.ctx, "Data clone deserialization error");
+            } else {
+                _ = c.JS_ThrowTypeError(self.ctx, "Data clone deserialization error");
+            }
+            return Error.DataCloneDeserializationError;
+        }
+
+        fn throwDataCloneDeserializationVersionError(self: *Self) !noreturn {
+            if (self.delegate) |del| {
+                try del.throwDataCloneError(self.ctx, "Data clone deserialization version error");
+            } else {
+                _ = c.JS_ThrowTypeError(self.ctx, "Data clone deserialization version error");
+            }
+            return Error.DataCloneDeserializationVersionError;
         }
     };
 }

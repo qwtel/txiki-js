@@ -56,6 +56,29 @@ const NodeDelegate = struct {
     pub fn isHostObject(_: Self, _: ?*c.JSContext, _: c.JSValue) !bool {
         return false;
     }
+    pub fn throwDataCloneError(self: Self, ctx: ?*c.JSContext, msg: []const u8) !void {
+        const get_ctor = c.JS_GetPropertyStr(ctx, self.this_obj, "_getDataCloneError");
+        if (c.JS_IsException(get_ctor)) return error.JSException;
+        defer c.JS_FreeValue(ctx, get_ctor);
+        if (c.JS_IsFunction(ctx, get_ctor)) {
+            const ctor = c.JS_Call(ctx, get_ctor, self.this_obj, 0, null);
+            if (c.JS_IsException(ctor)) return error.JSException;
+            defer c.JS_FreeValue(ctx, ctor);
+            // new ctor(String(msg))
+            const s = c.JS_NewStringLen(ctx, msg.ptr, @intCast(msg.len));
+            defer c.JS_FreeValue(ctx, s);
+            var argv = [1]c.JSValue{s};
+            const err = c.JS_CallConstructor(ctx, ctor, 1, &argv);
+            if (c.JS_IsException(err)) return error.JSException;
+            // Throw the constructed error
+            _ = c.JS_Throw(ctx, err);
+            return error.JSException;
+        }
+
+        // Final fallback
+        _ = c.JS_ThrowTypeError(ctx, "Data clone error");
+        return error.JSException;
+    }
 };
 
 const arrayBufferViewToSlice = v8_serialize.arrayBufferViewToSlice;
@@ -138,14 +161,13 @@ fn jsSerializerWriteValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_
     const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     ser.writeObject(argv[0]) catch |err| switch (err) {
-        Error.JSException => return z.JS_EXCEPTION,
-        Error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        Error.JSException,
+        Error.DataCloneError, 
+        Error.DataCloneErrorDetachedArrayBuffer,
+        Error.DataCloneDeserializationError,
+        Error.DataCloneDeserializationVersionError => return z.JS_EXCEPTION,
         Error.NotImplemented => return c.JS_ThrowTypeError(ctx, "Method _writeHostObject not implemented"),
-        Error.IdCheckFailed => return c.JS_ThrowTypeError(ctx, "Id check failed"),
-        Error.OutOfData => return c.JS_ThrowTypeError(ctx, "Out of data"),
-        Error.UnknownTag => return c.JS_ThrowTypeError(ctx, "Unknown tag"),
-        Error.ValidationFailed => return c.JS_ThrowTypeError(ctx, "Validation failed"),
-        else => return c.JS_ThrowTypeError(ctx, "Could not write value"),
+        Error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
     };
     return z.JS_UNDEFINED;
 }
@@ -239,9 +261,13 @@ fn jsDeserializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, arg
     const obj = c.JS_NewObjectProtoClass(ctx, proto, deserializer_class_id);
 
     const des: *Deserializer = initDeserializer(ctx, obj, argv[0]) catch |err| switch (err) {
-        error.JSException => return z.JS_EXCEPTION,
+        Error.JSException,
+        Error.DataCloneError,
+        Error.DataCloneErrorDetachedArrayBuffer,
+        Error.DataCloneDeserializationError,
+        Error.DataCloneDeserializationVersionError => return z.JS_EXCEPTION,
+        Error.NotImplemented => return c.JS_ThrowTypeError(ctx, "Method _readHostObject not implemented"),
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
-        else => return c.JS_ThrowTypeError(ctx, "Could not create Deserializer"),
     };
 
     _ = c.JS_SetOpaque(obj, des);
@@ -304,14 +330,14 @@ fn jsDeserializerReadUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_i
 fn jsDeserializerReadValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
     const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     const val = des.readObject() catch |err| switch (err) {
-        Error.JSException => z.JS_EXCEPTION,
-        Error.OutOfMemory => c.JS_ThrowOutOfMemory(ctx),
-        Error.NotImplemented => c.JS_ThrowTypeError(ctx, "Method _readHostObject not implemented"),
-        Error.IdCheckFailed => c.JS_ThrowTypeError(ctx, "Id check failed"),
-        Error.OutOfData => c.JS_ThrowTypeError(ctx, "Out of data"),
-        Error.UnknownTag => c.JS_ThrowTypeError(ctx, "Unknown tag"),
-        Error.ValidationFailed => c.JS_ThrowTypeError(ctx, "Validation failed"),
-        else => c.JS_ThrowTypeError(ctx, "Could not read value"),
+        Error.JSException,
+        Error.DataCloneError,
+        Error.DataCloneErrorDetachedArrayBuffer,
+        Error.DataCloneDeserializationError,
+        Error.DataCloneDeserializationVersionError => return z.JS_EXCEPTION,
+        Error.NotImplemented => return c.JS_ThrowTypeError(ctx, "Method _readHostObject not implemented"),
+        Error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
+        // else => return c.JS_ThrowTypeError(ctx, "Could not read value"),
     };
     return val;
 }
