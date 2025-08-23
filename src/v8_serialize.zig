@@ -470,6 +470,7 @@ pub fn Serializer(comptime Delegate: type) type {
                             if (!self.id_map.contains(p) and !self.treat_array_buffer_views_as_host_objects) {
                                 const is_dataview = class_id == @intFromEnum(z.JSClassId.dataview);
                                 const ab_val = if (is_dataview) _js_dataview_get_buffer(self.ctx, object) else _js_typed_array_get_buffer(self.ctx, object);
+                                try exceptionCheck(ab_val);
                                 defer c.JS_FreeValue(self.ctx, ab_val);
                                 try self.writeJSReceiver(ab_val, @ptrCast(c.JS_VALUE_GET_PTR(ab_val)));
                             }
@@ -844,6 +845,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
             const is_dataview = class_id == .dataview;
             const ab_val = if (is_dataview) _js_dataview_get_buffer(self.ctx, val) else _js_typed_array_get_buffer(self.ctx, val);
+            try exceptionCheck(ab_val);
             defer c.JS_FreeValue(self.ctx, ab_val);
 
             const p: *c.JSObject = @ptrCast(c.JS_VALUE_GET_PTR(val));
@@ -1287,7 +1289,9 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn bigIntFromSerializedDigits(self: *Self, sign_bit: u1, digits_store: []const u8) !c.JSValue {
             if (digits_store.len == 0) {
                 if (_js_bigint_from_string(self.ctx, "0", 16)) |r| {
-                    return _js_compact_bigint(self.ctx, r);
+                    const ret = _js_compact_bigint(self.ctx, r);
+                    try exceptionCheck(ret);
+                    return ret;
                 } else {
                     try self.throwDataCloneDeserializationError();
                 }
@@ -1339,23 +1343,27 @@ pub fn Deserializer(comptime Delegate: type) type {
         fn readOneByteString(self: *Self) !c.JSValue {
             const length = try self.readVarint(u32);
             const bytes = try self.readRawBytes(length);
-            return _js_new_string8_len(self.ctx, bytes.ptr, @intCast(length));
+            const val = _js_new_string8_len(self.ctx, bytes.ptr, @intCast(length));
+            try exceptionCheck(val);
+            return val;
         }
 
         fn readTwoByteString(self: *Self) !c.JSValue {
             const byte_length = try self.readVarint(u32);
             const bytes = try self.readRawBytes(byte_length);
             const c_length: c_int = @intCast(byte_length / @sizeOf(u16));
-            if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) {
+            const ret = if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) ret: {
                 const aligned_bytes = try self.ac.alignedAlloc(u8, std.mem.Alignment.@"2", byte_length);
                 defer self.ac.free(aligned_bytes);
                 @memcpy(aligned_bytes, bytes);
                 const bytes_u16: []const u16 = @ptrCast(aligned_bytes);
-                return _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
-            } else {
+                break :ret _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
+            } else ret: {
                 const bytes_u16: []const u16 = @alignCast(@ptrCast(bytes));
-                return _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
-            }
+                break :ret _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
+            };
+            try exceptionCheck(ret);
+            return ret;
         }
 
         fn readJSObject(self: *Self) !c.JSValue {
