@@ -20,6 +20,7 @@ extern fn _js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, ar
 extern fn _js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSRegExp;
 extern fn _js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) bool;
 extern fn _js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) bool;
+extern fn _js_get_non_index_enumerable_string_keys_excluding(ctx: ?*c.JSContext, ptab: [*c][*c]c.JSPropertyEnum, plen: *u32, obj: c.JSValueConst, skip_indices_below: u32) c_int;
 
 // A few non-standard qjs functions that we've added.
 extern fn _js_check_stack_overflow(ctx: ?*c.JSContext, alloca_size: usize) bool;
@@ -527,12 +528,19 @@ pub fn Serializer(comptime Delegate: type) type {
             self.next_id += 1;
             find_result.value_ptr.* = id + 1;
 
-            // XXX: eliminate callable or exotic objects early?
+            const class_id: z.JSClassId = @enumFromInt(c.JS_GetClassID(obj));
+
+            // Eliminate callable and exotic objects, which should not be serialized.
+            if (c.JS_IsFunction(self.ctx, obj) or isSpecialReceiverInstanceType(class_id)) {
+                // Allow host objects to be delegated explicitly.
+                if (!(try self.isHostObject(obj))) {
+                    try self.throwDataCloneError();
+                }
+            }
 
             // If we are at the end of the stack, abort. This function may recurse.
             try stackCheck(self.ctx);
 
-            const class_id: z.JSClassId = @enumFromInt(c.JS_GetClassID(obj));
             switch (class_id) {
                 .array => {
                     try self.writeJSArray(obj);
@@ -576,6 +584,21 @@ pub fn Serializer(comptime Delegate: type) type {
             }
         }
 
+        fn isSpecialReceiverInstanceType(class_id: z.JSClassId) bool {
+            return switch (@intFromEnum(class_id)) {
+                // TypedArrays + DataView are contiguous in QuickJS
+                @intFromEnum(z.JSClassId.uint8c_array)...@intFromEnum(z.JSClassId.dataview) => false,
+                else => switch (class_id) {
+                    .object, .array, .date, .regexp,
+                    .array_buffer, .shared_array_buffer,
+                    .map, .set,
+                    .number, .string, .boolean, .big_int,
+                    .@"error" => false,
+                    else => true,
+                },
+            };
+        }
+
         fn writeJSObject(self: *Self, obj: c.JSValue) !void {
             // const raw_props: [*]z.JSShapeProperty = @ptrCast(&p.shape.prop);
             // const props = raw_props[0..@intCast(p.shape.prop_size)];
@@ -612,19 +635,19 @@ pub fn Serializer(comptime Delegate: type) type {
             //         try self.writeJSObjectSlow(.Object, obj);
             //     }
             // }
-            try self.writeJSObjectSlow(.Object, obj);
+            try self.writeJSObjectOrSparseArraySlow(.Object, obj);
         }
 
         fn getOwnPropertyNames(self: *Self, obj: c.JSValue) ![]c.JSPropertyEnum {
             var prop_enum: [*c]c.JSPropertyEnum = undefined;
             var len: u32 = 0;
-            if (c.JS_GetOwnPropertyNames(self.ctx, &prop_enum, &len, obj, c.JS_GPN_STRING_MASK) != 0) {
-                try self.throwDataCloneError();
+            if (c.JS_GetOwnPropertyNames(self.ctx, &prop_enum, &len, obj, c.JS_GPN_STRING_MASK | c.JS_GPN_ENUM_ONLY) != 0) {
+                return Error.JSException;
             }
             return prop_enum[0..len];
         }
 
-        fn writeJSObjectSlow(self: *Self, comptime kind: ObjectOrArray, obj: c.JSValue) !void {
+        fn writeJSObjectOrSparseArraySlow(self: *Self, comptime kind: ObjectOrArray, obj: c.JSValue) !void {
             var length: i64 = undefined;
             if (kind == .Array) if (c.JS_GetLength(self.ctx, obj, &length) != 0) try self.throwDataCloneError();
 
@@ -641,8 +664,42 @@ pub fn Serializer(comptime Delegate: type) type {
             if (kind == .Array) try self.writeVarint(u32, @intCast(length)); // XXX: get length again?
         }
 
+        fn writeArrayNonElementProps(self: *Self, arr: c.JSValue, length: u32) !u32 {
+            var prop_enum: [*c]c.JSPropertyEnum = undefined;
+            var len: u32 = 0;
+
+            // Iterate over shape properties only
+            if (_js_get_non_index_enumerable_string_keys_excluding(self.ctx, &prop_enum, &len, arr, length) != 0) {
+                try self.throwDataCloneError();
+            }
+            if (len == 0) return 0; // nothing allocated, nothing to free
+            defer c.JS_FreePropertyEnum(self.ctx, prop_enum, @intCast(len));
+
+            var properties_written: u32 = 0;
+            const props = prop_enum[0..len];
+
+            for (props) |prop| {
+                const key = c.JS_AtomToValue(self.ctx, prop.atom);
+                defer c.JS_FreeValue(self.ctx, key);
+
+                const value = c.JS_GetProperty(self.ctx, arr, prop.atom);
+                if (c.JS_IsException(value)) return Error.JSException;
+                defer c.JS_FreeValue(self.ctx, value);
+
+                // Guard against getters deleting the property
+                const has_property = c.JS_HasProperty(self.ctx, arr, prop.atom);
+                if (has_property < 0) return Error.JSException;
+                if (has_property == cFALSE) continue;
+
+                try self.writeObject(key);
+                try self.writeObject(value);
+                properties_written += 1;
+            }
+
+            return properties_written;
+        }
+
         fn writeJSArray(self: *Self, obj: c.JSValue) !void {
-            // try self.writeJSObjectSlow(.Array, obj);
             if (_js_is_fast_array(self.ctx, obj)) {
                 var values: [*]c.JSValue = undefined;
                 var length: u32 = undefined;
@@ -658,14 +715,14 @@ pub fn Serializer(comptime Delegate: type) type {
                     }
                 }
 
-                // TODO: Write properties (i.e. non-numeric keys on an array)
-                // _ = try self.getOwnPropertyNames2(obj);
+                // Write properties (i.e. non-numeric keys on an array)
+                const properties_written = try self.writeArrayNonElementProps(obj, length);
 
                 try self.writeTag(.end_dense_js_array);
-                try self.writeVarint(u32, 0); // TODO: properties_written?
+                try self.writeVarint(u32, properties_written);
                 try self.writeVarint(u32, length);
             } else {
-                try self.writeJSObjectSlow(.Array, obj);
+                try self.writeJSObjectOrSparseArraySlow(.Array, obj);
             }
         }
 
@@ -959,7 +1016,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         pub fn readHeader(self: *Self) !bool {
             if (try self.peekTag() == .version) {
                 try self.consumeTag(.version);
-                const version = try self.readVarint(u8);
+                const version = try self.readVarint(u32);
                 if (version > kLatestVersion) {
                     return Error.DataCloneError;
                 }
@@ -1080,7 +1137,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 const tag = try self.peekTag();
                 if (tag == .array_buffer_view) {
                     try self.consumeTag(.array_buffer_view);
-                    defer c.JS_FreeValue(self.ctx, result);
+                    defer c.JS_FreeValue(self.ctx, result); // XXX: chance of double free here?
                     return try self.readJSArrayBufferView(result);
                 }
             }
@@ -1090,6 +1147,11 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         fn readObjectInternal(self: *Self) !c.JSValue {
             if (self.readTag()) |tag| switch (tag) {
+                .verify_object_count => {
+                    // Read the count and ignore it.
+                    _ = try self.readVarint(u32);
+                    return self.readObject();
+                },
                 .undefined => return z.JS_UNDEFINED,
                 .null => return z.JS_NULL,
                 .true => return z.JS_TRUE,
@@ -1163,6 +1225,10 @@ pub fn Deserializer(comptime Delegate: type) type {
                     return self.readHostObject();
                 },
                 else => {
+                    if (self.version) |v| if (v < 13) {
+                        self.position -= 1;
+                        return self.readObject();
+                    };
                     return Error.UnknownTag;
                 },
             } else {
