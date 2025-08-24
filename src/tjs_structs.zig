@@ -15,7 +15,17 @@ pub const c = @cImport({
 });
 
 pub const JSString = opaque {};
-pub const JSBigInt = opaque {};
+
+pub const JSRefCountHeader = extern struct {
+    ref_count: c_int,
+};
+
+pub const js_limb_t = u32;
+pub const JSBigInt = extern struct {
+    header: JSRefCountHeader,
+    len: u32, // number of limbs, >= 1
+    tab: [0]js_limb_t, // two's complement representation, always normalized so that 'len' is the minimum possible length >= 1
+};
 
 pub const JSRegExp = extern struct {
     pattern: *JSString,

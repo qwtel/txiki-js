@@ -351,64 +351,90 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeRawBytes(@ptrCast(value));
         }
 
-        fn writeBigIntContents(self: *Self, _: *z.JSBigInt, obj: c.JSValue) !void {
-            // var bf_expn_bits: c_int = 0;
-            // _ = js_bigint_get_mant_exp(self.ctx, &bf_expn_bits, bi);
-            // const v8_limbs_num: usize = @intCast((bf_expn_bits + 63) >> 6); // divCeil
-            // if (v8_limbs_num == 0) return self.writeVarint(u32, 0);
+        fn writeBigIntContents(self: *Self, obj: c.JSValue) !void {
+            const tag = c.JS_VALUE_GET_NORM_TAG(obj);
 
-            // const v8_limbs = try self.ac.alloc(u64, v8_limbs_num);
-            // defer self.ac.free(v8_limbs);
+            // Short BigInt: always emit one 64-bit word payload.
+            if (tag == c.JS_TAG_SHORT_BIG_INT) {
+                const val: i32 = c.JS_VALUE_GET_SHORT_BIG_INT(obj);
+                if (val == 0) {
+                    return self.writeVarint(u32, 0);
+                }
+                const sign_bit: u1 = if (val < 0) 1 else 0;
+                var mag: u64 = if (val < 0) @intCast(-@as(i64, val)) else @intCast(@as(i64, val));
 
-            // // Define limb_bits based on the same conditions as in libbf.h
-            // const limb_bits = @bitSizeOf(c.limb_t);
-            // if (limb_bits == 64) {
-            //     const bf_limbs: []c.limb_t = bf.num.tab[0..bf.num.len];
+                const bitfield: u32 = (8 << 1) | @as(u32, sign_bit); // 8 payload bytes (one u64 word)
+                try self.writeVarint(u32, bitfield);
 
-            //     @memset(v8_limbs, 0);
-            //     for (bf_limbs, 0..) |limb, i| v8_limbs[i] = limb;
-
-            //     const total_output_bits = 64 * v8_limbs_num;
-            //     const extra_output_bits = 64 * (v8_limbs_num - bf_limbs.len);
-            //     const right_shift_to_align = total_output_bits - bf_expn_bits + extra_output_bits;
-            //     shiftRightU64Slice(v8_limbs, right_shift_to_align);
-            // } else {
-
-            // XXX: Always using the string-based serialization now, can't be bothered with the limb stuff a second time
-            var v8_limbs = try std.ArrayListUnmanaged(u64).initCapacity(self.ac, 2);
-            defer v8_limbs.deinit(self.ac);
-
-            const result = _js_bigint_to_string1(self.ctx, obj, 16);
-            try exceptionCheck(result);
-            defer c.JS_FreeValue(self.ctx, result);
-
-            const hex_str_ptr = c.JS_ToCString(self.ctx, result);
-            if (hex_str_ptr == null) {
-                @branchHint(.unlikely);
-                return Error.JSException;
+                const out = try self.reserveRawBytes(8);
+                var i: usize = 0;
+                while (i < 8) : (i += 1) {
+                    out[i] = @intCast(mag & 0xFF);
+                    mag >>= 8;
+                }
+                return;
             }
-            defer c.JS_FreeCString(self.ctx, hex_str_ptr);
 
-            var hex_str = std.mem.span(hex_str_ptr);
-            const sign_bit: u1 = if (hex_str[0] == '-') 1 else 0;
-            if (sign_bit == 1) hex_str = hex_str[1..]; // abs
+            // Heap BigInt: get limbs slice (two's complement) and convert to sign-magnitude u64 words.
+            const bi: *z.JSBigInt = @alignCast(@ptrCast(c.JS_VALUE_GET_PTR(obj)));
+            const limbs_ptr: [*]const z.js_limb_t = @ptrCast(&bi.tab);
+            const limbs: []const z.js_limb_t = limbs_ptr[0..@intCast(bi.len)];
 
-            if (hex_str[0] == '0' and hex_str.len == 1) return self.writeVarint(u32, 0);
-
-            var end: usize = hex_str.len;
-            while (end > 0) {
-                const start = if (end > 16) end - 16 else 0;
-                const hex_slice = hex_str[start..end];
-                try v8_limbs.append(self.ac, std.fmt.parseInt(u64, hex_slice, 16) catch unreachable);
-                end = start;
+            // Zero check
+            if (limbs.len == 1 and limbs[0] == 0) {
+                return self.writeVarint(u32, 0);
             }
-            // }
 
-            const byte_length: u31 = @intCast(v8_limbs.items.len * @sizeOf(u64));
+            const sign_bit: u1 = @intCast((limbs[limbs.len - 1] >> 31) & 1);
+
+            // Prepare magnitude limbs (32-bit) trimmed of leading zeros
+            var mag_limbs: []const z.js_limb_t = undefined;
+            var tmp_buf: ?[]z.js_limb_t = null;
+            defer if (tmp_buf) |b| self.ac.free(b);
+
+            if (sign_bit == 1) {
+                // Two's complement negate to get magnitude
+                var tmp = try self.ac.alloc(z.js_limb_t, limbs.len);
+                tmp_buf = tmp; // defer free to end of outer scope
+                var carry: u1 = 1;
+                var i: usize = 0;
+                while (i < limbs.len) : (i += 1) {
+                    const inv = ~limbs[i];
+                    const sum, const carry_out = @addWithOverflow(inv, carry);
+                    carry = carry_out;
+                    tmp[i] = sum;
+                }
+                var end: usize = tmp.len;
+                while (end > 1 and tmp[end - 1] == 0) end -= 1;
+                mag_limbs = tmp[0..end];
+            } else {
+                var end: usize = limbs.len;
+                while (end > 1 and limbs[end - 1] == 0) end -= 1;
+                mag_limbs = limbs[0..end];
+            }
+
+            // Convert 32-bit limbs into u64 words (little-endian base 2^64)
+            const num_words: usize = (mag_limbs.len + 1) / 2; // ceil(len/2)
+            const byte_length: u31 = @intCast(num_words * 8);
             const bitfield: u32 = (byte_length << 1) | sign_bit;
-
             try self.writeVarint(u32, bitfield);
-            try self.writeRawBytes(@ptrCast(v8_limbs.items));
+
+            const out = try self.reserveRawBytes(byte_length);
+            var pos: usize = 0;
+            var w: usize = 0;
+            while (w < num_words) : (w += 1) {
+                const lo_idx = 2 * w;
+                const hi_idx = lo_idx + 1;
+                const lo: u64 = if (lo_idx < mag_limbs.len) @as(u64, mag_limbs[lo_idx]) else 0;
+                const hi: u64 = if (hi_idx < mag_limbs.len) @as(u64, mag_limbs[hi_idx]) else 0;
+                var word: u64 = (hi << 32) | lo;
+                var i: usize = 0;
+                while (i < 8) : (i += 1) {
+                    out[pos] = @intCast(word & 0xFF);
+                    word >>= 8;
+                    pos += 1;
+                }
+            }
         }
 
         fn reserveRawBytes(self: *Self, size: usize) ![]u8 {
@@ -510,7 +536,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         fn writeBigInt(self: *Self, value: c.JSValue) !void {
             try self.writeTag(.big_int);
-            try self.writeBigIntContents(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(value))), value);
+            try self.writeBigIntContents(value);
         }
 
         fn writeString(self: *Self, p: *const z.JSString) !void {
@@ -767,7 +793,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 },
                 c.JS_TAG_BIG_INT => {
                     try self.writeTag(.big_int_object);
-                    try self.writeBigIntContents(@alignCast(@ptrCast(c.JS_VALUE_GET_PTR(value))), value);
+                    try self.writeBigIntContents(value);
                 },
                 c.JS_TAG_STRING => {
                     try self.writeTag(.string_object);
