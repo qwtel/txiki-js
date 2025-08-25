@@ -146,23 +146,15 @@ endif()
 #         libffi
 #         BUILD_IN_SOURCE 1
 #         SOURCE_DIR "${LIBFFI_SRC}"
-#         CONFIGURE_COMMAND ./autogen.sh COMMAND ./configure --enable-static=yes --disable-shared --disable-multi-os-directory
+#         CONFIGURE_COMMAND ./autogen.sh COMMAND ./configure --enable-static=yes --disable-shared --disable-docs --disable-multi-os-directory
 #         BUILD_COMMAND make
 #         INSTALL_DIR ${TMP_INSTALL_DIR}
 #         INSTALL_COMMAND make DESTDIR=${TMP_INSTALL_DIR} install
 #         EXCLUDE_FROM_ALL TRUE
 #         BUILD_BYPRODUCTS ${LIBFFI_STATIC_PATH}
 #     )
-#     add_dependencies(tjs libffi)
-#     add_library(libffi_a STATIC IMPORTED)
-#     set_target_properties(libffi_a PROPERTIES IMPORTED_LOCATION ${LIBFFI_STATIC_PATH})
-#     target_include_directories(tjs PRIVATE ${TMP_INSTALL_DIR}/usr/local/include)
-#     target_link_libraries(tjs libffi_a)
-# else()
-#     find_library(FFI_LIB NAMES libffi ffi REQUIRED)
-#     find_path(FFI_INCLUDE_DIR NAMES ffi.h PATH_SUFFIXES ffi REQUIRED)
-#     target_include_directories(tjs PRIVATE ${FFI_INCLUDE_DIR})
-#     target_link_libraries(tjs ${FFI_LIB})
+
+#     target_link_libraries(sqlite-test sqlite3)
 # endif()
 
 set_target_properties(tjs PROPERTIES
