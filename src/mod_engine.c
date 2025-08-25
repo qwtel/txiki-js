@@ -28,7 +28,7 @@
 #include <string.h>
 #include <uv.h>
 
-#ifndef TJS__OMIT_MIMALLOC
+#ifdef TJS__HAS_MIMALLOC
 #include <mimalloc.h>
 #endif
 
@@ -170,7 +170,7 @@ void tjs__mod_engine_init(JSContext *ctx, JSValue ns) {
 #ifndef TJS__OMIT_SQLITE
     JS_DefinePropertyValueStr(ctx, versions, "sqlite3", JS_NewString(ctx, sqlite3_libversion()), JS_PROP_C_W_E);
 #endif
-#ifndef TJS__OMIT_MIMALLOC
+#ifdef TJS__HAS_MIMALLOC
     JS_DefinePropertyValueStr(ctx, versions, "mimalloc", JS_NewInt32(ctx, mi_version()), JS_PROP_C_W_E);
 #endif
 
