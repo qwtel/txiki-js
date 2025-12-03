@@ -16,3 +16,4 @@ types/api/
 test_dir*/
 _tests
 _include
+__*
