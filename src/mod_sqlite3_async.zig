@@ -7,7 +7,7 @@ pub const c = z.c;
 extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
 extern fn tjs_sqlite3_bind_params_public(ctx: ?*c.JSContext, stmt: ?*c.sqlite3_stmt, params: c.JSValue) callconv(.c) c.JSValue;
 
-var handle_class_id: c.JSClassID = undefined;
+var handle_class_id: c.JSClassID = 0;
 
 // Negative values are never used by SQLite result codes; safe for internal signals
 const RESULT_ZIG_OOM: c_int = -1;
@@ -360,7 +360,7 @@ fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
     if (w.stmt) |stmt| {
         _ = c.sqlite3_finalize(stmt);
     }
-	if (w.rc == RESULT_ZIG_OOM) {
+    if (w.rc == RESULT_ZIG_OOM) {
         return error.OutOfMemory;
     }
     if (w.rc != c.SQLITE_OK) {
@@ -388,7 +388,6 @@ fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
             if (c.JS_DefinePropertyValueStr(ctx, obj, &wr.col_names[col_idx][0], v, c.JS_PROP_C_W_E) < 0) {
                 return error.JSException;
             }
-
         }
         if (c.JS_DefinePropertyValueUint32(ctx, arr, @intCast(row_idx), obj, c.JS_PROP_C_W_E) < 0) {
             return error.JSException;

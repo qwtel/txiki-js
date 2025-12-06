@@ -83,8 +83,8 @@ const NodeDelegate = struct {
 
 const arrayBufferViewToSlice = v8_serialize.arrayBufferViewToSlice;
 
-var serializer_class_id: c.JSClassID = undefined;
-var deserializer_class_id: c.JSClassID = undefined;
+var serializer_class_id: c.JSClassID = 0;
+var deserializer_class_id: c.JSClassID = 0;
 
 fn initSerializer(ctx: ?*c.JSContext, obj: c.JSValue) !*Serializer {
     const ac = QuickJSAllocator.allocator(ctx);
@@ -122,13 +122,13 @@ fn jsSerializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, argc:
 }
 
 fn jsSerializerFinalizer(_: ?*c.JSRuntime, this_val: c.JSValue) callconv(.c) void {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque(this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque(this_val, serializer_class_id)));
     ser.deinit();
     ser.ac.destroy(ser);
 }
 
 fn jsSerializerWriteHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     ser.writeHeader() catch |err| switch (err) {
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
         // else => return c.JS_ThrowTypeError(ctx, "Could not write header"),
@@ -139,14 +139,14 @@ fn jsSerializerWriteHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
 }
 
 fn jsSerializerSetTreatArrayBufferViewsAsHostObjects(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     ser.setTreatArrayBufferViewsAsHostObjects(c.JS_ToBool(ctx, argv[0]) == cTRUE);
     return z.JS_UNDEFINED;
 }
 
 fn jsSerializerWriteDouble(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     var dbl: f64 = undefined;
     _ = c.JS_ToFloat64(ctx, &dbl, argv[0]);
@@ -158,7 +158,7 @@ fn jsSerializerWriteDouble(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
 }
 
 fn jsSerializerWriteValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     ser.writeObject(argv[0]) catch |err| switch (err) {
         Error.JSException,
@@ -173,7 +173,7 @@ fn jsSerializerWriteValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_
 }
 
 fn jsSerializerWriteRawBytes(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
 
     const slice = arrayBufferViewToSlice(ctx, argv[0]) catch |err| switch (err) {
@@ -190,7 +190,7 @@ fn jsSerializerWriteRawBytes(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc:
 }
 
 fn jsSerializerWriteUint32(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     var num: u32 = undefined;
     if (c.JS_ToUint32(ctx, &num, argv[0]) != 0) return c.JS_ThrowTypeError(ctx, "Could not convert argument to integer");
@@ -202,7 +202,7 @@ fn jsSerializerWriteUint32(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
 }
 
 fn jsSerializerWriteUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     if (argc < 2) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
 
     var lo: u32 = undefined;
@@ -224,7 +224,7 @@ fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) vo
 }
 
 fn jsSerializerReleaseBuffer(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const ser: *Serializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
+    const ser: *Serializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, serializer_class_id)));
     const bytes = ser.release() catch |err| switch (err) {
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
         // else => return c.JS_ThrowTypeError(ctx, "Could not release buffer"),
@@ -276,13 +276,13 @@ fn jsDeserializerConstructor(ctx: ?*c.JSContext, new_target: c.JSValueConst, arg
 }
 
 fn jsDeserializerFinalizer(_: ?*c.JSRuntime, this_val: c.JSValue) callconv(.c) void {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque(this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque(this_val, deserializer_class_id)));
     des.deinit();
     des.ac.destroy(des);
 }
 
 fn jsDeserializerReadHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     _ = des.readHeader() catch {
         return c.JS_ThrowTypeError(ctx, "Could not read value");
     };
@@ -290,7 +290,7 @@ fn jsDeserializerReadHeader(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_i
 }
 
 fn jsDeserializerGetWireFormatVersion(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     if (des.version != null) {
         return c.JS_NewUint32(ctx, des.version.?);
     } else {
@@ -299,7 +299,7 @@ fn jsDeserializerGetWireFormatVersion(ctx: ?*c.JSContext, this_val: c.JSValueCon
 }
 
 fn jsDeserializerReadDouble(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     const dbl = des.readDouble() catch {
         return c.JS_ThrowTypeError(ctx, "Could not read value");
     };
@@ -307,7 +307,7 @@ fn jsDeserializerReadDouble(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_i
 }
 
 fn jsDeserializerReadUint32(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     const val = des.readUint32() catch {
         return c.JS_ThrowTypeError(ctx, "Could not read value");
     };
@@ -315,7 +315,7 @@ fn jsDeserializerReadUint32(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_i
 }
 
 fn jsDeserializerReadUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     const val = des.readUint64() catch {
         return c.JS_ThrowTypeError(ctx, "Could not read value");
     };
@@ -328,7 +328,7 @@ fn jsDeserializerReadUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_i
 }
 
 fn jsDeserializerReadValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_int, _: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     const val = des.readObject() catch |err| switch (err) {
         Error.JSException,
         Error.DataCloneError,
@@ -343,7 +343,7 @@ fn jsDeserializerReadValue(ctx: ?*c.JSContext, this_val: c.JSValueConst, _: c_in
 }
 
 fn jsDeserializerReadRawBytes(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     var length: u32 = undefined;
     if (c.JS_ToUint32(ctx, &length, argv[0]) < 0) return c.JS_ThrowTypeError(ctx, "Could not convert argument to uint32");
@@ -355,7 +355,7 @@ fn jsDeserializerReadRawBytes(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc
 
 /// Same as `jsDeserializerReadRawBytes`, but just advanced the internal position and returns the starting offset.
 fn jsDeserializerReadRawBytes_(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Not enough arguments");
     var length: u32 = undefined;
     if (c.JS_ToUint32(ctx, &length, argv[0]) < 0) return c.JS_ThrowTypeError(ctx, "Could not convert argument to uint32");
@@ -367,7 +367,7 @@ fn jsDeserializerReadRawBytes_(ctx: ?*c.JSContext, this_val: c.JSValueConst, arg
 }
 
 fn jsDeserializerBufferGetter(ctx: ?*c.JSContext, this_val: c.JSValueConst) callconv(.c) c.JSValue {
-    const des: *Deserializer = @alignCast(@ptrCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
+    const des: *Deserializer = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, this_val, deserializer_class_id)));
     // XXX: ensure Uint8Array, currently just passing through whatever typed array passed to the constructor
     return c.JS_DupValue(ctx, des.js_view);
 }
