@@ -15,8 +15,8 @@ const RESULT_ZIG_OOM: c_int = -1;
 const SqliteHandle = struct {
     ctx: ?*c.JSContext = null,
     db: ?*c.sqlite3 = null,
-    in_flight: bool = false,
-    abort_requested: bool = false,
+    in_flight: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    abort_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 };
 const ErrCtx = struct {
     rc: c_int = 0,
@@ -100,7 +100,7 @@ fn jsOpenImpl(ctx: ?*c.JSContext, name: [*:0]const u8, flags: c_int, ec: *ErrCtx
     const h = try ac.create(SqliteHandle);
     errdefer ac.destroy(h);
 
-    h.* = .{ .ctx = ctx, .db = db, .in_flight = false };
+    h.* = .{ .ctx = ctx, .db = db };
     // Install a connection-wide progress handler to react to aborts
     _ = c.sqlite3_progress_handler(db, 1000, progressCallback, h);
     _ = c.JS_SetOpaque(obj, h);
@@ -167,8 +167,8 @@ fn jsSetAbort(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JS
     if (argc < 1) return c.JS_ThrowTypeError(ctx, "Invalid arguments");
     const oh: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
     if (oh) |h| {
-        h.abort_requested = true;
-        if (h.in_flight) {
+        h.abort_requested.store(true, .monotonic);
+        if (h.in_flight.load(.monotonic)) {
             _ = c.sqlite3_interrupt(h.db);
         }
     } else return c.JS_ThrowTypeError(ctx, "Illegal invocation");
@@ -207,8 +207,8 @@ fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     const ctx = w.ctx;
 
     if (w.handle) |h| {
-        h.in_flight = false;
-        h.abort_requested = false;
+        h.in_flight.store(false, .monotonic);
+        h.abort_requested.store(false, .monotonic);
     }
     if (w.stmt) |stmt| _ = c.sqlite3_finalize(stmt);
 
@@ -246,7 +246,7 @@ const AllWork = Work(struct {
 fn progressCallback(userdata: ?*anyopaque) callconv(.c) c_int {
     if (userdata == null) return 0;
     const oh: ?*SqliteHandle = @ptrCast(@alignCast(userdata));
-    return if (oh) |h| if (h.abort_requested) c.SQLITE_INTERRUPT else c.SQLITE_OK else c.SQLITE_OK;
+    return if (oh) |h| if (h.abort_requested.load(.monotonic)) c.SQLITE_INTERRUPT else c.SQLITE_OK else c.SQLITE_OK;
 }
 
 fn allCallbackImpl(w: *AllWork) !void {
@@ -354,8 +354,8 @@ fn afterAllCallbackImpl(w: *AllWork, ec: *ErrCtx) !c.JSValue {
     defer wr.arena.deinit();
 
     if (w.handle) |h| {
-        h.in_flight = false;
-        h.abort_requested = false;
+        h.in_flight.store(false, .monotonic);
+        h.abort_requested.store(false, .monotonic);
     }
     if (w.stmt) |stmt| {
         _ = c.sqlite3_finalize(stmt);
@@ -462,8 +462,8 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
     if (c.JS_IsException(promise)) return error.JSException;
     w.req.data = @ptrCast(w);
 
-    h.in_flight = true;
-    errdefer h.in_flight = false;
+    h.in_flight.store(true, .monotonic);
+    errdefer h.in_flight.store(false, .monotonic);
 
     const q = c.uv_queue_work(c.tjs_get_loop(ctx), &w.req, allCallback, afterAllCallback);
     if (q != 0) {
@@ -507,8 +507,8 @@ fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, param
     if (c.JS_IsException(promise)) return error.JSException;
     w.req.data = @ptrCast(w);
 
-    h.in_flight = true;
-    errdefer h.in_flight = false;
+    h.in_flight.store(true, .monotonic);
+    errdefer h.in_flight.store(false, .monotonic);
 
     const q = c.uv_queue_work(c.tjs_get_loop(ctx), &w.req, runCallback, afterRunCallback);
     if (q != 0) {
