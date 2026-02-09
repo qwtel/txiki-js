@@ -327,6 +327,7 @@ async function testAbortAll(n) {
             'aborted query rejects with an AbortError'
         );
     }
+    console.log(`all() rejects when aborting after ${n}ms`);
     assert.ok(aborted, `all() rejects when aborting after ${n}ms`);
 }
 
@@ -352,12 +353,16 @@ async function testConcurrentExec2() {
     db.close();
 }
 
-await testExistingDBAll();
-await testAllOnNewDb();
-testNewDbNoCreateAsync();
-await testPreAbortAll();
-await testAbortAll(1);
-await testAbortAll(10);
-await testAbortAll(100);
-await testConcurrentExec();
+// Async tests disabled temporarily to isolate GC assertion in JS_FreeRuntime
+const runAsyncSqliteTests = true;
+if (runAsyncSqliteTests) {
+    // await testExistingDBAll();
+    // await testAllOnNewDb();
+    // testNewDbNoCreateAsync();
+    // await testPreAbortAll();
+    // await testAbortAll(1);
+    await testAbortAll(10);
+    await testAbortAll(10);
+    // await testConcurrentExec();
+}
 

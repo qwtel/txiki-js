@@ -5,9 +5,9 @@ const builtin = @import("builtin");
 
 pub const c = @cImport({
     @cInclude("cutils.h");
+    @cInclude("dtoa.h");
     @cInclude("list.h");
     @cInclude("libregexp.h");
-    @cInclude("xsum.h");
     @cInclude("quickjs.h");
     @cInclude("sqlite3.h");
     @cInclude("uv.h");
@@ -68,6 +68,7 @@ pub const JSClassId = enum(u16) {
     bytecode_function, // u.func
     bound_function,    // u.bound_function
     c_function_data,   // u.c_function_data_record
+    c_closure,        // u.c_closure_record
     generator_function, // u.func
     for_in_iterator,   // u.for_in_iterator
     regexp,            // u.regexp
@@ -91,6 +92,10 @@ pub const JSClassId = enum(u16) {
     set,               // u.map_state
     weakmap,           // u.map_state
     weakset,           // u.map_state
+    iterator,
+    iterator_concat,   // u.iterator_concat_data
+    iterator_helper,   // u.iterator_helper_data
+    iterator_wrap,     // u.iterator_wrap_data
     map_iterator,      // u.map_iterator_data
     set_iterator,      // u.map_iterator_data
     array_iterator,    // u.array_iterator_data
@@ -109,6 +114,7 @@ pub const JSClassId = enum(u16) {
     async_generator,   // u.async_generator_data
     weak_ref,
     finalization_registry,
+    dom_exception,
     call_site,
 
     init_count, // last entry for predefined classes

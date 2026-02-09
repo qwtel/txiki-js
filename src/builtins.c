@@ -33,6 +33,7 @@
 #include "bundles/c/stdlib/sqlite.c"
 #endif
 #include "bundles/c/stdlib/uuid.c"
+#include "bundles/c/stdlib/wasi.c"
 #include "bundles/c/stdlib/v8.c"
 #include "private.h"
 
@@ -55,6 +56,7 @@ static tjs_builtin_t builtins[] = {
     { "tjs:sqlite", tjs__sqlite, sizeof(tjs__sqlite) },
 #endif
     { "tjs:uuid", tjs__uuid, sizeof(tjs__uuid) },
+    { "tjs:wasi", tjs__wasi, sizeof(tjs__wasi) },
     { "tjs:v8", tjs__v8, sizeof(tjs__v8) },
     { NULL, NULL, 0 },
 };

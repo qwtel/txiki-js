@@ -6,7 +6,7 @@ pub const c = z.c;
 
 const QJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 
-extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
+extern fn JS_MakeError2(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, add_backtrace: bool, message: [*c]const u8) c.JSValue;
 
 // A bunch of qjs internal functions that we've re-exported with a different prefix.
 extern fn _js_compact_bigint(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
@@ -1791,7 +1791,7 @@ pub fn Deserializer(comptime Delegate: type) type {
             }
             errdefer if (stack) |x| c.JS_FreeValue(self.ctx, x);
 
-            const err_obj = JS_MakeError(self.ctx, error_num, "", false);
+            const err_obj = JS_MakeError2(self.ctx, error_num, false, "");
             try exceptionCheck(err_obj);
             errdefer c.JS_FreeValue(self.ctx, err_obj);
 

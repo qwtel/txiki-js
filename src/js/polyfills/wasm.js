@@ -5,10 +5,6 @@ const kWasmModule = Symbol('kWasmModule');
 const kWasmModuleRef = Symbol('kWasmModuleRef');
 const kWasmExports = Symbol('kWasmExports');
 const kWasmInstance = Symbol('kWasmInstance');
-const kWasmInstances = Symbol('kWasmInstances');
-// const kWasiLinked = Symbol('kWasiLinked');
-// const kWasiStarted = Symbol('kWasiStarted');
-// const kWasiOptions = Symbol('kWasiOptions');
 
 
 class CompileError extends Error {
@@ -72,18 +68,6 @@ function buildInstance(mod) {
     }
 }
 
-// function linkWasi(instance) {
-//     try {
-//         instance.linkWasi();
-//     } catch (e) {
-//         if (e.wasmError) {
-//             throw getWasmError(e);
-//         } else {
-//             throw e;
-//         }
-//     }
-// }
-
 function parseModule(buf) {
     try {
         return wasm.parseModule(buf);
@@ -114,12 +98,15 @@ class Module {
 
 class Instance {
     constructor(module, importObject = {}) {
-        const instance = buildInstance(module[kWasmModule]);
-
-        // if (importObject.wasi_unstable) {
-        //     linkWasi(instance);
-        //     this[kWasiLinked] = true;
+        // // Detect WASI in importObject via duck typing and configure it before instantiation
+        // for (const ns of Object.values(importObject)) {
+        //     if (ns && typeof ns === 'object' && typeof ns._configure === 'function') {
+        //         ns._configure(module[kWasmModule]);
+        //         break;
+        //     }
         // }
+
+        const instance = buildInstance(module[kWasmModule]);
 
         const _exports = Module.exports(module);
         const exports = Object.create(null);
@@ -133,7 +120,6 @@ class Instance {
         this[kWasmInstance] = instance;
         this[kWasmExports] = Object.freeze(exports);
         this[kWasmModuleRef] = module;
-        globalThis.WebAssembly[kWasmInstances].push(this);
     }
 
     get exports() {
@@ -141,48 +127,12 @@ class Instance {
     }
 }
 
-// class WASI {
-//     wasiImport = 'w4s1';  // Doesn't matter right now.
-
-//     constructor(options = { args: [], env: {}, preopens: {} }) {
-//         this[kWasiStarted] = false;
-
-//         if (options === null || typeof options !== 'object') {
-//             throw new TypeError('options must be an object');
-//         }
-
-//         this[kWasiOptions] = JSON.parse(JSON.stringify(options));
-//     }
-
-//     start(instance) {
-//         if (this[kWasiStarted]) {
-//             throw new Error('WASI instance has already started');
-//         }
-
-//         if (!instance[kWasiLinked]) {
-//             throw new Error('WASM instance doesn\'t have WASI linked');
-//         }
-
-//         if (!instance.exports._start) {
-//             throw new TypeError('WASI entrypoint not found');
-//         }
-
-//         this[kWasiStarted] = true;
-//         instance.exports._start(...(this[kWasiOptions].args ?? []));
-//     }
-// }
-
 class WebAssembly {
     Module = Module;
     Instance = Instance;
     CompileError = CompileError;
     LinkError = LinkError;
     RuntimeError = RuntimeError;
-    // WASI = WASI;
-
-    constructor() {
-        this[kWasmInstances] = [];
-    }
 
     async compile(src) {
         return new Module(src);

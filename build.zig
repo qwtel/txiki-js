@@ -49,15 +49,14 @@ fn build2(
         .target = target,
         .optimize = optimize,
     });
-    const dep_wasm3 = b.dependency("wasm3", .{
-        .target = target,
-        .optimize = optimize,
-        .libm3 = true,
-    });
     const dep_mimalloc = b.dependency("mimalloc", .{
         .target = target,
         .optimize = optimize,
     });
+    const dep_wamr = if (opts.with_wasm) b.dependency("wamr", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
 
     const lib = b.addLibrary(.{
         .linkage = .static,
@@ -81,8 +80,10 @@ fn build2(
     }
 
     if (opts.with_wasm) {
-        lib.linkLibrary(dep_wasm3.artifact("m3"));
-        lib.installLibraryHeaders(dep_wasm3.artifact("m3"));
+        const wamr = dep_wamr.?;
+        lib.linkLibrary(wamr.artifact("vmlib"));
+        lib.installLibraryHeaders(wamr.artifact("vmlib"));
+        lib.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
     }
 
     if (opts.with_mimalloc) {
@@ -110,42 +111,45 @@ fn build2(
 
     lib.addIncludePath(b.path("src"));
 
+    var c_sources = std.array_list.Managed([]const u8).init(b.allocator);
+    try c_sources.appendSlice(&.{
+        "src/builtins.c",
+        // "src/curl-utils.c",
+        // "src/curl-websocket.c",
+        "src/error.c",
+        "src/eval.c",
+        "src/mem.c",
+        "src/modules.c",
+        "src/sha1.c",
+        "src/signals.c",
+        "src/text-coding.c",
+        "src/timers.c",
+        "src/utils.c",
+        "src/version.c",
+        "src/vm.c",
+        "src/worker.c",
+        // "src/ws.c",
+        // "src/xhr.c",
+        "src/mod_dns.c",
+        "src/mod_engine.c",
+        // "src/mod_ffi.c",
+        "src/mod_fs.c",
+        "src/mod_fswatch.c",
+        "src/mod_os.c",
+        "src/mod_process.c",
+        "src/mod_sqlite3.c",
+        "src/mod_streams.c",
+        "src/mod_sys.c",
+        "src/mod_udp.c",
+        "src/bundles/c/core/core.c",
+        "src/bundles/c/core/polyfills.c",
+        "src/bundles/c/core/run-main.c",
+        "src/bundles/c/core/run-repl.c",
+        "src/bundles/c/core/worker-bootstrap.c",
+    });
+    if (opts.with_wasm) try c_sources.append("src/wasm.c");
     lib.addCSourceFiles(.{
-        .files = &.{
-            "src/builtins.c",
-            // "src/curl-utils.c",
-            // "src/curl-websocket.c",
-            "src/error.c",
-            "src/eval.c",
-            "src/mem.c",
-            "src/modules.c",
-            "src/sha1.c",
-            "src/signals.c",
-            "src/timers.c",
-            "src/utils.c",
-            "src/version.c",
-            "src/vm.c",
-            "src/wasm.c",
-            "src/worker.c",
-            // "src/ws.c",
-            // "src/xhr.c",
-            "src/mod_dns.c",
-            "src/mod_engine.c",
-            // "src/mod_ffi.c",
-            "src/mod_fs.c",
-            "src/mod_fswatch.c",
-            "src/mod_os.c",
-            "src/mod_process.c",
-            "src/mod_sqlite3.c",
-            "src/mod_streams.c",
-            "src/mod_sys.c",
-            "src/mod_udp.c",
-            "src/bundles/c/core/core.c",
-            "src/bundles/c/core/polyfills.c",
-            "src/bundles/c/core/run-main.c",
-            "src/bundles/c/core/run-repl.c",
-            "src/bundles/c/core/worker-bootstrap.c",
-        },
+        .files = c_sources.items,
         .flags = cflags.items,
     });
     if (target.result.os.tag == .linux or target.result.os.tag.isBSD()) {
@@ -236,8 +240,9 @@ fn build2(
         exe.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
         exe.addIncludePath(b.path("src"));
         if (opts.with_wasm) {
-            exe.linkLibrary(dep_wasm3.artifact("m3"));
-            exe.installLibraryHeaders(dep_wasm3.artifact("m3"));
+            const wamr = dep_wamr.?;
+            exe.linkLibrary(wamr.artifact("vmlib"));
+            exe.installLibraryHeaders(wamr.artifact("vmlib"));
         } else {
             exe.root_module.addCMacro("TJS__OMIT_WASM", "1");
         }
@@ -268,8 +273,9 @@ fn build2(
             unit_tests.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
         }
         if (opts.with_wasm) {
-            unit_tests.linkLibrary(dep_wasm3.artifact("m3"));
-            unit_tests.installLibraryHeaders(dep_wasm3.artifact("m3"));
+            const wamr = dep_wamr.?;
+            unit_tests.linkLibrary(wamr.artifact("vmlib"));
+            unit_tests.installLibraryHeaders(wamr.artifact("vmlib"));
         } else {
             unit_tests.root_module.addCMacro("TJS__OMIT_WASM", "1");
         }
@@ -293,7 +299,7 @@ pub fn build(b: *std.Build) !void {
 
     const opt_matrix = b.option(bool, "matrix", "Cross-compile to all targets that are known to work") orelse false;
     const opt_no_mimalloc = b.option(bool, "no-mimalloc", "If set, build without mimalloc") orelse false;
-    const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without wasm3") orelse false;
+    const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without WAMR (WASM)") orelse false;
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build with sqlite3") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 

@@ -30,106 +30,169 @@
 #include <string.h>
 
 
-// JSModuleDef *tjs__load_http(JSContext *ctx, const char *url) {
-//     JSModuleDef *m;
-//     DynBuf dbuf;
+static int json_module_init(JSContext *ctx, JSModuleDef *m) {
+    JSValue val;
+    val = JS_GetModulePrivateValue(ctx, m);
+    JS_SetModuleExport(ctx, m, "default", val);
+    return 0;
+}
 
-//     tjs_dbuf_init(ctx, &dbuf);
+static JSModuleDef *create_json_module(JSContext *ctx, const char *module_name, JSValue val) {
+    JSModuleDef *m;
+    m = JS_NewCModule(ctx, module_name, json_module_init);
+    if (!m) {
+        JS_FreeValue(ctx, val);
+        return NULL;
+    }
+    /* only export the "default" symbol which will contain the JSON object */
+    JS_AddModuleExport(ctx, m, "default");
+    JS_SetModulePrivateValue(ctx, m, val);
+    return m;
+}
 
-//     int r = tjs_curl_load_http(&dbuf, url);
-//     if (r != 200) {
-//         m = NULL;
-//         if (r < 0) {
-//             /* curl error */
-//             JS_ThrowReferenceError(ctx, "could not load '%s': %s", url, curl_easy_strerror(-r));
-//         } else {
-//             /* http error */
-//             JS_ThrowReferenceError(ctx, "could not load '%s': %d", url, r);
-//         }
-//         goto end;
-//     }
+/* return > 0 if the attributes indicate a JSON module, 0 otherwise, -1 on error */
+static int js_module_test_json(JSContext *ctx, JSValueConst attributes) {
+    JSValue str;
+    const char *cstr;
+    size_t len;
+    int res;
 
-//     /* compile the module */
-//     JSValue func_val =
-//         JS_Eval(ctx, (char *) dbuf.buf, dbuf.size - 1, url, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-//     if (JS_IsException(func_val)) {
-//         JS_FreeValue(ctx, func_val);
-//         m = NULL;
-//         goto end;
-//     }
+    if (JS_IsUndefined(attributes)) {
+        return 0;
+    }
+    str = JS_GetPropertyStr(ctx, attributes, "type");
+    if (JS_IsException(str)) {
+        return -1;
+    }
+    if (!JS_IsString(str)) {
+        JS_FreeValue(ctx, str);
+        return 0;
+    }
+    cstr = JS_ToCStringLen(ctx, &len, str);
+    JS_FreeValue(ctx, str);
+    if (!cstr) {
+        return -1;
+    }
+    if (len == 4 && !memcmp(cstr, "json", len)) {
+        res = 1;
+    } else {
+        res = 0;
+    }
+    JS_FreeCString(ctx, cstr);
+    return res;
+}
 
-//    /* XXX: could propagate the exception */
-//    js_module_set_import_meta(ctx, func_val, false, false);
-//    /* the module is already referenced, so we must free it */
-//    m = JS_VALUE_GET_PTR(func_val);
-//    JS_FreeValue(ctx, func_val);
+/* in order to conform with the specification, only the keys should be
+   tested and not the associated values. */
+int tjs_module_attr_checker(JSContext *ctx, void *opaque, JSValueConst attributes) {
+    JSPropertyEnum *tab;
+    uint32_t i, len;
+    int ret;
+    const char *cstr;
+    size_t cstr_len;
 
-// end:
-//     /* free the memory we allocated */
-//     dbuf_free(&dbuf);
+    if (JS_GetOwnPropertyNames(ctx, &tab, &len, attributes, JS_GPN_ENUM_ONLY | JS_GPN_STRING_MASK)) {
+        return -1;
+    }
+    ret = 0;
+    for (i = 0; i < len; i++) {
+        cstr = JS_AtomToCStringLen(ctx, &cstr_len, tab[i].atom);
+        if (!cstr) {
+            ret = -1;
+            break;
+        }
+        if (!(cstr_len == 4 && !memcmp(cstr, "type", cstr_len))) {
+            JS_ThrowTypeError(ctx, "import attribute '%s' is not supported", cstr);
+            ret = -1;
+        }
+        JS_FreeCString(ctx, cstr);
+        if (ret) {
+            break;
+        }
+    }
+    JS_FreePropertyEnum(ctx, tab, len);
+    return ret;
+}
 
-//     return m;
-// }
-
-JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque) {
+JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque, JSValueConst attributes) {
     static const char http[] = "http://";
     static const char https[] = "https://";
-    static const char json_tpl_start[] = "export default JSON.parse(`";
-    static const char json_tpl_end[] = "`);";
     static const char tjs_prefix[] = "tjs:";
 
-    JSModuleDef *m;
-    JSValue func_val;
-    int r, is_json;
+    JSModuleDef *m = NULL;
+    int r;
+    bool is_json, use_realpath;
     DynBuf dbuf;
 
     if (strncmp(tjs_prefix, module_name, strlen(tjs_prefix)) == 0) {
         return tjs__load_builtin(ctx, module_name);
     }
 
-    if (strncmp(http, module_name, strlen(http)) == 0 || strncmp(https, module_name, strlen(https)) == 0) {
-        // return tjs__load_http(ctx, module_name);
-        JS_ThrowPlainError(ctx, "HTTP(S) module loading is not supported");
+    r = js_module_test_json(ctx, attributes);
+    if (r < 0) {
         return NULL;
     }
+    is_json = js__has_suffix(module_name, ".json") || r > 0;
 
     tjs_dbuf_init(ctx, &dbuf);
 
-    is_json = js__has_suffix(module_name, ".json");
-
-    /* Support importing JSON files because... why not? */
-    if (is_json) {
-        dbuf_put(&dbuf, (const uint8_t *) json_tpl_start, strlen(json_tpl_start));
+#ifdef TJS__HAS_CURL
+    if (strncmp(http, module_name, strlen(http)) == 0 || strncmp(https, module_name, strlen(https)) == 0) {
+        r = tjs_curl_load_http(&dbuf, module_name);
+        if (r != 200) {
+            if (r < 0) {
+                JS_ThrowReferenceError(ctx, "could not load '%s': %s", module_name, curl_easy_strerror(-r));
+            } else {
+                JS_ThrowReferenceError(ctx, "could not load '%s': %d", module_name, r);
+            }
+            goto end;
+        }
+        use_realpath = false;
+    } else
+#endif
+    {
+        r = tjs__load_file(ctx, &dbuf, module_name);
+        if (r != 0) {
+            JS_ThrowReferenceError(ctx, "could not load '%s'", module_name);
+            goto end;
+        }
+        use_realpath = true;
     }
 
-    r = tjs__load_file(ctx, &dbuf, module_name);
-    if (r != 0) {
-        dbuf_free(&dbuf);
-        JS_ThrowReferenceError(ctx, "could not load '%s'", module_name);
-        return NULL;
-    }
-
-    if (is_json) {
-        dbuf_put(&dbuf, (const uint8_t *) json_tpl_end, strlen(json_tpl_end));
-    }
-
-    /* Add null termination, required by JS_Eval. */
+    /* Add null termination, required by JS_Eval / JS_ParseJSON. */
     dbuf_putc(&dbuf, '\0');
 
-    /* compile JS the module */
-    func_val =
-        JS_Eval(ctx, (char *) dbuf.buf, dbuf.size - 1, module_name, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-    dbuf_free(&dbuf);
-    if (JS_IsException(func_val)) {
+    /* Now load the module for real. */
+    if (is_json) {
+        JSValue val;
+        val = JS_ParseJSON(ctx, (char *) dbuf.buf, dbuf.size - 1, module_name);
+        if (JS_IsException(val)) {
+            goto end;
+        }
+        m = create_json_module(ctx, module_name, val);
+    } else {
+        JSValue func_val = JS_Eval(ctx,
+                                   (char *) dbuf.buf,
+                                   dbuf.size - 1,
+                                   module_name,
+                                   JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+        if (JS_IsException(func_val)) {
+            goto end;
+        }
+
+        r = js_module_set_import_meta(ctx, func_val, use_realpath, false);
+        if (r != 0) {
+            JS_FreeValue(ctx, func_val);
+            goto end;
+        }
+
+        /* the module is already referenced, so we must free it */
+        m = JS_VALUE_GET_PTR(func_val);
         JS_FreeValue(ctx, func_val);
-        return NULL;
     }
 
-    /* XXX: could propagate the exception */
-    js_module_set_import_meta(ctx, func_val, true, false);
-    /* the module is already referenced, so we must free it */
-    m = JS_VALUE_GET_PTR(func_val);
-    JS_FreeValue(ctx, func_val);
+end:
+    dbuf_free(&dbuf);
 
     return m;
 }
@@ -146,13 +209,13 @@ JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *op
 
 int js_module_set_import_meta(JSContext *ctx, JSValue func_val, bool use_realpath, bool is_main) {
     JSModuleDef *m;
-    char buf[PATH_MAX + 16] = { 0 };
+    char buf[JS__PATH_MAX + 16] = { 0 };
     int r;
     JSValue meta_obj;
     JSAtom module_name_atom;
     const char *module_name;
-    char module_dirname[PATH_MAX] = { 0 };
-    char module_basename[PATH_MAX] = { 0 };
+    char module_dirname[JS__PATH_MAX] = { 0 };
+    char module_basename[JS__PATH_MAX] = { 0 };
 
     CHECK_EQ(JS_VALUE_GET_TAG(func_val), JS_TAG_MODULE);
     m = JS_VALUE_GET_PTR(func_val);

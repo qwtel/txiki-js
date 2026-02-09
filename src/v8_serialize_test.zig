@@ -137,6 +137,68 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
     try testing.expect(c.JS_VALUE_GET_BOOL(res) == 1);
 }
 
+test "QuickJS class IDs match tjs_structs.JSClassId I" {
+    const rt = c.JS_NewRuntime();
+    defer c.JS_FreeRuntime(rt);
+    const ctx = c.JS_NewContext(rt);
+    defer c.JS_FreeContext(ctx);
+
+    const regexp_val = evalJS(ctx, "new RegExp('a')");
+    defer c.JS_FreeValue(ctx, regexp_val);
+    const regexp_class_id = c.JS_GetClassID(regexp_val);
+    try testing.expectEqual(
+        @intFromEnum(z.JSClassId.regexp),
+        regexp_class_id,
+    );
+
+    const u8array_val = evalJS(ctx, "new Uint8Array([1,2,3])");
+    defer c.JS_FreeValue(ctx, u8array_val);
+    const u8array_class_id = c.JS_GetClassID(u8array_val);
+    try testing.expectEqual(
+        @intFromEnum(z.JSClassId.uint8_array),
+        u8array_class_id,
+    );
+
+    const set_val = evalJS(ctx, "new Set([1])");
+    defer c.JS_FreeValue(ctx, set_val);
+    try testing.expectEqual(
+        @intFromEnum(z.JSClassId.set),
+        c.JS_GetClassID(set_val),
+    );
+}
+
+test "QuickJS class IDs match tjs_structs.JSClassId II" {
+    const rt = c.JS_NewRuntime();
+    defer c.JS_FreeRuntime(rt);
+    const ctx = c.JS_NewContext(rt);
+    defer c.JS_FreeContext(ctx);
+    const regexp_val = evalJS(ctx, "new RegExp('a')");
+    defer c.JS_FreeValue(ctx, regexp_val);
+    try testing.expectEqual(@intFromEnum(z.JSClassId.regexp), c.JS_GetClassID(regexp_val));
+    const u8array_val = evalJS(ctx, "new Uint8Array([1,2,3])");
+    defer c.JS_FreeValue(ctx, u8array_val);
+    try testing.expectEqual(@intFromEnum(z.JSClassId.uint8_array), c.JS_GetClassID(u8array_val));
+    const set_val = evalJS(ctx, "new Set([1])");
+    defer c.JS_FreeValue(ctx, set_val);
+    try testing.expectEqual(@intFromEnum(z.JSClassId.set), c.JS_GetClassID(set_val));
+}
+
+test "QuickJS class IDs match tjs_structs.JSClassId III" {
+    const rt = c.JS_NewRuntime();
+    defer c.JS_FreeRuntime(rt);
+    const ctx = c.JS_NewContext(rt);
+    defer c.JS_FreeContext(ctx);
+    const regexp_val = evalJS(ctx, "new RegExp('a')");
+    defer c.JS_FreeValue(ctx, regexp_val);
+    try testing.expectEqual(@intFromEnum(z.JSClassId.regexp), c.JS_GetClassID(regexp_val));
+    const u8array_val = evalJS(ctx, "new Uint8Array([1,2,3])");
+    defer c.JS_FreeValue(ctx, u8array_val);
+    try testing.expectEqual(@intFromEnum(z.JSClassId.uint8_array), c.JS_GetClassID(u8array_val));
+    const set_val = evalJS(ctx, "new Set([1])");
+    defer c.JS_FreeValue(ctx, set_val);
+    try testing.expectEqual(@intFromEnum(z.JSClassId.set), c.JS_GetClassID(set_val));
+}
+
 test "serializer 1" {
     const expected = [3]u8{ 255, 15, 48 };
     try testSerializeEvalJS("null", &expected);

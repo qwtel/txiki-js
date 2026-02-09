@@ -30,7 +30,7 @@ SOFTWARE.
 #define TJS_CONST_STRING_DEF(x) JS_PROP_STRING_DEF(#x, x, JS_PROP_ENUMERABLE)
 
 #define JS_PTR_TYPE       t_bigint
-#define JS_IS_PTR(ctx, x) JS_IsBigInt(ctx, x)
+#define JS_IS_PTR(ctx, x) JS_IsBigInt(x)
 
 #if UINTPTR_MAX == UINT32_MAX
 #define JS_TO_UINTPTR_T(ctx, pres, val)                                                                                \
@@ -847,6 +847,25 @@ static JSValue js_get_cstring(JSContext *ctx, JSValue this_val, int argc, JSValu
     return JS_NewStringLen(ctx, ptr, len);
 }
 
+static JSValue js_to_cstring(JSContext *ctx, JSValue this_val, int argc, JSValueConst *argv) {
+    if (argc != 1) {
+        JS_ThrowTypeError(ctx, "expected exactly 1 string argument");
+    } else {
+        TJS_CHECK_ARG_RET(ctx, JS_IsString(argv[0]), 0, "string");
+    }
+
+    size_t len = 0;
+    const void *buf = JS_ToCStringLen(ctx, &len, argv[0]);
+    if (!buf) {
+        return JS_EXCEPTION;
+    }
+
+    JSValue result = JS_NewUint8ArrayCopy(ctx, buf, len);
+
+    JS_FreeCString(ctx, buf);
+
+    return result;
+}
 
 static JSValue TJS_NewUint8ArrayExternal(JSContext *ctx, uint8_t *data, size_t size) {
     return JS_NewUint8Array(ctx, data, size, NULL, NULL, false);
@@ -1020,6 +1039,7 @@ static const JSCFunctionListEntry funcs[] = {
     // other helpers
     TJS_CFUNC_DEF("getArrayBufPtr", 1, js_array_buffer_get_ptr),
     TJS_CFUNC_DEF("getCString", 1, js_get_cstring),
+    TJS_CFUNC_DEF("toCString", 1, js_to_cstring),
     TJS_CFUNC_DEF("derefPtr", 2, js_deref_ptr),
     TJS_CFUNC_DEF("ptrToBuffer", 2, js_ptr_to_buffer),
 

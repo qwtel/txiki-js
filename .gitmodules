@@ -2,9 +2,6 @@
 	path = deps/libuv
 	url = git@github.com:qwtel/zig-build-libuv.git
 	branch = v1.x
-[submodule "deps/wasm3"]
-	path = deps/wasm3
-	url = git@github.com:qwtel/zig-build-wasm3.git
 [submodule "deps/libffi"]
 	path = deps/libffi
 	url = git@github.com:libffi/libffi.git
@@ -15,3 +12,6 @@
 [submodule "deps/mimalloc"]
 	path = deps/mimalloc
 	url = git@github.com:qwtel/zig-build-mimalloc.git
+[submodule "deps/wamr"]
+	path = deps/wamr
+	url = https://github.com/bytecodealliance/wasm-micro-runtime.git

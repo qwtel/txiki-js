@@ -34,12 +34,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_MSC_VER)
-#include <getopt_compat.h>
-#else
-#include <unistd.h>
-#endif
-
 /* BEGIN: copied over from quickjs-libc to avoid dependency. */
 
 uint8_t *js_load_file(JSContext *ctx, size_t *pbuf_len, const char *filename) {
@@ -67,7 +61,7 @@ void js_std_dump_error(JSContext *ctx) {
     bool is_error;
 
     exception_val = JS_GetException(ctx);
-    is_error = JS_IsError(ctx, exception_val);
+    is_error = JS_IsError(exception_val);
     if (!is_error)
         printf("Throw: ");
     exc = JS_ToCString(ctx, exception_val);

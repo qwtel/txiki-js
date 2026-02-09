@@ -12,58 +12,85 @@ jobs:
   build-windows-x86_64:
     runs-on: windows-latest
     timeout-minutes: 60
-
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
-      - uses: msys2/setup-msys2@v2
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v8
         with:
-          update: true
-          path-type: inherit
-          install: >-
-            curl
-            make
-            cmake
-
-      - shell: msys2 {0}
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
+      - name: Install dependencies
+        run: vcpkg install curl[ssl] libffi
+      - name: Configure
         run: |
-          pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make mingw-w64-x86_64-curl libcurl openssl-devel libcurl-devel autoconf texinfo mingw-w64-x86_64-libtool --noconfirm
-          make
-
+          cmake -B build -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake -DUSE_EXTERNAL_FFI=ON
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Package
+        run: |
           mkdir txiki-windows-x86_64
-          cp build/tjs.exe txiki-windows-x86_64/tjs.exe
-          cd txiki-windows-x86_64
-          ldd tjs.exe | grep -v '=> /c/Windows/.*' | awk '{print $3}' | xargs -I '{}' cp -v '{}' .
+          cp build/Release/tjs.exe txiki-windows-x86_64/tjs.exe
+          # Copy required DLLs from vcpkg
+          cp vcpkg/installed/x64-windows/bin/*.dll txiki-windows-x86_64/
 
       - name: Upload windows x86_64 Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: txiki-windows-x86_64
           path: txiki-windows-x86_64
 
-  build-macos:
-    runs-on: macos-14
+  build-macos-arm64:
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: true
-      - name: build macos-latest
+      - name: build macos arm64
         run: |
-          brew install cmake autoconf automake libtool texinfo
-          make BUILD_MACOS_MULTIARCH=1
+          brew install autoconf automake libtool
+          make
 
-          mkdir txiki-macos
-          cp build/tjs txiki-macos/tjs
+          mkdir txiki-macos-arm64
+          cp build/tjs txiki-macos-arm64/tjs
 
-      - name: Upload macos Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload macos arm64 Artifact
+        uses: actions/upload-artifact@v6
         with:
-          name: txiki-macos
-          path: txiki-macos
+          name: txiki-macos-arm64
+          path: txiki-macos-arm64
+
+  build-macos-x86_64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: build macos x86_64
+        run: |
+          brew install autoconf automake libtool
+          make
+
+          mkdir txiki-macos-x86_64
+          cp build/tjs txiki-macos-x86_64/tjs
+
+      - name: Upload macos x86_64 Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: txiki-macos-x86_64
+          path: txiki-macos-x86_64
 
   release:
-    needs: [build-windows-x86_64, build-macos]
+    needs: [build-windows-x86_64, build-macos-arm64, build-macos-x86_64]
     name: release
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
@@ -71,9 +98,9 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           pattern: txiki-*

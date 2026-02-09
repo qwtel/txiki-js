@@ -12,8 +12,8 @@
         .libuv = .{
             .path = "deps/libuv/",
         },
-        .wasm3 = .{
-            .path = "deps/wasm3/",
+        .wamr = .{
+            .path = "deps/wamr/",
         },
         .mimalloc = .{
             .path = "deps/mimalloc/",

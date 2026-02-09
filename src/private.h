@@ -28,9 +28,6 @@
 #include "cutils.h"
 #include "tjs.h"
 #include "utils.h"
-#ifndef TJS__OMIT_WASM
-#include "wasm.h"
-#endif
 
 // #include <curl/curl.h>
 #include <quickjs.h>
@@ -38,7 +35,28 @@
 #include <sqlite3.h>
 #endif
 #include <stdbool.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include <uv.h>
+#ifndef TJS__OMIT_WASM
+#include <wasm_export.h>
+#endif
+
+#ifndef STDIN_FILENO
+#define STDIN_FILENO 0
+#endif
+#ifndef STDOUT_FILENO
+#define STDOUT_FILENO 1
+#endif
+#ifndef STDERR_FILENO
+#define STDERR_FILENO 2
+#endif
+
+#ifdef _MSC_VER
+#define strncasecmp _strnicmp
+#define strcasecmp  _stricmp
+#endif
 
 typedef struct TJSTimer TJSTimer;
 
@@ -61,7 +79,7 @@ struct TJSRuntime {
     // } curl_ctx;
 #ifndef TJS__OMIT_WASM
     struct {
-        IM3Environment env;
+        bool initialized;
     } wasm_ctx;
 #endif
     struct {
@@ -88,6 +106,7 @@ void tjs__mod_sqlite3_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
+void tjs__mod_text_coding_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
 void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
 #ifndef TJS__OMIT_WASM
@@ -110,7 +129,8 @@ uv_stream_t *tjs_pipe_get_stream(JSContext *ctx, JSValue obj);
 void tjs__execute_jobs(JSContext *ctx);
 JSModuleDef *tjs__load_builtin(JSContext *ctx, const char *name);
 int tjs__load_file(JSContext *ctx, DynBuf *dbuf, const char *filename);
-JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque);
+int tjs_module_attr_checker(JSContext *ctx, void *opaque, JSValueConst attributes);
+JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque, JSValueConst attributes);
 char *tjs_module_normalizer(JSContext *ctx, const char *base_name, const char *name, void *opaque);
 
 int js_module_set_import_meta(JSContext *ctx, JSValue func_val, bool use_realpath, bool is_main);

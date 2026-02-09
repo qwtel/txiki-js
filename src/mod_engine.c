@@ -25,6 +25,7 @@
 #include "private.h"
 #include "version.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <uv.h>
 
@@ -165,7 +166,11 @@ void tjs__mod_engine_init(JSContext *ctx, JSValue ns) {
     JS_DefinePropertyValueStr(ctx, versions, "uv", JS_NewString(ctx, uv_version_string()), JS_PROP_C_W_E);
     // JS_DefinePropertyValueStr(ctx, versions, "curl", JS_NewString(ctx, curl_version()), JS_PROP_C_W_E);
 #ifndef TJS__OMIT_WASM
-    JS_DefinePropertyValueStr(ctx, versions, "wasm3", JS_NewString(ctx, M3_VERSION), JS_PROP_C_W_E);
+    uint32_t wamr_major, wamr_minor, wamr_patch;
+    wasm_runtime_get_version(&wamr_major, &wamr_minor, &wamr_patch);
+    char wamr_version[32];
+    snprintf(wamr_version, sizeof(wamr_version), "%u.%u.%u", wamr_major, wamr_minor, wamr_patch);
+    JS_DefinePropertyValueStr(ctx, versions, "wamr", JS_NewString(ctx, wamr_version), JS_PROP_C_W_E);
 #endif
 #ifndef TJS__OMIT_SQLITE
     JS_DefinePropertyValueStr(ctx, versions, "sqlite3", JS_NewString(ctx, sqlite3_libversion()), JS_PROP_C_W_E);

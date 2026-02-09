@@ -18,11 +18,16 @@ set(CMAKE_C_STANDARD 11)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-list(APPEND tjs_cflags -Wall -g)
-if (CMAKE_BUILD_TYPE MATCHES "Debug")
-    list(APPEND tjs_cflags -ggdb -O0 -fno-omit-frame-pointer)
+if(MSVC)
+    list(APPEND tjs_cflags /experimental:c11atomics)
+else()
+    list(APPEND tjs_cflags -Wall -g)
+    if (CMAKE_BUILD_TYPE MATCHES "Debug")
+        list(APPEND tjs_cflags -ggdb -O0 -fno-omit-frame-pointer)
+    endif()
 endif()
 
+set(tjs_defines "")
 if(WIN32)
     list(APPEND tjs_defines WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0602)
     if (MSVC)
@@ -30,8 +35,8 @@ if(WIN32)
     endif()
 endif()
 
-set(TJS__VERSION_MAJOR 24)
-set(TJS__VERSION_MINOR 12)
+set(TJS__VERSION_MAJOR 26)
+set(TJS__VERSION_MINOR 2)
 set(TJS__VERSION_PATCH 0)
 set(TJS__VERSION_SUFFIX "")
 configure_file(
@@ -52,7 +57,7 @@ macro(cpr_option OPTION_NAME OPTION_TEXT OPTION_DEFAULT)
 endmacro()
 
 cpr_option(BUILD_WITH_MIMALLOC "If ON (default), build with mimalloc" ON)
-cpr_option(BUILD_WITH_WASM "If ON (default), build with wasm3" ON)
+cpr_option(BUILD_WITH_WASM "If ON (default), build with WASM (WAMR)" ON)
 cpr_option(BUILD_WITH_SQLITE "If ON (default), build with sqlite3" ON)
 cpr_option(USE_EXTERNAL_FFI "Specify to use external ffi dependency" OFF)
 
@@ -66,8 +71,43 @@ if (BUILD_WITH_SQLITE)
 endif()
 
 if (BUILD_WITH_WASM)
-    set(BUILD_WASI "simple" CACHE STRING "WASI implementation")
-    add_subdirectory(deps/wasm3 EXCLUDE_FROM_ALL)
+# WAMR Configuration (interpreter only for maximum portability)
+set(WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/wamr)
+
+# Detect platform for WAMR
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(WAMR_BUILD_PLATFORM "darwin")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(WAMR_BUILD_PLATFORM "windows")
+else()
+    set(WAMR_BUILD_PLATFORM "linux")
+endif()
+
+# Configure WAMR build options
+set(WAMR_BUILD_INTERP 1)
+set(WAMR_BUILD_FAST_INTERP 1)
+set(WAMR_BUILD_AOT 0)
+set(WAMR_BUILD_JIT 0)
+set(WAMR_BUILD_LIBC_BUILTIN 1)
+set(WAMR_BUILD_LIBC_WASI 1)
+set(WAMR_BUILD_MULTI_MODULE 1)
+set(WAMR_BUILD_SIMD 1)
+set(WAMR_BUILD_REF_TYPES 1)
+set(WAMR_BUILD_BULK_MEMORY 1)
+set(WAMR_BUILD_LIB_PTHREAD 0)
+set(WAMR_BUILD_MINI_LOADER 0)
+set(WAMR_DISABLE_HW_BOUND_CHECK 1)
+set(WAMR_DISABLE_STACK_HW_BOUND_CHECK 1)
+
+# Include WAMR build scripts
+include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
+
+# Create WAMR library
+add_library(vmlib STATIC ${WAMR_RUNTIME_LIB_SOURCE})
+target_include_directories(vmlib PUBLIC ${WAMR_ROOT_DIR}/core/iwasm/include)
+if(MSVC)
+    target_link_libraries(vmlib PUBLIC ntdll)
+endif()
 endif()
 
 if(BUILD_WITH_MIMALLOC)
@@ -91,11 +131,11 @@ add_library(tjs STATIC
     src/modules.c
     src/sha1.c
     src/signals.c
+    src/text-coding.c
     src/timers.c
     src/utils.c
     src/version.c
     src/vm.c
-    src/wasm.c
     src/worker.c
     # src/ws.c
     # src/xhr.c
@@ -117,6 +157,9 @@ add_library(tjs STATIC
     src/bundles/c/core/worker-bootstrap.c
 )
 
+if(BUILD_WITH_WASM)
+    target_sources(tjs PRIVATE src/wasm.c)
+endif()
 if(UNIX)
     target_sources(tjs PUBLIC src/mod_posix-socket.c)
 endif()
@@ -126,11 +169,43 @@ endif()
 # )
 
 if (BUILD_WITH_SQLITE)
-    add_library(sqlite-test SHARED
-        tests/fixtures/sqlite-test-ext.c
-    )
+add_library(sqlite-test SHARED
+    tests/fixtures/sqlite-test-ext.c
+)
 
-    target_link_libraries(sqlite-test sqlite3)
+target_link_libraries(sqlite-test sqlite3)
+
+# Set consistent output for test libraries across all platforms (including MSVC multi-config)
+set_target_properties(sqlite-test PROPERTIES
+    PREFIX "lib"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
+)
+endif()
+
+if(NOT USE_EXTERNAL_FFI AND NOT APPLE AND NOT WIN32)
+    set(LIBFFI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/deps/libffi")
+    set(TMP_INSTALL_DIR "${CMAKE_CURRENT_BINARY_DIR}/ffi_root")
+    set(LIBFFI_STATIC_PATH ${TMP_INSTALL_DIR}/usr/local/lib/libffi.a)
+    ExternalProject_Add(
+        libffi
+        BUILD_IN_SOURCE 1
+        SOURCE_DIR "${LIBFFI_SRC}"
+        CONFIGURE_COMMAND ./autogen.sh COMMAND ./configure --enable-static=yes --disable-shared --disable-docs --disable-multi-os-directory
+        BUILD_COMMAND make
+        INSTALL_DIR ${TMP_INSTALL_DIR}
+        INSTALL_COMMAND make DESTDIR=${TMP_INSTALL_DIR} install
+        EXCLUDE_FROM_ALL TRUE
+        BUILD_BYPRODUCTS ${LIBFFI_STATIC_PATH}
+    )
 endif()
 
 
@@ -160,6 +235,7 @@ endif()
 set_target_properties(tjs PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
+    OUTPUT_NAME tjs_core
 )
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} TJS_PLATFORM)
@@ -167,6 +243,9 @@ target_compile_options(tjs PRIVATE ${tjs_cflags})
 target_compile_definitions(tjs PRIVATE TJS__PLATFORM="${TJS_PLATFORM}")
 target_compile_definitions(tjs PRIVATE ${tjs_defines})
 target_include_directories(tjs PUBLIC src)
+if(BUILD_WITH_WASM)
+    target_include_directories(tjs PRIVATE ${WAMR_ROOT_DIR}/core/iwasm/include)
+endif()
 target_link_libraries(tjs qjs uv_a)
 
 if (BUILD_WITH_MIMALLOC)
@@ -182,7 +261,7 @@ endif()
 if (NOT BUILD_WITH_WASM)
     target_compile_definitions(tjs PRIVATE TJS__OMIT_WASM)
 else()
-    target_link_libraries(tjs m3)
+    target_link_libraries(tjs vmlib)
 endif()
 
 add_executable(tjs-cli

@@ -27,6 +27,7 @@
 #include "tjs.h"
 #include "zig_c_bindings.h"
 
+#include <assert.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -131,10 +132,13 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_signals_init(ctx, ns);
 #ifndef TJS__OMIT_SQLITE
     tjs__mod_sqlite3_init(ctx, ns);
+#ifndef TJS__OMIT_ZIG_MODULES
     zig__mod_sqlite3_async_init(ctx, ns);
+#endif
 #endif
     tjs__mod_streams_init(ctx, ns);
     tjs__mod_sys_init(ctx, ns);
+    tjs__mod_text_coding_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
     tjs__mod_udp_init(ctx, ns);
 #ifndef TJS__OMIT_WASM
@@ -147,7 +151,9 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_posix_socket_init(ctx, ns);
 #endif
 
+#ifndef TJS__OMIT_ZIG_MODULES
     zig__mod_v8_compat_init(ctx, ns);
+#endif
 }
 
 JSValue tjs__get_args(JSContext *ctx) {
@@ -296,7 +302,7 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     qrt->stop.data = qrt;
 
     /* loader for ES modules */
-    JS_SetModuleLoaderFunc(rt, tjs_module_normalizer, tjs_module_loader, qrt);
+    JS_SetModuleLoaderFunc2(rt, tjs_module_normalizer, tjs_module_loader, tjs_module_attr_checker, qrt);
 
     /* unhandled promise rejection tracker */
     JS_SetHostPromiseRejectionTracker(rt, tjs__promise_rejection_tracker, NULL);
@@ -328,7 +334,14 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
 
 #ifndef TJS__OMIT_WASM
     /* WASM */
-    qrt->wasm_ctx.env = m3_NewEnvironment();
+    RuntimeInitArgs wasm_init_args;
+    memset(&wasm_init_args, 0, sizeof(wasm_init_args));
+    wasm_init_args.mem_alloc_type = Alloc_With_Allocator;
+    wasm_init_args.mem_alloc_option.allocator.malloc_func = tjs__malloc;
+    wasm_init_args.mem_alloc_option.allocator.realloc_func = tjs__realloc;
+    wasm_init_args.mem_alloc_option.allocator.free_func = tjs__free;
+    CHECK_EQ(wasm_runtime_full_init(&wasm_init_args), true);
+    qrt->wasm_ctx.initialized = true;
 #endif
 
     /* Timers */
@@ -369,8 +382,10 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
 
 #ifndef TJS__OMIT_WASM
     /* Destroy WASM runtime. */
-    m3_FreeEnvironment(qrt->wasm_ctx.env);
-    qrt->wasm_ctx.env = NULL;
+    if (qrt->wasm_ctx.initialized) {
+        wasm_runtime_destroy();
+        qrt->wasm_ctx.initialized = false;
+    }
 #endif
 
     /* Cleanup loop. All handles should be closed. */

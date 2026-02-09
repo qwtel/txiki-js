@@ -4,7 +4,6 @@ const QuickJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 pub const z = @import("tjs_structs.zig");
 pub const c = z.c;
 
-extern fn JS_MakeError(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, message: [*c]const u8, add_backtrace: bool) c.JSValue;
 extern fn tjs_sqlite3_bind_params_public(ctx: ?*c.JSContext, stmt: ?*c.sqlite3_stmt, params: c.JSValue) callconv(.c) c.JSValue;
 
 var handle_class_id: c.JSClassID = 0;
@@ -38,32 +37,16 @@ const handle_class = c.JSClassDef{
 
 fn newSqliteError(ctx: ?*c.JSContext, err: c_int, db: ?*c.sqlite3) c.JSValue {
     if (err == c.SQLITE_INTERRUPT) {
-        const global = c.JS_GetGlobalObject(ctx);
-        defer c.JS_FreeValue(ctx, global);
-        const ctor = c.JS_GetPropertyStr(ctx, global, "DOMException");
-        defer if (!c.JS_IsUndefined(ctor)) c.JS_FreeValue(ctx, ctor);
-        var ex: c.JSValue = undefined;
-        if (c.JS_IsFunction(ctx, ctor)) {
-            var args = [_]c.JSValue{ c.JS_NewString(ctx, "Aborted"), c.JS_NewString(ctx, "AbortError") };
-            defer c.JS_FreeValue(ctx, args[0]);
-            defer c.JS_FreeValue(ctx, args[1]);
-            ex = c.JS_CallConstructor(ctx, ctor, 2, &args);
-        } else {
-            ex = JS_MakeError(ctx, .plain_error, "AbortError: Aborted", false);
-            _ = c.JS_DefinePropertyValueStr(ctx, ex, "name", c.JS_NewString(ctx, "AbortError"), c.JS_PROP_C_W_E);
-        }
-        return ex;
+        _ = c.JS_ThrowDOMException(ctx, "AbortError", "The operation was aborted");
+        return c.JS_GetException(ctx);
     }
 
-    var msg: [512:0]u8 = undefined;
     const extended_error_code: c_int = c.sqlite3_extended_errcode(db);
     const sqlite_msg = c.sqlite3_errmsg(db);
-    if (extended_error_code != err) {
-        _ = std.fmt.bufPrintZ(&msg, "SQLite error {d}: {s} (Extended code: {d})", .{ err, sqlite_msg, extended_error_code }) catch 0;
-    } else {
-        _ = std.fmt.bufPrintZ(&msg, "SQLite error {d}: {s}", .{ err, sqlite_msg }) catch 0;
-    }
-    const ex = JS_MakeError(ctx, .plain_error, &msg, false);
+    const ex = if (extended_error_code != err)
+        c.JS_NewPlainError(ctx, "SQLite error %d: %s (Extended code: %d)", err, sqlite_msg, extended_error_code)
+    else
+        c.JS_NewPlainError(ctx, "SQLite error %d: %s", err, sqlite_msg);
     _ = c.JS_DefinePropertyValueStr(ctx, ex, "errno", c.JS_NewInt32(ctx, err), c.JS_PROP_C_W_E);
     return ex;
 }
@@ -182,6 +165,7 @@ fn Work(comptime Result: type) type {
         promise: c.TJSPromise,
         db: *c.sqlite3,
         handle: ?*SqliteHandle,
+        handle_ref: c.JSValue, // keeps AsyncDatabase alive until afterCallback runs; set in *Impl, freed in afterCallback
         stmt: ?*c.sqlite3_stmt,
         rc: c_int,
         result: Result, // extension payload, zero-sized if Extra is empty
@@ -203,9 +187,9 @@ fn runCallback(req: [*c]c.uv_work_t) callconv(.c) void {
 fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     const w: *RunWork = @ptrCast(@alignCast(req.*.data));
     defer QuickJSAllocator.allocator(w.ctx).destroy(w);
+    defer c.JS_FreeValue(w.ctx, w.handle_ref);
 
     const ctx = w.ctx;
-
     if (w.handle) |h| {
         h.in_flight.store(false, .monotonic);
         h.abort_requested.store(false, .monotonic);
@@ -404,6 +388,7 @@ inline fn oomException(ctx: ?*c.JSContext) c.JSValue {
 fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     const w: *AllWork = @ptrCast(@alignCast(req.*.data));
     defer QuickJSAllocator.allocator(w.ctx).destroy(w);
+    defer c.JS_FreeValue(w.ctx, w.handle_ref);
 
     var is_rejected = false;
     var ec: ErrCtx = .{};
@@ -424,7 +409,7 @@ fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     }
 }
 
-fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params: c.JSValue, ec: *ErrCtx) !c.JSValue {
+fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, handle_obj: c.JSValueConst, sql: [*:0]const u8, params: c.JSValue, ec: *ErrCtx) !c.JSValue {
     var stmt: ?*c.sqlite3_stmt = null;
     const pr = c.sqlite3_prepare_v2(h.db, sql, -1, &stmt, null);
     if (pr != c.SQLITE_OK or stmt == null) {
@@ -448,6 +433,7 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
         .promise = undefined,
         .db = h.db.?,
         .handle = h,
+        .handle_ref = c.JS_DupValue(ctx, handle_obj),
         .stmt = stmt,
         .rc = c.SQLITE_OK,
         .result = .{
@@ -457,6 +443,7 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
             .arena = std.heap.ArenaAllocator.init(std.heap.c_allocator),
         },
     };
+    errdefer c.JS_FreeValue(ctx, w.handle_ref);
 
     const promise = c.TJS_InitPromise(ctx, &w.promise);
     if (c.JS_IsException(promise)) return error.JSException;
@@ -474,7 +461,7 @@ fn allAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params
     return promise;
 }
 
-fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, params: c.JSValue, ec: *ErrCtx) !c.JSValue {
+fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, handle_obj: c.JSValueConst, sql: [*:0]const u8, params: c.JSValue, ec: *ErrCtx) !c.JSValue {
     var stmt: ?*c.sqlite3_stmt = null;
     const pr = c.sqlite3_prepare_v2(h.db, sql, -1, &stmt, null);
     if (pr != c.SQLITE_OK or stmt == null) {
@@ -498,10 +485,12 @@ fn execAsyncImpl(ctx: ?*c.JSContext, h: *SqliteHandle, sql: [*:0]const u8, param
         .promise = undefined,
         .db = h.db.?,
         .handle = h,
+        .handle_ref = c.JS_DupValue(ctx, handle_obj),
         .stmt = stmt,
         .rc = c.SQLITE_OK,
         .result = .{},
     };
+    errdefer c.JS_FreeValue(ctx, w.handle_ref);
 
     const promise = c.TJS_InitPromise(ctx, &w.promise);
     if (c.JS_IsException(promise)) return error.JSException;
@@ -532,7 +521,7 @@ fn jsExecAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.J
     const params = if (argc >= 3) argv[2] else z.JS_UNDEFINED;
 
     var ec: ErrCtx = .{};
-    const promise = execAsyncImpl(ctx, h.?, sql, params, &ec) catch |e| switch (e) {
+    const promise = execAsyncImpl(ctx, h.?, argv[0], sql, params, &ec) catch |e| switch (e) {
         error.SQLiteError => return throwSqliteErr(ctx, ec.rc, ec.db),
         error.UVError => return c.JS_ThrowInternalError(ctx, "sqlite exec_async failed"),
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
@@ -554,7 +543,7 @@ fn jsAllAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JS
     const params = if (argc >= 3) argv[2] else z.JS_UNDEFINED;
 
     var ec: ErrCtx = .{};
-    const promise = allAsyncImpl(ctx, h.?, sql, params, &ec) catch |e| switch (e) {
+    const promise = allAsyncImpl(ctx, h.?, argv[0], sql, params, &ec) catch |e| switch (e) {
         error.SQLiteError => return throwSqliteErr(ctx, ec.rc, ec.db),
         error.UVError => return c.JS_ThrowInternalError(ctx, "sqlite all_async failed"),
         error.OutOfMemory => return c.JS_ThrowOutOfMemory(ctx),
@@ -584,7 +573,7 @@ pub fn initModSqlite3Async(ctx: ?*c.JSContext, ns: c.JSValue) void {
     c.JS_SetClassProto(ctx, handle_class_id, z.JS_NULL);
 
     const obj = c.JS_NewObjectProto(ctx, z.JS_NULL);
-    c.JS_SetPropertyFunctionList(ctx, obj, &sqlite_funcs, sqlite_funcs.len);
+    _ = c.JS_SetPropertyFunctionList(ctx, obj, &sqlite_funcs, sqlite_funcs.len);
 
     _ = c.JS_DefinePropertyValueStr(ctx, ns, "sqlite3_async", obj, c.JS_PROP_C_W_E);
 }
