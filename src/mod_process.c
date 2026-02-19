@@ -28,6 +28,7 @@
 
 #include <string.h>
 
+
 static JSClassID tjs_process_class_id;
 
 typedef struct {

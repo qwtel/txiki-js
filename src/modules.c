@@ -141,8 +141,10 @@ JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *op
         r = tjs_curl_load_http(&dbuf, module_name);
         if (r != 200) {
             if (r < 0) {
+                /* curl error */
                 JS_ThrowReferenceError(ctx, "could not load '%s': %s", module_name, curl_easy_strerror(-r));
             } else {
+                /* http error */
                 JS_ThrowReferenceError(ctx, "could not load '%s': %d", module_name, r);
             }
             goto end;

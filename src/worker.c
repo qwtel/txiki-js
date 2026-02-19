@@ -28,6 +28,7 @@
 
 #include <string.h>
 
+
 extern const uint8_t tjs__worker_bootstrap[];
 extern const uint32_t tjs__worker_bootstrap_size;
 
