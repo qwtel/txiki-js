@@ -1,5 +1,5 @@
-const core = globalThis[Symbol.for('tjs.internal.core')];
-const wasm = core.wasm;
+const _core = globalThis[Symbol.for('tjs.internal.core')];
+const wasm = _core.wasm;
 
 const kWasmModule = Symbol('kWasmModule');
 const kWasmModuleRef = Symbol('kWasmModuleRef');
@@ -98,13 +98,13 @@ class Module {
 
 class Instance {
     constructor(module, importObject = {}) {
-        // // Detect WASI in importObject via duck typing and configure it before instantiation
-        // for (const ns of Object.values(importObject)) {
-        //     if (ns && typeof ns === 'object' && typeof ns._configure === 'function') {
-        //         ns._configure(module[kWasmModule]);
-        //         break;
-        //     }
-        // }
+        // Detect WASI in importObject via duck typing and configure it before instantiation
+        for (const ns of Object.values(importObject)) {
+            if (ns && typeof ns === 'object' && typeof ns._configure === 'function') {
+                ns._configure(module[kWasmModule]);
+                break;
+            }
+        }
 
         const instance = buildInstance(module[kWasmModule]);
 

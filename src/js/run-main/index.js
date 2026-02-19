@@ -4,7 +4,6 @@
 
 import getopts from 'tjs:getopts';
 import path from 'tjs:path';
-import { WASI } from 'tjs:wasi';
 
 import { evalStdin } from './eval-stdin.js';
 import { runTests } from './run-tests.js';
@@ -165,20 +164,24 @@ if (options.help) {
         const ext = path.extname(filename).toLowerCase();
 
         if (ext === '.wasm') {
-            // const bytes = await tjs.readFile(filename);
-            // const module = new WebAssembly.Module(bytes);
-            // const wasi = new WASI({
-            //     version: 'wasi_snapshot_preview1',
-            //     args: subargv,
-            //     preopens: {
-            //         '.': tjs.cwd,
-            //         '/': '/'
-            //     }
-            // });
-            // const instance = new WebAssembly.Instance(module, wasi.getImportObject());
+            if (!('wasm' in core)) {
+                tjs.stdout.write(encode('WASM support is not enabled'));
+                tjs.exit(1);
+            }
+            const { WASI } = await import('tjs:wasi');
+            const bytes = await tjs.readFile(filename);
+            const module = new WebAssembly.Module(/** @type {Uint8Array<ArrayBuffer>} */(bytes));
+            const wasi = new WASI({
+                version: 'wasi_snapshot_preview1',
+                args: subargv,
+                preopens: {
+                    '.': tjs.cwd,
+                    '/': '/'
+                }
+            });
+            const instance = new WebAssembly.Instance(module, wasi.getImportObject());
 
-            // wasi.start(instance);
-            throw new Error('Not implemented');
+            wasi.start(instance);
         } else {
             await core.evalFile(filename);
         }
