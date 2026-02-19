@@ -467,7 +467,6 @@ static JSValue tjs_wasm_callfunction(JSContext *ctx, JSValue this_val, int argc,
             params[j].kind = param_types[j];
             params[j].of.i64 = 0;
         }
-        tjs__free(m3_argv);
     }
 
     // Prepare results

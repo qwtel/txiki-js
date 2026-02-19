@@ -25,7 +25,7 @@ declare module 'tjs:wasi' {
         readonly wasiImport: object;
 
         /** Returns import object with the appropriate WASI namespace. */
-        getImportObject(): Record<string, object>;
+        getImportObject(): WebAssembly.Imports;
 
         /** Start the WASI instance. */
         start(instance: WebAssembly.Instance): void;
