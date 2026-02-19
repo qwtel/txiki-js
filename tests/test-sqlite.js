@@ -329,6 +329,9 @@ async function testAbortAll(n) {
     }
     console.log(`all() rejects when aborting after ${n}ms`);
     assert.ok(aborted, `all() rejects when aborting after ${n}ms`);
+
+    // clearTimeout(tid);
+    await new Promise(r => setTimeout(r, n + 1));
 }
 
 async function testConcurrentExec() {
@@ -345,24 +348,16 @@ async function testConcurrentExec() {
     db.close();
 }
 
-async function testConcurrentExec2() {
-    const db = new AsyncDatabase();
-    const [r1, r2] = await Promise.all([p1, p2]);
-    assert.eq(r1.length, 1);
-    assert.eq(r2.length, 1);
-    db.close();
-}
-
 // Async tests disabled temporarily to isolate GC assertion in JS_FreeRuntime
 const runAsyncSqliteTests = true;
 if (runAsyncSqliteTests) {
-    // await testExistingDBAll();
-    // await testAllOnNewDb();
-    // testNewDbNoCreateAsync();
-    // await testPreAbortAll();
-    // await testAbortAll(1);
+    await testExistingDBAll();
+    await testAllOnNewDb();
+    testNewDbNoCreateAsync();
+    await testPreAbortAll();
+    await testAbortAll(1);
     await testAbortAll(10);
-    await testAbortAll(10);
-    // await testConcurrentExec();
+    await testAbortAll(100);
+    await testConcurrentExec();
 }
 
