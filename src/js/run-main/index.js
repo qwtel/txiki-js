@@ -44,8 +44,6 @@ const Trailer = {
     Size: 12
 };
 
-const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
-
 const exeName = path.basename(tjs.args[0]);
 const help = `Usage: ${exeName} [options] [subcommand]
 
@@ -167,8 +165,7 @@ const options = getopts(tjs.args.slice(1), {
     stopEarly: true,
     unknown: option => {
         if (![ 'memory-limit', 'stack-size' ].includes(option)) {
-            tjs.stdout.write(encode(`${exeName}: unrecognized option: ${option}`));
-            tjs.exit(1);
+            throw `unrecognized option: ${option}`;
         }
 
         return !!option;
@@ -176,11 +173,9 @@ const options = getopts(tjs.args.slice(1), {
 });
 
 if (options.help) {
-    await tjs.stdout.write(encode(help));
-    tjs.exit(0);
+    console.log(help);
 } else if (options.version) {
-    await tjs.stdout.write(encode(`v${tjs.version}`));
-    tjs.exit(0);
+    console.log(`v${tjs.version}`);
 } else {
     const memoryLimit = options['memory-limit'];
     const stackSize = options['stack-size'];
@@ -205,8 +200,7 @@ if (options.help) {
         const [ expr ] = subargv;
 
         if (!expr) {
-            await tjs.stdout.write(encode(helpEval));
-            tjs.exit(1);
+            throw helpEval;
         }
 
         core.evalScript(expr);
@@ -214,16 +208,14 @@ if (options.help) {
         const [ filename ] = subargv;
 
         if (!filename) {
-            await tjs.stdout.write(encode(helpRun));
-            tjs.exit(1);
+            throw helpRun;
         }
 
         const ext = path.extname(filename).toLowerCase();
 
         if (ext === '.wasm') {
             if (!('wasm' in core)) {
-                await tjs.stdout.write(encode('WASM support is not enabled'));
-                tjs.exit(1);
+                throw 'WASM support is not enabled';
             }
             const { WASI } = await import('tjs:wasi');
             const bytes = await tjs.readFile(filename);
@@ -285,9 +277,7 @@ if (options.help) {
             string: [ 'x', 'h' ],
             stopEarly: true,
             unknown: option => {
-                tjs.stdout.write(encode(`${exeName} compile: unrecognized option: ${option}`));
-                tjs.exit(1);
-
+                console.log(`${exeName} compile: unrecognized option: ${option}`);
                 return !!option;
             }
         });
@@ -295,8 +285,7 @@ if (options.help) {
         const [ infile, outfile ] = compOpts._;
 
         if (!infile || compOpts.help) {
-            await tjs.stdout.write(encode(helpCompile));
-            tjs.exit(1);
+            throw help;
         }
 
         const infilePath = path.parse(infile);
@@ -325,8 +314,7 @@ if (options.help) {
         await newFile.write(newExe);
         await newFile.close();
     } else {
-        await tjs.stdout.write(encode(help));
-        tjs.exit(1);
+        throw help;
     }
 }
 

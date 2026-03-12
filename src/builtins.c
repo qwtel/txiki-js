@@ -23,14 +23,13 @@
  */
 
 #include "bundles/c/stdlib/assert.c"
-// #include "bundles/c/stdlib/ffi.c"
 #include "bundles/c/stdlib/getopts.c"
 #include "bundles/c/stdlib/hashing.c"
 #include "bundles/c/stdlib/ipaddr.c"
 #include "bundles/c/stdlib/path.c"
 #include "bundles/c/stdlib/posix-socket.c"
-#ifndef TJS__OMIT_SQLITE
 #include "bundles/c/stdlib/readline.c"
+#ifndef TJS__OMIT_SQLITE
 #include "bundles/c/stdlib/sqlite.c"
 #endif
 #include "bundles/c/stdlib/utils.c"
@@ -50,14 +49,13 @@ typedef struct {
 
 static tjs_builtin_t builtins[] = {
     { "tjs:assert", tjs__assert, sizeof(tjs__assert) },
-    // { "tjs:ffi", tjs__ffi, sizeof(tjs__ffi) },
     { "tjs:getopts", tjs__getopts, sizeof(tjs__getopts) },
     { "tjs:hashing", tjs__hashing, sizeof(tjs__hashing) },
     { "tjs:ipaddr", tjs__ipaddr, sizeof(tjs__ipaddr) },
     { "tjs:path", tjs__path, sizeof(tjs__path) },
     { "tjs:posix-socket", tjs__posix_socket, sizeof(tjs__posix_socket) },
-#ifndef TJS__OMIT_SQLITE
     { "tjs:readline", tjs__readline, sizeof(tjs__readline) },
+#ifndef TJS__OMIT_SQLITE
     { "tjs:sqlite", tjs__sqlite, sizeof(tjs__sqlite) },
 #endif
     { "tjs:utils", tjs__utils, sizeof(tjs__utils) },
