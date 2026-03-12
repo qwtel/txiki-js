@@ -29,24 +29,25 @@
 #include <string.h>
 
 
+enum {
+    UDP_CB_RECV = 0,
+    UDP_CB_SEND,
+    UDP_CB_MAX,
+};
+
 typedef struct {
     JSContext *ctx;
     int closed;
     int finalized;
     uv_udp_t udp;
+    JSValue callbacks[UDP_CB_MAX];
     struct {
-        struct {
-            JSValue tarray;
-            uint8_t *data;
-            size_t len;
-        } b;
-        TJSPromise result;
+        uint8_t *buf;
     } read;
 } TJSUdp;
 
 typedef struct {
     uv_udp_send_t req;
-    TJSPromise result;
     JSValue tarray;
 } TJSSendReq;
 
@@ -67,11 +68,31 @@ static void maybe_close(TJSUdp *u) {
     }
 }
 
+static void maybe_invoke_callback(TJSUdp *u, int callback, int argc, JSValue *argv) {
+    JSContext *ctx = u->ctx;
+    JSValue func = u->callbacks[callback];
+    if (!JS_IsFunction(ctx, func)) {
+        for (int i = 0; i < argc; i++) {
+            JS_FreeValue(ctx, argv[i]);
+        }
+        return;
+    }
+
+    tjs_call_handler(ctx, func, argc, argv);
+
+    for (int i = 0; i < argc; i++) {
+        JS_FreeValue(ctx, argv[i]);
+    }
+}
+
 static void tjs_udp_finalizer(JSRuntime *rt, JSValue val) {
     TJSUdp *u = JS_GetOpaque(val, tjs_udp_class_id);
     if (u) {
-        TJS_FreePromiseRT(rt, &u->read.result);
-        JS_FreeValueRT(rt, u->read.b.tarray);
+        for (int i = 0; i < UDP_CB_MAX; i++) {
+            JS_FreeValueRT(rt, u->callbacks[i]);
+        }
+        js_free_rt(rt, u->read.buf);
+        u->read.buf = NULL;
         u->finalized = 1;
         if (u->closed) {
             tjs__free(u);
@@ -84,8 +105,9 @@ static void tjs_udp_finalizer(JSRuntime *rt, JSValue val) {
 static void tjs_udp_mark(JSRuntime *rt, JSValue val, JS_MarkFunc *mark_func) {
     TJSUdp *u = JS_GetOpaque(val, tjs_udp_class_id);
     if (u) {
-        TJS_MarkPromise(rt, &u->read.result, mark_func);
-        JS_MarkValue(rt, u->read.b.tarray, mark_func);
+        for (int i = 0; i < UDP_CB_MAX; i++) {
+            JS_MarkValue(rt, u->callbacks[i], mark_func);
+        }
     }
 }
 
@@ -99,16 +121,30 @@ static TJSUdp *tjs_udp_get(JSContext *ctx, JSValue obj) {
     return JS_GetOpaque2(ctx, obj, tjs_udp_class_id);
 }
 
-static JSValue tjs_udp_close(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+static JSValue tjs_udp_callback_get(JSContext *ctx, JSValue this_val, int magic) {
     TJSUdp *u = tjs_udp_get(ctx, this_val);
     if (!u) {
         return JS_EXCEPTION;
     }
-    if (TJS_IsPromisePending(ctx, &u->read.result)) {
-        JSValue arg = JS_NewObjectProto(ctx, JS_NULL);
-        JS_DefinePropertyValueStr(ctx, arg, "nread", JS_NULL, JS_PROP_C_W_E);
-        TJS_SettlePromise(ctx, &u->read.result, false, 1, &arg);
-        TJS_ClearPromise(ctx, &u->read.result);
+    return JS_DupValue(ctx, u->callbacks[magic]);
+}
+
+static JSValue tjs_udp_callback_set(JSContext *ctx, JSValue this_val, JSValue value, int magic) {
+    TJSUdp *u = tjs_udp_get(ctx, this_val);
+    if (!u) {
+        return JS_EXCEPTION;
+    }
+    if (JS_IsFunction(ctx, value) || JS_IsUndefined(value) || JS_IsNull(value)) {
+        JS_FreeValue(ctx, u->callbacks[magic]);
+        u->callbacks[magic] = JS_DupValue(ctx, value);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_udp_close(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSUdp *u = tjs_udp_get(ctx, this_val);
+    if (!u) {
+        return JS_EXCEPTION;
     }
     maybe_close(u);
     return JS_UNDEFINED;
@@ -117,8 +153,14 @@ static JSValue tjs_udp_close(JSContext *ctx, JSValue this_val, int argc, JSValue
 static void uv__udp_alloc_cb(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     TJSUdp *u = handle->data;
     CHECK_NOT_NULL(u);
-    buf->base = (char *) u->read.b.data;
-    buf->len = u->read.b.len;
+    u->read.buf = js_malloc(u->ctx, suggested_size);
+    if (u->read.buf) {
+        buf->base = (char *) u->read.buf;
+        buf->len = suggested_size;
+    } else {
+        buf->base = NULL;
+        buf->len = 0;
+    }
 }
 
 static void uv__udp_recv_cb(uv_udp_t *handle,
@@ -129,62 +171,60 @@ static void uv__udp_recv_cb(uv_udp_t *handle,
     TJSUdp *u = handle->data;
     CHECK_NOT_NULL(u);
 
-    uv_udp_recv_stop(handle);
-
-    JSContext *ctx = u->ctx;
-    JSValue arg;
-    int is_reject = 0;
-    if (nread < 0) {
-        arg = tjs_new_error(ctx, nread);
-        is_reject = 1;
-    } else {
-        arg = JS_NewObjectProto(ctx, JS_NULL);
-        JS_DefinePropertyValueStr(ctx, arg, "nread", JS_NewInt32(ctx, nread), JS_PROP_C_W_E);
-        JS_DefinePropertyValueStr(ctx, arg, "partial", JS_NewBool(ctx, flags & UV_UDP_PARTIAL), JS_PROP_C_W_E);
-        JSValue addrobj = JS_NewObjectProto(ctx, JS_NULL);
-        tjs_addr2obj(ctx, addrobj, addr, false);
-        JS_DefinePropertyValueStr(ctx, arg, "addr", addrobj, JS_PROP_C_W_E);
+    if (nread == 0 && addr == NULL) {
+        js_free(u->ctx, u->read.buf);
+        u->read.buf = NULL;
+        return; /* EAGAIN, keep receiving */
     }
 
-    TJS_SettlePromise(ctx, &u->read.result, is_reject, 1, &arg);
-    TJS_ClearPromise(ctx, &u->read.result);
+    JSContext *ctx = u->ctx;
+    JSValue args[2];
+    if (nread < 0) {
+        js_free(ctx, u->read.buf);
+        u->read.buf = NULL;
+        args[0] = JS_UNDEFINED;
+        args[1] = tjs_new_error(ctx, nread);
+    } else {
+        args[0] = JS_NewObjectProto(ctx, JS_NULL);
+        JS_DefinePropertyValueStr(ctx, args[0], "partial", JS_NewBool(ctx, flags & UV_UDP_PARTIAL), JS_PROP_C_W_E);
+        JS_DefinePropertyValueStr(ctx, args[0], "data", TJS_NewUint8Array(ctx, u->read.buf, nread), JS_PROP_C_W_E);
+        u->read.buf = NULL;
+        if (addr) {
+            JSValue addrobj = JS_NewObjectProto(ctx, JS_NULL);
+            tjs_addr2obj(ctx, addrobj, addr, false);
+            JS_DefinePropertyValueStr(ctx, args[0], "addr", addrobj, JS_PROP_C_W_E);
+        }
+        args[1] = JS_UNDEFINED;
+    }
 
-    JS_FreeValue(ctx, u->read.b.tarray);
-    u->read.b.tarray = JS_UNDEFINED;
-    u->read.b.data = NULL;
-    u->read.b.len = 0;
+    maybe_invoke_callback(u, UDP_CB_RECV, 2, args);
 }
 
-static JSValue tjs_udp_recv(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+static JSValue tjs_udp_start_recv(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSUdp *u = tjs_udp_get(ctx, this_val);
     if (!u) {
         return JS_EXCEPTION;
     }
 
-    if (TJS_IsPromisePending(ctx, &u->read.result)) {
-        return tjs_throw_errno(ctx, UV_EBUSY);
-    }
-
-    size_t size;
-    uint8_t *buf = JS_GetUint8Array(ctx, &size, argv[0]);
-    if (!buf) {
-        return JS_EXCEPTION;
-    }
-    u->read.b.tarray = JS_DupValue(ctx, argv[0]);
-    u->read.b.data = buf;
-    u->read.b.len = size;
-
     int r = uv_udp_recv_start(&u->udp, uv__udp_alloc_cb, uv__udp_recv_cb);
     if (r != 0) {
-        JS_FreeValue(ctx, u->read.b.tarray);
-        u->read.b.tarray = JS_UNDEFINED;
-        u->read.b.data = NULL;
-        u->read.b.len = 0;
-
         return tjs_throw_errno(ctx, r);
     }
 
-    return TJS_InitPromise(ctx, &u->read.result);
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_udp_stop_recv(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSUdp *u = tjs_udp_get(ctx, this_val);
+    if (!u) {
+        return JS_EXCEPTION;
+    }
+    uv_udp_recv_stop(&u->udp);
+
+    js_free(ctx, u->read.buf);
+    u->read.buf = NULL;
+
+    return JS_UNDEFINED;
 }
 
 static void uv__udp_send_cb(uv_udp_send_t *req, int status) {
@@ -194,16 +234,14 @@ static void uv__udp_send_cb(uv_udp_send_t *req, int status) {
     JSContext *ctx = u->ctx;
     TJSSendReq *sr = req->data;
 
-    int is_reject = 0;
     JSValue arg;
     if (status < 0) {
         arg = tjs_new_error(ctx, status);
-        is_reject = 1;
     } else {
         arg = JS_UNDEFINED;
     }
 
-    TJS_SettlePromise(ctx, &sr->result, is_reject, 1, &arg);
+    maybe_invoke_callback(u, UDP_CB_SEND, 1, &arg);
     JS_FreeValue(ctx, sr->tarray);
     js_free(ctx, sr);
 }
@@ -238,8 +276,7 @@ static JSValue tjs_udp_send(JSContext *ctx, JSValue this_val, int argc, JSValue 
     b = uv_buf_init((char *) buf, size);
     r = uv_udp_try_send(&u->udp, &b, 1, sa);
     if (r == size) {
-        JSValue val = JS_NewInt64(ctx, size);
-        return TJS_NewResolvedPromise(ctx, 1, &val);
+        return JS_NewInt64(ctx, size);
     }
 
     /* Do an async write, copy the data. */
@@ -264,7 +301,7 @@ static JSValue tjs_udp_send(JSContext *ctx, JSValue this_val, int argc, JSValue 
         return tjs_throw_errno(ctx, r);
     }
 
-    return TJS_InitPromise(ctx, &sr->result);
+    return JS_UNDEFINED;
 }
 
 static JSValue tjs_udp_fileno(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
@@ -312,11 +349,11 @@ static JSValue tjs_new_udp(JSContext *ctx, int af) {
 
     u->ctx = ctx;
     u->udp.data = u;
-    u->read.b.tarray = JS_UNDEFINED;
-    u->read.b.data = NULL;
-    u->read.b.len = 0;
+    u->read.buf = NULL;
 
-    TJS_ClearPromise(ctx, &u->read.result);
+    for (int i = 0; i < UDP_CB_MAX; i++) {
+        u->callbacks[i] = JS_UNDEFINED;
+    }
 
     JS_SetOpaque(obj, u);
     return obj;
@@ -401,21 +438,124 @@ static JSValue tjs_udp_bind(JSContext *ctx, JSValue this_val, int argc, JSValue 
     return JS_UNDEFINED;
 }
 
+static JSValue tjs_udp_set_membership(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSUdp *u = tjs_udp_get(ctx, this_val);
+    if (!u) {
+        return JS_EXCEPTION;
+    }
+
+    const char *multicast_addr = JS_ToCString(ctx, argv[0]);
+    if (!multicast_addr) {
+        return JS_EXCEPTION;
+    }
+
+    const char *interface_addr = NULL;
+    if (!JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
+        interface_addr = JS_ToCString(ctx, argv[1]);
+        if (!interface_addr) {
+            JS_FreeCString(ctx, multicast_addr);
+            return JS_EXCEPTION;
+        }
+    }
+
+    int membership;
+    if (JS_ToInt32(ctx, &membership, argv[2])) {
+        JS_FreeCString(ctx, multicast_addr);
+        JS_FreeCString(ctx, interface_addr);
+        return JS_EXCEPTION;
+    }
+
+    int r = uv_udp_set_membership(&u->udp, multicast_addr, interface_addr, membership);
+
+    JS_FreeCString(ctx, multicast_addr);
+    JS_FreeCString(ctx, interface_addr);
+
+    if (r != 0) {
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_udp_set_multicast_loop(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSUdp *u = tjs_udp_get(ctx, this_val);
+    if (!u) {
+        return JS_EXCEPTION;
+    }
+
+    int on = JS_ToBool(ctx, argv[0]);
+    int r = uv_udp_set_multicast_loop(&u->udp, on);
+    if (r != 0) {
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_udp_set_multicast_ttl(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSUdp *u = tjs_udp_get(ctx, this_val);
+    if (!u) {
+        return JS_EXCEPTION;
+    }
+
+    int ttl;
+    if (JS_ToInt32(ctx, &ttl, argv[0])) {
+        return JS_EXCEPTION;
+    }
+
+    int r = uv_udp_set_multicast_ttl(&u->udp, ttl);
+    if (r != 0) {
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_udp_set_multicast_interface(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSUdp *u = tjs_udp_get(ctx, this_val);
+    if (!u) {
+        return JS_EXCEPTION;
+    }
+
+    const char *interface_addr = JS_ToCString(ctx, argv[0]);
+    if (!interface_addr) {
+        return JS_EXCEPTION;
+    }
+
+    int r = uv_udp_set_multicast_interface(&u->udp, interface_addr);
+    JS_FreeCString(ctx, interface_addr);
+
+    if (r != 0) {
+        return tjs_throw_errno(ctx, r);
+    }
+
+    return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry tjs_udp_proto_funcs[] = {
+    JS_CGETSET_MAGIC_DEF("onrecv", tjs_udp_callback_get, tjs_udp_callback_set, UDP_CB_RECV),
+    JS_CGETSET_MAGIC_DEF("onsend", tjs_udp_callback_get, tjs_udp_callback_set, UDP_CB_SEND),
     TJS_CFUNC_DEF("close", 0, tjs_udp_close),
-    TJS_CFUNC_DEF("recv", 1, tjs_udp_recv),
+    TJS_CFUNC_DEF("startRecv", 0, tjs_udp_start_recv),
+    TJS_CFUNC_DEF("stopRecv", 0, tjs_udp_stop_recv),
     TJS_CFUNC_DEF("send", 2, tjs_udp_send),
     TJS_CFUNC_DEF("fileno", 0, tjs_udp_fileno),
     JS_CFUNC_MAGIC_DEF("getsockname", 0, tjs_udp_getsockpeername, 0),
     JS_CFUNC_MAGIC_DEF("getpeername", 0, tjs_udp_getsockpeername, 1),
     TJS_CFUNC_DEF("connect", 1, tjs_udp_connect),
     TJS_CFUNC_DEF("bind", 2, tjs_udp_bind),
+    TJS_CFUNC_DEF("setMembership", 3, tjs_udp_set_membership),
+    TJS_CFUNC_DEF("setMulticastLoop", 1, tjs_udp_set_multicast_loop),
+    TJS_CFUNC_DEF("setMulticastTTL", 1, tjs_udp_set_multicast_ttl),
+    TJS_CFUNC_DEF("setMulticastInterface", 1, tjs_udp_set_multicast_interface),
     JS_PROP_STRING_DEF("[Symbol.toStringTag]", "UDP", JS_PROP_CONFIGURABLE),
 };
 
 static const JSCFunctionListEntry tjs_udp_funcs[] = {
     TJS_UVCONST(UDP_IPV6ONLY),
     TJS_UVCONST(UDP_REUSEADDR),
+    TJS_UVCONST(JOIN_GROUP),
+    TJS_UVCONST(LEAVE_GROUP),
 };
 
 void tjs__mod_udp_init(JSContext *ctx, JSValue ns) {

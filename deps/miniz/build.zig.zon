@@ -1,0 +1,6 @@
+.{
+    .name = .miniz,
+    .version = "0.0.0",
+    .paths = .{""},
+    .minimum_zig_version = "0.15.1",
+}

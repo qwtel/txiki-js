@@ -4,36 +4,37 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 
-async function doEchoServer(server) {
-    const dataBuf = new Uint8Array(1024);
-    let rinfo;
+async function doEchoServer(readable, writable) {
+    const reader = readable.getReader();
+    const writer = writable.getWriter();
+
     while (true) {
-        rinfo = await server.recv(dataBuf);
-        if (rinfo.nread !== null) {
-            assert.ok(typeof rinfo.partial === 'boolean');
-            assert.is(rinfo.partial, false);
-            server.send(dataBuf.subarray(0, rinfo.nread), rinfo.addr);
-        } else {
-            // Handle closed!
+        const { value: msg, done } = await reader.read();
+
+        if (done) {
             break;
         }
+
+        await writer.write({ data: msg.data, remoteAddress: msg.remoteAddress, remotePort: msg.remotePort });
     }
 }
 
-const server = await tjs.listen('udp', '127.0.0.1');
+const server = new UDPSocket({ localAddress: '127.0.0.1' });
+const serverInfo = await server.opened;
 
-doEchoServer(server);
+doEchoServer(serverInfo.readable, serverInfo.writable);
 
-const rcvBuf = new Uint8Array(1024);
-const serverAddr = server.localAddress;
-const client = await tjs.listen('udp');
-client.send(encoder.encode('PING'), serverAddr);
-let rinfo, dataStr;
-rinfo = await client.recv(rcvBuf);
-dataStr = decoder.decode(rcvBuf.subarray(0, rinfo.nread));
+const client = new UDPSocket({ localAddress: '127.0.0.1' });
+const clientInfo = await client.opened;
+const clientWriter = clientInfo.writable.getWriter();
+await clientWriter.write({ data: encoder.encode('PING'), remoteAddress: serverInfo.localAddress, remotePort: serverInfo.localPort });
+const clientReader = clientInfo.readable.getReader();
+let { value: msg } = await clientReader.read();
+let dataStr = decoder.decode(msg.data);
 assert.eq(dataStr, 'PING', 'sending works');
-assert.eq(serverAddr, rinfo.addr, "source address matches");
-assert.throws(() => { client.send('PING', serverAddr); }, TypeError, "sending anything else gives TypeError");
-assert.throws(() => { client.send(1234, serverAddr); }, TypeError, "sending anything else gives TypeError");
+assert.eq(serverInfo.localAddress, msg.remoteAddress, 'source address matches');
+assert.eq(serverInfo.localPort, msg.remotePort, 'source port matches');
+clientReader.cancel();
+clientWriter.close();
 client.close();
 server.close();

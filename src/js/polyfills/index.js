@@ -16,22 +16,26 @@ import './blob.js';
 import './file.js';
 import './file-reader.js';
 import './form-data.js';
-import 'abortcontroller-polyfill/dist/abortcontroller-polyfill-only';
-// import './xhr.js';
-// import './fetch/polyfill.js';
+import './abort-controller.js';
 
 import './console.js';
 import './crypto.js';
 import './performance.js';
 import './worker.js';
-// import './ws.js';
 
 import 'web-streams-polyfill/polyfill';
-import 'compression-streams-polyfill';
+import './compression-streams.js';
 
 // XXX: Could remove it form the build entirely by using --define in esbuild.
 // But since it's only a couples LoCs it's not really worth it.
 const core = globalThis[Symbol.for('tjs.internal.core')];
+if ('HttpClient' in core && 'WebSocket' in core && 'HttpServer' in core) {
+    await import('./xhr.js');
+    await import('./fetch/polyfill.js');
+    await import('./ws.js');
+    await import('./ws-stream.js');
+}
+
 if ('sqlite3' in core) {
     await import('./storage.js');
 }

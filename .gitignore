@@ -18,3 +18,4 @@ test_dir*/
 _tests
 _include
 __*
+/build-merge-check

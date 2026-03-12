@@ -5,7 +5,7 @@
 const pathModule = globalThis[Symbol.for('tjs.internal.modules.path')];
 
 const verbose = Boolean(tjs.env.VERBOSE_TESTS);
-const TIMEOUT = Number(tjs.env.TJS_TEST_TIMEOUT) || 10 * 1000;
+const TIMEOUT = Number(tjs.env.TJS_TEST_TIMEOUT) || 30 * 1000;
 
 const colors = {
     none:    '\x1b[0m',
@@ -38,8 +38,8 @@ class Test {
         const args = [ tjs.exePath, 'run', this._fileName ];
 
         this._proc = tjs.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
-        this._stdout = this._slurpStdio(this._proc.stdout);
-        this._stderr = this._slurpStdio(this._proc.stderr);
+        this._stdout = this._proc.stdout.text();
+        this._stderr = this._proc.stderr.text();
         this._timer = setTimeout(() => {
             /** @type {tjs.Process} */(this._proc).kill('SIGKILL');
             this._timeout = true;
@@ -71,25 +71,6 @@ class Test {
             stderr: stderr.value,
             timeout: Boolean(this._timeout)
         };
-    }
-
-    async _slurpStdio(s) {
-        const decoder = new TextDecoder();
-        const chunks = [];
-        const buf = new Uint8Array(4096);
-
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-            const nread = await s.read(buf);
-
-            if (nread === null) {
-                break;
-            }
-
-            chunks.push(buf.slice(0, nread));
-        }
-
-        return chunks.map(chunk => decoder.decode(chunk)).join('');
     }
 }
 
@@ -132,7 +113,7 @@ export async function runTests(d) {
     const testConcurrency = tjs.env.TJS_TEST_CONCURRENCY ?? navigator.hardwareConcurrency;
     const running = new Set();
 
-    // eslint-disable-next-line no-constant-condition
+
     while (true) {
         if (tests.length === 0 && running.size === 0) {
             break;

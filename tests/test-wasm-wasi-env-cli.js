@@ -10,16 +10,9 @@ const args = [
     'env'
 ];
 const proc = tjs.spawn(args, { stdout: 'pipe' });
-const status = await proc.wait();
+const [ status, dataStr ] = await Promise.all([ proc.wait(), proc.stdout.text() ]);
 
 assert.eq(status.exit_status, 0, 'WASI env command ran successfully');
-
-const buf = new Uint8Array(4096);
-const nread = await proc.stdout.read(buf);
-
-assert.ok(nread > 0, 'stdout was read for env');
-
-const dataStr = new TextDecoder().decode(buf.subarray(0, nread));
-
+assert.ok(dataStr.length > 0, 'stdout was read for env');
 assert.ok(dataStr.match(/Env:/), 'env output contains Env: header');
 assert.ok(dataStr.match(/=== done ===/), 'WASI completed successfully');

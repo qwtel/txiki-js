@@ -2,17 +2,10 @@
 //
 
 
-const p = await tjs.connect('pipe', tjs.args[2] || '/tmp/fooPipe');
+const client = new PipeSocket(tjs.args[2] || '/tmp/fooPipe');
+const { readable, writable, remoteAddress } = await client.opened;
 
-console.log(`Connected to ${p.remoteAddress}`);
+console.log(`Connected to ${remoteAddress}`);
 
-const buf = new Uint8Array(4096);
-while (true) {
-    const nread = await p.read(buf);
-    if (nread === null) {
-        console.log('connection closed!');
-        break;
-    }
-    //console.log(`Received: ${new TextDecoder().decode(data)}`);
-    p.write(buf.slice(0, nread));
-}
+await readable.pipeTo(writable);
+console.log('connection closed!');

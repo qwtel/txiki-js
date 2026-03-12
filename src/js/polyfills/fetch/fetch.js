@@ -1,14 +1,11 @@
+import { HttpClient } from '../http-client.js';
+
 import { Headers, normalizeName, normalizeValue } from './headers.js';
 import { Request } from './request.js';
 import { Response } from './response.js';
 
-// Access the internal XHR implementation directly, bypassing the public wrapper.
-// This allows us to use internal-only features.
-const core = globalThis[Symbol.for('tjs.internal.core')];
-const InternalXHR = core.XMLHttpRequest;
-
-// Keep strong references to active XHR objects to prevent premature GC
-const activeXHRs = new Set();
+// Keep strong references to active clients to prevent premature GC
+const activeClients = new Set();
 
 export function fetch(input, init) {
     return new Promise(function(resolve, reject) {
@@ -18,23 +15,17 @@ export function fetch(input, init) {
             return reject(new DOMException('Aborted', 'AbortError'));
         }
 
-        const xhr = new InternalXHR();
+        const client = new HttpClient();
 
-        activeXHRs.add(xhr);
+        activeClients.add(client);
 
         let responseResolved = false;
         let streamController = null;
+        let responseStatus, responseUrl;
+        const responseHeaders = new Headers();
 
-        function abortXhr() {
-            xhr.abort();
-        }
-
-        function createAbortError() {
-            return new DOMException('Aborted', 'AbortError');
-        }
-
-        function createNetworkError(message) {
-            return new TypeError(message || 'Network request failed');
+        function abortClient() {
+            client.abort();
         }
 
         // Create ReadableStream for response body
@@ -43,195 +34,173 @@ export function fetch(input, init) {
                 streamController = controller;
             },
             cancel() {
-                xhr.abort();
+                client.abort();
             }
         });
 
-        // Enqueue chunks on progress
-        xhr.onprogress = function() {
-            const chunk = xhr.getAndClearResponseBuffer();
+        client.onstatus = function(status) {
+            responseStatus = status;
+        };
 
+        client.onurl = function(url) {
+            responseUrl = url;
+        };
+
+        client.onheader = function(name, value) {
+            try {
+                responseHeaders.append(name, value);
+            } catch (_e) { /* ignore invalid headers */ }
+        };
+
+        client.onheadersend = function() {
+            // Skip informational responses (1xx)
+            if (responseStatus >= 100 && responseStatus < 200) {
+                return;
+            }
+
+            responseResolved = true;
+
+            setTimeout(function() {
+                resolve(new Response(responseBody, {
+                    status: responseStatus,
+                    statusText: '',
+                    headers: responseHeaders,
+                    url: responseUrl
+                }));
+            }, 0);
+        };
+
+        // Called for each body chunk
+        client.ondata = function(chunk) {
             if (chunk && chunk.byteLength > 0 && streamController) {
                 streamController.enqueue(new Uint8Array(chunk));
             }
         };
 
-        // Final chunk + close on load
-        xhr.onload = function() {
-            const chunk = xhr.getAndClearResponseBuffer();
+        // Called when request completes (success or error)
+        client.oncomplete = function(error, reason) {
+            activeClients.delete(client);
 
-            if (chunk && chunk.byteLength > 0 && streamController) {
-                streamController.enqueue(new Uint8Array(chunk));
+            if (request.signal) {
+                request.signal.removeEventListener('abort', abortClient);
             }
 
-            if (streamController) {
-                streamController.close();
-                streamController = null;
-            }
+            if (error) {
+                const isAbort = error === 'ABORTED';
+                const isTimeout = error === 'TIMED_OUT';
 
-            activeXHRs.delete(xhr);
-        };
+                let msg;
 
-        xhr.onerror = function() {
-            activeXHRs.delete(xhr);
-
-            if (!responseResolved) {
-                setTimeout(function() {
-                    reject(createNetworkError());
-                }, 0);
-            } else if (streamController) {
-                streamController.error(createNetworkError());
-                streamController = null;
-            }
-        };
-
-        xhr.ontimeout = function() {
-            activeXHRs.delete(xhr);
-
-            if (!responseResolved) {
-                setTimeout(function() {
-                    reject(createNetworkError('Network request timed out'));
-                }, 0);
-            } else if (streamController) {
-                streamController.error(createNetworkError('Network request timed out'));
-                streamController = null;
-            }
-        };
-
-        xhr.onabort = function() {
-            activeXHRs.delete(xhr);
-
-            if (!responseResolved) {
-                setTimeout(function() {
-                    reject(createAbortError());
-                }, 0);
-            } else if (streamController) {
-                streamController.error(createAbortError());
-                streamController = null;
-            }
-        };
-
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === InternalXHR.HEADERS_RECEIVED && !responseResolved) {
-                // Skip informational responses (1xx status codes like 100 Continue)
-                // These can occur on Windows before the actual response
-                if (xhr.status >= 100 && xhr.status < 200) {
-                    return;
+                if (reason) {
+                    msg = `Network request failed: ${reason}`;
+                } else if (isTimeout) {
+                    msg = 'Network request timed out';
+                } else {
+                    msg = 'Network request failed';
                 }
 
-                responseResolved = true;
+                if (!responseResolved) {
+                    if (streamController) {
+                        try {
+                            streamController.error(isAbort
+                                ? new DOMException('Aborted', 'AbortError')
+                                : new TypeError(msg));
+                        } catch (_e) { /* already errored/closed */ }
 
-                const options = {
-                    statusText: xhr.statusText,
-                    headers: parseHeaders(xhr.getAllResponseHeaders() || ''),
-                    status: xhr.status,
-                    url: xhr.responseURL
-                };
+                        streamController = null;
+                    }
 
-                // Defer resolve to avoid potential issues
-                setTimeout(function() {
-                    resolve(new Response(responseBody, options));
-                }, 0);
-            }
+                    setTimeout(function() {
+                        if (isAbort) {
+                            reject(new DOMException('Aborted', 'AbortError'));
+                        } else {
+                            reject(new TypeError(msg));
+                        }
+                    }, 0);
+                } else if (streamController) {
+                    if (isAbort) {
+                        streamController.error(new DOMException('Aborted', 'AbortError'));
+                    } else {
+                        streamController.error(new TypeError(msg));
+                    }
 
-            // DONE (success or failure)
-            if (xhr.readyState === InternalXHR.DONE) {
-                if (request.signal) {
-                    request.signal.removeEventListener('abort', abortXhr);
+                    streamController = null;
+                }
+            } else {
+                if (streamController) {
+                    streamController.close();
+                    streamController = null;
                 }
             }
         };
 
-        xhr.open(request.method, request.url, true);
-
+        // Configure client before opening the connection.
         if (request.credentials === 'include') {
-            xhr.withCredentials = true;
-        } else if (request.credentials === 'omit') {
-            xhr.withCredentials = false;
+            client.setEnableCookies(true);
         }
 
-        xhr.redirectMode = request.redirect;
+        client.redirectMode = request.redirect;
 
         if (init && typeof init.headers === 'object' && !(init.headers instanceof Headers)) {
             const names = [];
 
             Object.getOwnPropertyNames(init.headers).forEach(function(name) {
                 names.push(normalizeName(name));
-                xhr.setRequestHeader(name, normalizeValue(init.headers[name]));
+                client.setRequestHeader(name, normalizeValue(init.headers[name]));
             });
             request.headers.forEach(function(value, name) {
                 if (names.indexOf(name) === -1) {
-                    xhr.setRequestHeader(name, value);
+                    client.setRequestHeader(name, value);
                 }
             });
         } else {
             request.headers.forEach(function(value, name) {
-                xhr.setRequestHeader(name, value);
+                client.setRequestHeader(name, value);
             });
         }
 
         if (request.signal) {
-            request.signal.addEventListener('abort', abortXhr);
+            request.signal.addEventListener('abort', abortClient);
         }
 
-        // Handle request body based on size
+        // Open the connection. Body handling depends on request type.
         if (request._bodySize === -1) {
             // Streaming body (ReadableStream)
+            client.streaming = true;
+
             const reader = request.body.getReader();
 
-            xhr.onsendstreamdata = function() {
+            client.ondrain = function() {
                 reader.read().then(function({ value, done }) {
                     if (done) {
-                        xhr.sendStream(null);
+                        client.sendData(null);
                     } else {
-                        // Ensure we have a Uint8Array
-                        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+                        if (!(value instanceof Uint8Array)) {
+                            client.abort();
+                            reject(new TypeError('ReadableStream body chunks must be Uint8Array'));
 
-                        xhr.sendStream(chunk);
+                            return;
+                        }
+
+                        client.sendData(value);
                     }
                 }).catch(function() {
-                    xhr.abort();
+                    client.abort();
                 });
             };
 
-            xhr.sendStream();  // Start streaming (triggers first onsendstreamdata)
+            client.open(request.method, request.url);
         } else if (request._bodySize > 0) {
-            // Known-size body - read it all and send
+            // Known-size body - read it all and pass to open
             request.arrayBuffer().then(function(buf) {
-                xhr.send(new Uint8Array(buf));
+                client.open(request.method, request.url, new Uint8Array(buf));
             }).catch(function(err) {
-                activeXHRs.delete(xhr);
+                activeClients.delete(client);
                 reject(err);
             });
         } else {
             // No body
-            xhr.send(null);
+            client.open(request.method, request.url);
         }
     });
-}
-
-
-function parseHeaders(rawHeaders) {
-    const headers = new Headers();
-
-    // Replace instances of \r\n and \n followed by at least one space or horizontal tab with a space
-    // https://tools.ietf.org/html/rfc7230#section-3.2
-    const preProcessedHeaders = rawHeaders.replace(/\r?\n[\t ]+/g, ' ');
-
-    preProcessedHeaders.split(/\r?\n/).forEach(line => {
-        const parts = line.split(':');
-        const key = parts.shift().trim();
-
-        if (key) {
-            const value = parts.join(':').trim();
-
-            try {
-                headers.append(key, value);
-            } catch (error) {
-                console.warn('Response ' + error.message);
-            }
-        }
-    });
-
-    return headers;
 }

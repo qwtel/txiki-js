@@ -5,8 +5,28 @@
 import getopts from 'tjs:getopts';
 import path from 'tjs:path';
 
+import { bundle } from './bundle.js';
 import { evalStdin } from './eval-stdin.js';
+import { mkdirSync } from './mkdirSync.js';
 import { runTests } from './run-tests.js';
+
+const core = globalThis[Symbol.for('tjs.internal.core')];
+
+/**
+ * Before we do anything else, create our "home" directory,
+ * so other parts of the code which need it can find it.
+ * Also set the cookie jar path, since it's needed when
+ * initializing lws.
+ */
+const TJS_HOME = tjs.env.TJS_HOME ?? path.join(tjs.homeDir, '.tjs');
+
+try {
+    mkdirSync(TJS_HOME, { recursive: true });
+} catch (_) {
+    // Ignore.
+}
+
+core.setCookieJarPath(path.join(TJS_HOME, 'cookies.txt'));
 
 /**
  * Trailer for standalone binaries. When some code gets bundled with the tjs
@@ -23,8 +43,6 @@ const Trailer = {
     DataSize: 4,
     Size: 12
 };
-
-const core = globalThis[Symbol.for('tjs.internal.core')];
 
 const encode = TextEncoder.prototype.encode.bind(new TextEncoder());
 
@@ -51,11 +69,25 @@ Subcommands:
   eval
         Evaluate a JavaScript expression
 
+  serve
+        Serve an HTTP application
+
   test
         Run tests in the given directory
 
+  bundle [options] infile [outfile]
+        Bundle a JavaScript/TypeScript file using esbuild
+
   compile infile [outfile]
         Compile the given file into a standalone executable`;
+
+const helpBundle = `Usage: ${exeName} bundle [options] infile [outfile]
+
+Bundle a JavaScript/TypeScript file using esbuild. If outfile is not
+specified it defaults to <infile-stem>.bundle.js.
+
+Options:
+  -m, --minify    Minify the output`;
 
 const helpEval = `Usage: ${exeName} eval EXPRESSION`;
 
@@ -71,6 +103,29 @@ Options:
   -h, --help
         Print help
 `;
+
+const helpServe = `Usage: ${exeName} serve [options] FILE
+
+The file must default export an object with a fetch method:
+
+  export default {
+      fetch(request, { server }) {
+          if (request.headers.get('upgrade') === 'websocket') {
+              server.upgrade(request);
+              return;
+          }
+          return new Response('hello');
+      },
+      websocket: {
+          open(ws) {},
+          message(ws, msg) {},
+          close(ws) {},
+      },
+  };
+
+Options:
+  -p, --port PORT
+        Port to listen on (default: 8000)`;
 
 // First, let's check if this is a standalone binary.
 await (async () => {
@@ -121,9 +176,11 @@ const options = getopts(tjs.args.slice(1), {
 });
 
 if (options.help) {
-    tjs.stdout.write(encode(help));
+    await tjs.stdout.write(encode(help));
+    tjs.exit(0);
 } else if (options.version) {
-    tjs.stdout.write(encode(`v${tjs.version}`));
+    await tjs.stdout.write(encode(`v${tjs.version}`));
+    tjs.exit(0);
 } else {
     const memoryLimit = options['memory-limit'];
     const stackSize = options['stack-size'];
@@ -148,7 +205,7 @@ if (options.help) {
         const [ expr ] = subargv;
 
         if (!expr) {
-            tjs.stdout.write(encode(helpEval));
+            await tjs.stdout.write(encode(helpEval));
             tjs.exit(1);
         }
 
@@ -157,7 +214,7 @@ if (options.help) {
         const [ filename ] = subargv;
 
         if (!filename) {
-            tjs.stdout.write(encode(helpRun));
+            await tjs.stdout.write(encode(helpRun));
             tjs.exit(1);
         }
 
@@ -165,7 +222,7 @@ if (options.help) {
 
         if (ext === '.wasm') {
             if (!('wasm' in core)) {
-                tjs.stdout.write(encode('WASM support is not enabled'));
+                await tjs.stdout.write(encode('WASM support is not enabled'));
                 tjs.exit(1);
             }
             const { WASI } = await import('tjs:wasi');
@@ -184,6 +241,36 @@ if (options.help) {
             wasi.start(instance);
         } else {
             await core.evalFile(filename);
+        }
+    } else if (command === 'serve') {
+        const serveOpts = getopts(subargv, {
+            alias: { port: 'p' },
+            string: [ 'p' ],
+        });
+
+        const [ filename ] = serveOpts._;
+
+        if (!filename) {
+            throw helpServe;
+        }
+
+        const port = serveOpts.port ? parseNumberOption(serveOpts.port, 'port') : 8000;
+
+        const mod = await import(path.resolve(filename));
+        const handler = mod.default?.fetch;
+
+        if (typeof handler !== 'function') {
+            throw 'Module must default export an object with a fetch method';
+        }
+
+        const server = tjs.serve({ fetch: handler, port, websocket: mod.default.websocket });
+
+        console.log(`Listening on http://localhost:${server.port}/`);
+    } else if (command === 'bundle') {
+        const ok = await bundle(TJS_HOME, subargv);
+
+        if (!ok) {
+            throw helpBundle;
         }
     } else if (command === 'test') {
         const [ dir ] = subargv;
@@ -208,7 +295,7 @@ if (options.help) {
         const [ infile, outfile ] = compOpts._;
 
         if (!infile || compOpts.help) {
-            tjs.stdout.write(encode(helpCompile));
+            await tjs.stdout.write(encode(helpCompile));
             tjs.exit(1);
         }
 
@@ -229,7 +316,7 @@ if (options.help) {
 
         let newFileName = outfile ?? `${infilePath.name}`;
 
-        if (tjs.system.platform === 'windows' && !newFileName.endsWith('.exe')) {
+        if (navigator.userAgentData.platform === 'Windows' && !newFileName.endsWith('.exe')) {
             newFileName += '.exe';
         }
 
@@ -238,7 +325,7 @@ if (options.help) {
         await newFile.write(newExe);
         await newFile.close();
     } else {
-        tjs.stdout.write(encode(help));
+        await tjs.stdout.write(encode(help));
         tjs.exit(1);
     }
 }

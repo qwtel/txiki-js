@@ -3,8 +3,6 @@
 
 import getopts from 'tjs:getopts';
 
-import { addr } from './utils.js';
-
 
 const options = getopts(tjs.args.slice(2), {
     alias: {
@@ -17,17 +15,10 @@ const options = getopts(tjs.args.slice(2), {
     }
 });
 
-const conn = await tjs.connect('tcp', options.connect, options.port);
+const client = new TCPSocket(options.connect, options.port);
+const { readable, writable, remoteAddress, remotePort } = await client.opened;
 
-console.log(`Connected to ${addr(conn.remoteAddress)}`);
+console.log(`Connected to ${remoteAddress}:${remotePort}`);
 
-const buf = new Uint8Array(65536);
-while (true) {
-    const nread = await conn.read(buf);
-    if (nread === null) {
-        console.log('connection closed!');
-        break;
-    }
-    //console.log(`Received: ${new TextDecoder().decode(data)}`);
-    await conn.write(buf.subarray(0, nread));
-}
+await readable.pipeTo(writable);
+console.log('connection closed!');

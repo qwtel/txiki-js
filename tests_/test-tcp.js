@@ -4,43 +4,41 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 
-async function doEchoServer(server) {
-    const conn = await server.accept();
+async function doEchoServer(serverReadable) {
+    const reader = serverReadable.getReader();
+    const { value: conn } = await reader.read();
 
     if (!conn) {
         return;
     }
 
-    const buf = new Uint8Array(4096);
-    while (true) {
-        const nread = await conn.read(buf);
-        if (nread === null) {
-            break;
-        }
-        conn.write(buf.slice(0, nread));
-    }
+    const { readable, writable } = await conn.opened;
+
+    await readable.pipeTo(writable);
 }
 
-const server = await tjs.listen('tcp', '0.0.0.0');
+const server = new TCPServerSocket('0.0.0.0');
+const { readable: serverReadable, localAddress, localPort } = await server.opened;
 
-doEchoServer(server);
+doEchoServer(serverReadable);
 
-const readBuf = new Uint8Array(4096);
-
-const serverAddr = server.localAddress;
-const client = await tjs.connect('tcp', serverAddr.ip, serverAddr.port);
-client.setKeepAlive(true, 30);
-client.setNoDelay(true);
-client.write(encoder.encode('PING'));
-let dataStr, nread;
-nread = await client.read(readBuf);
-dataStr = decoder.decode(readBuf.subarray(0, nread));
+const client = new TCPSocket(localAddress, localPort, { keepAliveDelay: 30000, noDelay: true });
+const { readable, writable } = await client.opened;
+const writer = writable.getWriter();
+const reader = readable.getReader();
+await writer.write(encoder.encode('PING'));
+let { value, done } = await reader.read();
+let dataStr = decoder.decode(value);
 assert.eq(dataStr, "PING", "sending works");
-assert.throws(() => { client.write("PING"); }, TypeError, "sending anything else gives TypeError");
-assert.throws(() => { client.write(1234); }, TypeError, "sending anything else gives TypeError");
+
+await writer.close();
+const eof = await reader.read();
+assert.eq(eof.done, true);
+
 client.close();
 server.close();
 
-const server1 = await tjs.listen('tcp', '127.0.0.1');
-doEchoServer(server1);
+const server1 = new TCPServerSocket('127.0.0.1');
+const { readable: serverReadable1 } = await server1.opened;
+doEchoServer(serverReadable1);
 server1.close();

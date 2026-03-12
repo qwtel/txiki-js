@@ -1,7 +1,7 @@
 /* global tjs */
 /** console implementation according to https://console.spec.whatwg.org/ and otherwise inspired by nodejs behavior */
 
-import { format as utilFormat, inspect as utilInspect } from './console-util.js';
+import { format as utilFormat, inspect as utilInspect } from '../stdlib/utils.js';
 
 function createConsole({
     logger, clearConsole, printer,
@@ -292,6 +292,7 @@ function createConsole({
 }
 
 
+const core = globalThis[Symbol.for('tjs.internal.core')];
 const encoder = new TextEncoder();
 
 class CSI {
@@ -299,7 +300,7 @@ class CSI {
     static kClearScreenDown = '\x1b[0J';
 }
 
-const kConsoleClear = encoder.encode(CSI.kHome + CSI.kClearScreenDown);
+const kConsoleClear = CSI.kHome + CSI.kClearScreenDown;
 
 Object.defineProperty(window, 'console', {
     enumerable: false,
@@ -308,7 +309,7 @@ Object.defineProperty(window, 'console', {
     value: createConsole({
         clearConsole() {
             if (tjs.stdout.isTerminal && tjs.env.TERM !== 'dumb') {
-                tjs.stdout.write(kConsoleClear);
+                core.stdoutPrint(kConsoleClear);
             }
         },
         printer(logLevel, args, { indent, isWarn }) {
@@ -320,17 +321,15 @@ Object.defineProperty(window, 'console', {
                 }
             }).join(' ');
 
-            const str = encoder.encode((' ').repeat(indent*2) + msg + '\n');
+            const str = (' ').repeat(indent*2) + msg + '\n';
 
             if ([ 'error', 'trace', 'warn' ].includes(logLevel) || isWarn) {
-                tjs.stderr.write(str);
+                core.stderrPrint(str);
             } else {
-                tjs.stdout.write(str);
+                core.stdoutPrint(str);
             }
         },
     })
 });
 
 globalThis[Symbol.for('tjs.internal.core')].createConsole = createConsole;
-globalThis[Symbol.for('tjs.internal.core')].inspect = utilInspect;
-globalThis[Symbol.for('tjs.internal.core')].format = utilFormat;

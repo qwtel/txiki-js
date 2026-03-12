@@ -5,25 +5,25 @@
 async function handleConnection(conn) {
     console.log('Accepted connection!');
 
-    const buf = new Uint8Array(4096);
-    while (true) {
-        const nread = await conn.read(buf);
-        if (nread === null) {
-            console.log('connection closed!');
-            break;
-        }
-        //console.log(`Received: ${new TextDecoder().decode(data)}`);
-        conn.write(buf.slice(0, nread));
-    }
+    const { readable, writable } = await conn.opened;
+
+    await readable.pipeTo(writable);
+    console.log('connection closed!');
 }
 
-const p = await tjs.listen('pipe', tjs.args[2] || '/tmp/fooPipe');
+const server = new PipeServerSocket(tjs.args[2] || '/tmp/fooPipe');
+const { readable, localAddress } = await server.opened;
 
-console.log(`Listening on ${p.localAddress}`);
+console.log(`Listening on ${localAddress}`);
 
-let conn;
+const reader = readable.getReader();
+
 while (true) {
-    conn = await p.accept();
+    const { value: conn, done } = await reader.read();
+
+    if (done) {
+        break;
+    }
+
     handleConnection(conn);
-    conn = undefined;
 }

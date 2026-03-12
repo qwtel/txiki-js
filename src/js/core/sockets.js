@@ -1,104 +1,8 @@
+import { PipeSocket, PipeServerSocket } from './direct-sockets/pipe.js';
+import { TCPSocket, TCPServerSocket } from './direct-sockets/tcp.js';
+import { UDPSocket } from './direct-sockets/udp.js';
 import { isIP, lookup } from './lookup.js';
-import { readableStreamForHandle, writableStreamForHandle } from './stream-utils.js';
 
-const core = globalThis[Symbol.for('tjs.internal.core')];
-
-
-export async function connect(transport, host, port, options = {}) {
-    const addr = await resolveAddress(transport, host, port);
-
-    switch (transport) {
-        case 'tcp': {
-            const handle = new core.TCP();
-
-            if (options.bindAddr) {
-                let flags = 0;
-
-                if (options.ipv6Only) {
-                    flags |= core.TCP_IPV6ONLY;
-                }
-
-                handle.bind(options.bindAddr, flags);
-            }
-
-            await handle.connect(addr);
-
-            return new Connection(handle);
-        }
-
-        case 'pipe': {
-            const handle = new core.Pipe();
-
-            await handle.connect(addr);
-
-            return new Connection(handle);
-        }
-
-        case 'udp': {
-            const handle = new core.UDP();
-
-            if (options.bindAddr) {
-                let flags = 0;
-
-                if (options.ipv6Only) {
-                    flags |= core.UDP_IPV6ONLY;
-                }
-
-                handle.bind(options.bindAddr, flags);
-            }
-
-            await handle.connect(addr);
-
-            return new DatagramEndpoint(handle);
-        }
-    }
-}
-
-export async function listen(transport, host, port, options = {}) {
-    const addr = await resolveAddress(transport, host, port);
-
-    switch (transport) {
-        case 'tcp': {
-            const handle = new core.TCP();
-            let flags = 0;
-
-            if (options.ipv6Only) {
-                flags |= core.TCP_IPV6ONLY;
-            }
-
-            handle.bind(addr, flags);
-            handle.listen(options.backlog);
-
-            return new Listener(handle);
-        }
-
-        case 'pipe': {
-            const handle = new core.Pipe();
-
-            handle.bind(addr);
-            handle.listen(options.backlog);
-
-            return new Listener(handle);
-        }
-
-        case 'udp': {
-            const handle = new core.UDP();
-            let flags = 0;
-
-            if (options.reuseAddr) {
-                flags |= core.UDP_REUSEADDR;
-            }
-
-            if (options.ipv6Only) {
-                flags |= core.UDP_IPV6ONLY;
-            }
-
-            handle.bind(addr, flags);
-
-            return new DatagramEndpoint(handle);
-        }
-    }
-}
 
 async function resolveAddress(transport, host, port) {
     switch (transport) {
@@ -131,145 +35,113 @@ async function resolveAddress(transport, host, port) {
     }
 }
 
-const kHandle = Symbol('kHandle');
-const kLocalAddress = Symbol('kLocalAddress');
-const kRemoteAddress = Symbol('kRemoteAddress');
-const kReadable = Symbol('kReadable');
-const kWritable = Symbol('kWritable');
+export async function connect(transport, host, port, options = {}) {
+    switch (transport) {
+        case 'tcp': {
+            const socket = new TCPSocket(host, port, {
+                noDelay: options.noDelay,
+                keepAliveDelay: options.keepAliveDelay,
+                dnsQueryType: options.dnsQueryType,
+            });
 
-class Connection {
-    constructor(handle) {
-        this[kHandle] = handle;
-    }
+            await socket.opened;
 
-    get localAddress() {
-        if (!this[kLocalAddress]) {
-            this[kLocalAddress] = this[kHandle].getsockname();
+            return socket;
         }
 
-        return this[kLocalAddress];
-    }
+        case 'pipe': {
+            if (typeof host !== 'string') {
+                throw new TypeError('pipe path must be a string');
+            }
 
-    get remoteAddress() {
-        if (!this[kRemoteAddress]) {
-            this[kRemoteAddress] = this[kHandle].getpeername();
+            const socket = new PipeSocket(host);
+
+            await socket.opened;
+
+            return socket;
         }
 
-        return this[kRemoteAddress];
-    }
+        case 'udp': {
+            const addr = await resolveAddress(transport, host, port);
+            const udpOptions = {
+                remoteAddress: addr.ip,
+                remotePort: addr.port,
+            };
 
-    get readable() {
-        if (!this[kReadable]) {
-            this[kReadable] = readableStreamForHandle(this[kHandle]);
+            if (options.bindAddr) {
+                udpOptions.localAddress = options.bindAddr.ip;
+                udpOptions.localPort = options.bindAddr.port;
+            }
+
+            if (options.ipv6Only) {
+                udpOptions.ipv6Only = true;
+            }
+
+            const socket = new UDPSocket(udpOptions);
+
+            await socket.opened;
+
+            return socket;
         }
 
-        return this[kReadable];
-    }
-
-    get writable() {
-        if (!this[kWritable]) {
-            this[kWritable] = writableStreamForHandle(this[kHandle]);
-        }
-
-        return this[kWritable];
-    }
-
-    read(buf) {
-        return this[kHandle].read(buf);
-    }
-
-    write(buf) {
-        return this[kHandle].write(buf);
-    }
-
-    setKeepAlive(enable, delay) {
-        this[kHandle].setKeepAlive(enable, delay);
-    }
-
-    setNoDelay(enable = true) {
-        this[kHandle].setNoDelay(enable);
-    }
-
-    shutdown() {
-        this[kHandle].shutdown();
-    }
-
-    close() {
-        this[kHandle].close();
+        default:
+            throw new Error('invalid transport');
     }
 }
 
-class Listener {
-    constructor(handle) {
-        this[kHandle] = handle;
-    }
+export async function listen(transport, host, port, options = {}) {
+    switch (transport) {
+        case 'tcp': {
+            const addr = await resolveAddress(transport, host, port);
 
-    get localAddress() {
-        if (!this[kLocalAddress]) {
-            this[kLocalAddress] = this[kHandle].getsockname();
+            const server = new TCPServerSocket(addr.ip, {
+                localPort: addr.port,
+                backlog: options.backlog,
+                ipv6Only: options.ipv6Only,
+            });
+
+            await server.opened;
+
+            return server;
         }
 
-        return this[kLocalAddress];
-    }
+        case 'pipe': {
+            if (typeof host !== 'string') {
+                throw new TypeError('pipe path must be a string');
+            }
 
-    async accept() {
-        const handle = await this[kHandle].accept();
+            const server = new PipeServerSocket(host, {
+                backlog: options.backlog,
+            });
 
-        if (typeof handle === 'undefined') {
-            return;
+            await server.opened;
+
+            return server;
         }
 
-        return new Connection(handle);
-    }
+        case 'udp': {
+            const addr = await resolveAddress(transport, host, port);
+            const udpOptions = {
+                localAddress: addr.ip,
+                localPort: addr.port,
+            };
 
-    close() {
-        this[kHandle].close();
-    }
+            if (options.reuseAddr) {
+                udpOptions.reuseAddr = true;
+            }
 
-    // Async iterator.
-    //
+            if (options.ipv6Only) {
+                udpOptions.ipv6Only = true;
+            }
 
-    [Symbol.asyncIterator]() {
-        return this;
-    }
+            const socket = new UDPSocket(udpOptions);
 
-    async next() {
-        const value = await this.accept();
+            await socket.opened;
 
-        return {
-            value,
-            done: typeof value === 'undefined'
-        };
-    }
-}
-
-class DatagramEndpoint {
-    constructor(handle) {
-        this[kHandle] = handle;
-    }
-
-    recv(buf) {
-        return this[kHandle].recv(buf);
-    }
-
-    send(buf, taddr) {
-        return this[kHandle].send(buf, taddr);
-    }
-
-    get localAddress() {
-        if (!this[kLocalAddress]) {
-            this[kLocalAddress] = this[kHandle].getsockname();
+            return socket;
         }
 
-        return this[kLocalAddress];
-    }
-
-    get remoteAddress() {
-        // Don't cache remote address since the socket might not be connected, ever.
-        return this[kHandle].getpeername();
-    }
-
-    close() {
-        this[kHandle].close();
+        default:
+            throw new Error('invalid transport');
     }
 }

@@ -127,7 +127,7 @@ typedef struct {
 
 typedef struct {
     uv_work_t req;
-    DynBuf dbuf;
+    TBuf dbuf;
     JSContext *ctx;
     int r;
     char *filename;
@@ -945,23 +945,26 @@ static JSValue tjs_fs_open(JSContext *ctx, JSValue this_val, int argc, JSValue *
     return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
 }
 
-static JSValue tjs_fs_new_stdio_file(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
-    const char *path;
+static JSValue tjs_file_constructor(JSContext *ctx, JSValue new_target, int argc, JSValue *argv) {
     uv_file fd;
 
-    path = JS_ToCString(ctx, argv[0]);
-    if (!path) {
+    if (JS_ToInt32(ctx, &fd, argv[0])) {
         return JS_EXCEPTION;
     }
 
-    if (JS_ToInt32(ctx, &fd, argv[1])) {
-        JS_FreeCString(ctx, path);
-        return JS_EXCEPTION;
+    const char *path = "";
+    if (argc > 1 && JS_IsString(argv[1])) {
+        path = JS_ToCString(ctx, argv[1]);
+        if (!path) {
+            return JS_EXCEPTION;
+        }
     }
 
     JSValue obj = tjs_new_file(ctx, fd, path);
 
-    JS_FreeCString(ctx, path);
+    if (argc > 1 && JS_IsString(argv[1])) {
+        JS_FreeCString(ctx, path);
+    }
 
     return obj;
 }
@@ -1183,6 +1186,13 @@ static JSValue tjs_fs_mkdir(JSContext *ctx, JSValue this_val, int argc, JSValue 
     return tjs_fsreq_init(ctx, fr, JS_UNDEFINED);
 }
 
+static int tjs__mkdir_sync(const char *path, int mode) {
+    uv_fs_t req;
+    int r = uv_fs_mkdir(NULL, &req, path, mode, NULL);
+    uv_fs_req_cleanup(&req);
+    return r;
+}
+
 static JSValue tjs_fs_mkdir_sync(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     const char *path = JS_ToCString(ctx, argv[0]);
     if (!path) {
@@ -1197,10 +1207,8 @@ static JSValue tjs_fs_mkdir_sync(JSContext *ctx, JSValue this_val, int argc, JSV
         }
     }
 
-    uv_fs_t req;
-    int r = uv_fs_mkdir(NULL, &req, path, mode, NULL);
+    int r = tjs__mkdir_sync(path, mode);
     JS_FreeCString(ctx, path);
-    uv_fs_req_cleanup(&req);
     if (r != 0) {
         return tjs_throw_errno(ctx, r);
     }
@@ -1278,15 +1286,15 @@ static void tjs__readfile_after_work_cb(uv_work_t *req, int status) {
     if (status != 0) {
         arg = tjs_new_error(ctx, status);
         is_reject = true;
-        dbuf_free(&fr->dbuf);
+        tbuf_free(&fr->dbuf);
     } else if (fr->r < 0) {
         arg = tjs_new_error(ctx, fr->r);
         is_reject = true;
-        dbuf_free(&fr->dbuf);
+        tbuf_free(&fr->dbuf);
     } else {
         arg = TJS_NewUint8Array(ctx, fr->dbuf.buf, fr->dbuf.size);
         if (JS_IsException(arg)) {
-            dbuf_free(&fr->dbuf);
+            tbuf_free(&fr->dbuf);
         }
     }
 
@@ -1309,7 +1317,7 @@ static JSValue tjs_fs_readfile(JSContext *ctx, JSValue this_val, int argc, JSVal
     }
 
     fr->ctx = ctx;
-    tjs_dbuf_init(ctx, &fr->dbuf);
+    tbuf_init(ctx, &fr->dbuf);
     fr->r = -1;
     fr->filename = js_strdup(ctx, path);
     fr->req.data = fr;
@@ -1614,7 +1622,6 @@ static const JSCFunctionListEntry tjs_fs_funcs[] = {
     TJS_UVCONST(FS_SYMLINK_DIR),
     TJS_UVCONST(FS_SYMLINK_JUNCTION),
     TJS_CFUNC_DEF("open", 3, tjs_fs_open),
-    TJS_CFUNC_DEF("newStdioFile", 2, tjs_fs_new_stdio_file),
     TJS_CFUNC_MAGIC_DEF("stat", 1, tjs_fs_stat, 0),
     TJS_CFUNC_MAGIC_DEF("lstat", 1, tjs_fs_stat, 1),
     TJS_CFUNC_DEF("realPath", 1, tjs_fs_realpath),
@@ -1651,6 +1658,8 @@ void tjs__mod_fs_init(JSContext *ctx, JSValue ns) {
     proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, proto, tjs_file_proto_funcs, countof(tjs_file_proto_funcs));
     JS_SetClassProto(ctx, tjs_file_class_id, proto);
+    JSValue file_ctor = JS_NewCFunction2(ctx, tjs_file_constructor, "File", 2, JS_CFUNC_constructor, 0);
+    JS_DefinePropertyValueStr(ctx, ns, "File", file_ctor, JS_PROP_C_W_E);
 
     /* Dir object */
     JS_NewClassID(rt, &tjs_dir_class_id);

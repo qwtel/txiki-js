@@ -12,6 +12,18 @@
         .libuv = .{
             .path = "deps/libuv/",
         },
+        .miniz = .{
+            .path = "deps/miniz/",
+        },
+        .ada = .{
+            .path = "deps/ada/",
+        },
+        .mbedtls = .{
+            .path = "deps/mbedtls/",
+        },
+        .libwebsockets = .{
+            .path = "deps/libwebsockets/",
+        },
         .wamr = .{
             .path = "deps/wamr/",
         },

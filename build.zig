@@ -21,6 +21,7 @@ const BuildOpts = struct {
     with_mimalloc: bool,
     with_wasm: bool,
     with_sqlite: bool,
+    with_network: bool,
     matrix: bool,
 };
 
@@ -49,10 +50,26 @@ fn build2(
         .target = target,
         .optimize = optimize,
     });
+    const dep_miniz = b.dependency("miniz", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const dep_ada = b.dependency("ada", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const dep_mimalloc = b.dependency("mimalloc", .{
         .target = target,
         .optimize = optimize,
     });
+    const dep_mbedtls = if (opts.with_network) b.dependency("mbedtls", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+    const dep_libwebsockets = if (opts.with_network) b.dependency("libwebsockets", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
     const dep_wamr = if (opts.with_wasm) b.dependency("wamr", .{
         .target = target,
         .optimize = optimize,
@@ -73,6 +90,10 @@ fn build2(
 
     lib.linkLibrary(dep_libuv.artifact("uv_a"));
     lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+    lib.linkLibrary(dep_miniz.artifact("miniz"));
+    lib.installLibraryHeaders(dep_miniz.artifact("miniz"));
+    lib.linkLibrary(dep_ada.artifact("ada"));
+    lib.installLibraryHeaders(dep_ada.artifact("ada"));
 
     if (opts.with_sqlite) {
         lib.linkLibrary(dep_sqlite3.artifact("sqlite3"));
@@ -89,6 +110,17 @@ fn build2(
     if (opts.with_mimalloc) {
         lib.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
         lib.installLibraryHeaders(dep_mimalloc.artifact("mimalloc-static"));
+    }
+
+    if (opts.with_network) {
+        const dep_lws = dep_libwebsockets.?;
+        const dep_mtls = dep_mbedtls.?;
+        lib.linkLibrary(dep_lws.artifact("websockets"));
+        lib.installLibraryHeaders(dep_lws.artifact("websockets"));
+        lib.linkLibrary(dep_mtls.artifact("mbedtls"));
+        lib.linkLibrary(dep_mtls.artifact("mbedx509"));
+        lib.linkLibrary(dep_mtls.artifact("mbedcrypto"));
+        lib.installLibraryHeaders(dep_mtls.artifact("mbedtls"));
     }
 
     if (target.result.os.tag != .windows and !target.result.abi.isAndroid()) {
@@ -114,30 +146,26 @@ fn build2(
     var c_sources = std.array_list.Managed([]const u8).init(b.allocator);
     try c_sources.appendSlice(&.{
         "src/builtins.c",
-        // "src/curl-utils.c",
-        // "src/curl-websocket.c",
         "src/error.c",
         "src/eval.c",
         "src/mem.c",
         "src/modules.c",
-        "src/sha1.c",
+        "src/tbuf.c",
         "src/signals.c",
         "src/text-coding.c",
         "src/timers.c",
+        "src/url.c",
         "src/utils.c",
         "src/version.c",
         "src/vm.c",
         "src/worker.c",
-        // "src/ws.c",
-        // "src/xhr.c",
         "src/mod_dns.c",
         "src/mod_engine.c",
-        // "src/mod_ffi.c",
         "src/mod_fs.c",
         "src/mod_fswatch.c",
+        "src/mod_miniz.c",
         "src/mod_os.c",
         "src/mod_process.c",
-        "src/mod_sqlite3.c",
         "src/mod_streams.c",
         "src/mod_sys.c",
         "src/mod_udp.c",
@@ -147,7 +175,16 @@ fn build2(
         "src/bundles/c/core/run-repl.c",
         "src/bundles/c/core/worker-bootstrap.c",
     });
+    if (opts.with_sqlite) try c_sources.append("src/mod_sqlite3.c");
     if (opts.with_wasm) try c_sources.append("src/wasm.c");
+    if (opts.with_network) {
+        try c_sources.appendSlice(&.{
+            "src/lws-utils.c",
+            "src/httpclient.c",
+            "src/httpserver.c",
+            "src/ws.c",
+        });
+    }
     lib.addCSourceFiles(.{
         .files = c_sources.items,
         .flags = cflags.items,
@@ -174,6 +211,9 @@ fn build2(
     }
     if (opts.with_mimalloc) {
         lib.root_module.addCMacro("TJS__HAS_MIMALLOC", "1");
+    }
+    if (opts.with_network) {
+        lib.root_module.addCMacro("TJS__HAS_NETWORK", "1");
     }
 
     const tjs = b.addExecutable(.{
@@ -233,11 +273,14 @@ fn build2(
             }),
         });
         exe.linkLibrary(dep_quickjs.artifact("qjs"));
-        // <<<<<< ai slop
         exe.linkLibrary(dep_sqlite3.artifact("sqlite3"));
         exe.linkLibrary(dep_libuv.artifact("uv_a"));
+        exe.linkLibrary(dep_miniz.artifact("miniz"));
+        exe.linkLibrary(dep_ada.artifact("ada"));
         exe.installLibraryHeaders(dep_libuv.artifact("uv_a"));
         exe.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
+        exe.installLibraryHeaders(dep_miniz.artifact("miniz"));
+        exe.installLibraryHeaders(dep_ada.artifact("ada"));
         exe.addIncludePath(b.path("src"));
         if (opts.with_wasm) {
             const wamr = dep_wamr.?;
@@ -246,7 +289,6 @@ fn build2(
         } else {
             exe.root_module.addCMacro("TJS__OMIT_WASM", "1");
         }
-        // >>>>>> ai slop
         b.installArtifact(exe);
 
         const art_run = b.addRunArtifact(exe);
@@ -263,9 +305,12 @@ fn build2(
         });
         // unit_tests.root_module.addCMacro("DUMP_LEAKS", "1");
         unit_tests.linkLibrary(dep_quickjs.artifact("qjs"));
-        // <<<<<< ai slop
         unit_tests.linkLibrary(dep_libuv.artifact("uv_a"));
+        unit_tests.linkLibrary(dep_miniz.artifact("miniz"));
+        unit_tests.linkLibrary(dep_ada.artifact("ada"));
         unit_tests.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+        unit_tests.installLibraryHeaders(dep_miniz.artifact("miniz"));
+        unit_tests.installLibraryHeaders(dep_ada.artifact("ada"));
         if (opts.with_sqlite) {
             unit_tests.linkLibrary(dep_sqlite3.artifact("sqlite3"));
             unit_tests.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
@@ -280,7 +325,6 @@ fn build2(
             unit_tests.root_module.addCMacro("TJS__OMIT_WASM", "1");
         }
         unit_tests.addIncludePath(b.path("src"));
-        // >>>>>> ai slop
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_unit_tests.step);
@@ -301,6 +345,7 @@ pub fn build(b: *std.Build) !void {
     const opt_no_mimalloc = b.option(bool, "no-mimalloc", "If set, build without mimalloc") orelse false;
     const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without WAMR (WASM)") orelse false;
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build with sqlite3") orelse false;
+    const opt_no_network = b.option(bool, "no-network", "If set, build without HTTP/WebSocket support") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
     {
@@ -327,6 +372,7 @@ pub fn build(b: *std.Build) !void {
                 .with_mimalloc = !opt_no_mimalloc,
                 .with_wasm = !opt_no_wasm,
                 .with_sqlite = !opt_no_sqlite,
+                .with_network = !opt_no_network,
                 .matrix = true,
             });
 
@@ -348,6 +394,7 @@ pub fn build(b: *std.Build) !void {
         .with_mimalloc = !opt_no_mimalloc,
         .with_wasm = !opt_no_wasm,
         .with_sqlite = !opt_no_sqlite,
+        .with_network = !opt_no_network,
         .matrix = false,
     });
 

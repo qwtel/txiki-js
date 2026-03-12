@@ -1,23 +1,22 @@
 # Welcome to the txiki.js documentation
 
 [*txiki.js*](https://github.com/saghul/txiki.js) is a small and powerful JavaScript runtime.
-It targets state-of-the-art ECMAScript and aims to be [WinterCG] compliant.
+It targets state-of-the-art ECMAScript and aims to be [WinterTC] compliant.
 
 On this site you'll find documentation on all the APIs provided by it.
 
 ## Features
 
-Support for the [ES2023] specification (almost complete).
+Support for the [ES2025] specification (almost complete).
 
-### WinterCG
+### WinterTC
 
-*txiki.js* aims to be [WinterCG] compliant, you can track the progress [here](https://github.com/saghul/txiki.js/issues/418).
+*txiki.js* aims to be [WinterTC] compliant, you can track the progress [here](https://github.com/saghul/txiki.js/issues/418).
 
 ### Web Platform APIs
 
-- [alert, confirm, prompt] (1)
 - [Console]
-- [Crypto] (2)
+- [Crypto] (1)
 - [Encoding API]
 - [EventTarget]
 - [fetch]
@@ -29,15 +28,13 @@ Support for the [ES2023] specification (almost complete).
 - [URL]
 - [URLPattern]
 - [URLSearchParams]
-- [WebAssembly] (3)
+- [WebAssembly] (2)
 - [WebSocket]
 - [Web Workers API]
 
-(1): All of them are async.
+(1): No subtle support.
 
-(2): No subtle support.
-
-(3): No tables, globals or memory support.
+(2): No tables, globals or memory support.
 
 ### Runtime features
 
@@ -61,7 +58,6 @@ Other extras:
 
 Look at the modules on the left sidebar.
 
-[alert, confirm, prompt]: https://developer.mozilla.org/en-US/docs/Web/API/Window/alert
 [fetch]: https://fetch.spec.whatwg.org/
 [EventTarget]: https://developer.mozilla.org/en-US/docs/Web/API/EventTarget
 [Console]: https://developer.mozilla.org/en-US/docs/Web/API/Console
@@ -78,5 +74,5 @@ Look at the modules on the left sidebar.
 [Web Workers API]: https://developer.mozilla.org/en-US/docs/Web/API/Worker
 [WebAssembly]: https://developer.mozilla.org/en-US/docs/WebAssembly
 [WebSocket]: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
-[ES2023]: https://tc39.es/ecma262/
-[WinterCG]: https://wintercg.org/
+[ES2025]: https://tc39.es/ecma262/
+[WinterTC]: https://wintertc.org/

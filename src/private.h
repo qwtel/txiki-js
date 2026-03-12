@@ -26,10 +26,12 @@
 #define TJS_PRIVATE_H
 
 #include "cutils.h"
+#include "tbuf.h"
 #include "tjs.h"
-#include "utils.h"
 
-// #include <curl/curl.h>
+#ifdef TJS__HAS_NETWORK
+#include <libwebsockets.h>
+#endif
 #include <quickjs.h>
 #ifndef TJS__OMIT_SQLITE
 #include <sqlite3.h>
@@ -59,6 +61,7 @@
 #endif
 
 typedef struct TJSTimer TJSTimer;
+struct lws_context;
 
 struct TJSRuntime {
     TJSRunOptions options;
@@ -73,15 +76,17 @@ struct TJSRuntime {
     uv_async_t stop;
     bool is_worker;
     bool freeing;
-    // struct {
-    //     CURLM *curlm_h;
-    //     uv_timer_t timer;
-    // } curl_ctx;
 #ifndef TJS__OMIT_WASM
     struct {
         bool initialized;
     } wasm_ctx;
 #endif
+    struct {
+        struct lws_context *ctx;
+        char *cookie_jar_path;
+        uv_async_t keepalive;
+        int active_conns;
+    } lws;
     struct {
         TJSTimer *timers;
         int64_t next_timer;
@@ -98,6 +103,12 @@ void tjs__mod_error_init(JSContext *ctx, JSValue ns);
 // void tjs__mod_ffi_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fs_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fswatch_init(JSContext *ctx, JSValue ns);
+void tjs__mod_httpclient_init(JSContext *ctx, JSValue ns);
+void tjs__mod_miniz_init(JSContext *ctx, JSValue ns);
+typedef struct TJSDecompressor TJSDecompressor;
+TJSDecompressor *tjs__decompressor_create(JSContext *ctx, const char *format);
+int tjs__decompressor_decompress(TJSDecompressor *d, const uint8_t *in, size_t in_len, TBuf *out);
+void tjs__decompressor_destroy(TJSDecompressor *d, JSRuntime *rt);
 void tjs__mod_os_init(JSContext *ctx, JSValue ns);
 void tjs__mod_process_init(JSContext *ctx, JSValue ns);
 void tjs__mod_signals_init(JSContext *ctx, JSValue ns);
@@ -113,9 +124,11 @@ void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_worker_init(JSContext *ctx, JSValue ns);
+#ifdef TJS__HAS_NETWORK
 void tjs__mod_ws_init(JSContext *ctx, JSValue ns);
-void tjs__mod_xhr_init(JSContext *ctx, JSValue ns);
-
+void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns);
+#endif
+void tjs__mod_url_init(JSContext *ctx, JSValue ns);
 #ifndef _WIN32
 void tjs__mod_posix_socket_init(JSContext *ctx, JSValue ns);
 #endif
@@ -128,7 +141,7 @@ uv_stream_t *tjs_pipe_get_stream(JSContext *ctx, JSValue obj);
 
 void tjs__execute_jobs(JSContext *ctx);
 JSModuleDef *tjs__load_builtin(JSContext *ctx, const char *name);
-int tjs__load_file(JSContext *ctx, DynBuf *dbuf, const char *filename);
+int tjs__load_file(JSContext *ctx, TBuf *dbuf, const char *filename);
 int tjs_module_attr_checker(JSContext *ctx, void *opaque, JSValueConst attributes);
 JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque, JSValueConst attributes);
 char *tjs_module_normalizer(JSContext *ctx, const char *base_name, const char *name, void *opaque);
@@ -143,6 +156,12 @@ void tjs__destroy_timers(TJSRuntime *qrt);
 
 void tjs__sab_free(void *opaque, void *ptr);
 void tjs__sab_dup(void *opaque, void *ptr);
+
+struct lws_context *tjs__lws_get_context(JSContext *ctx);
+void tjs__lws_init(TJSRuntime *qrt);
+void tjs__lws_conn_ref(JSContext *ctx);
+void tjs__lws_conn_unref(JSContext *ctx);
+int tjs__lws_load_http(TJSRuntime *qrt, TBuf *dbuf, const char *url);
 
 uv_loop_t *TJS_GetLoop(TJSRuntime *qrt);
 TJSRuntime *TJS_NewRuntimeWorker(void);

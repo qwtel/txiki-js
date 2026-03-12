@@ -34,6 +34,11 @@
 #include <string.h>
 #include <assert.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #define TJS__DEFAULT_STACK_SIZE 1024 * 1024  // 1 MB
 
 /* JS malloc functions */
@@ -120,6 +125,23 @@ static int tjs__argc = 0;
 static char **tjs__argv = NULL;
 
 
+static JSValue tjs__set_cookie_jar_path(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSRuntime *qrt = TJS_GetRuntime(ctx);
+    CHECK_NOT_NULL(qrt);
+
+    CHECK_EQ(qrt->lws.cookie_jar_path, NULL);
+
+    const char *path = JS_ToCString(ctx, argv[0]);
+    if (!path) {
+        return JS_EXCEPTION;
+    }
+
+    qrt->lws.cookie_jar_path = js_strdup(ctx, path);
+    JS_FreeCString(ctx, path);
+
+    return JS_UNDEFINED;
+}
+
 static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_dns_init(ctx, ns);
     tjs__mod_engine_init(ctx, ns);
@@ -141,12 +163,17 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_text_coding_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
     tjs__mod_udp_init(ctx, ns);
+    tjs__mod_url_init(ctx, ns);
 #ifndef TJS__OMIT_WASM
     tjs__mod_wasm_init(ctx, ns);
 #endif
     tjs__mod_worker_init(ctx, ns);
-    // tjs__mod_ws_init(ctx, ns);
-    // tjs__mod_xhr_init(ctx, ns);
+#ifdef TJS__HAS_NETWORK
+    tjs__mod_httpclient_init(ctx, ns);
+    tjs__mod_ws_init(ctx, ns);
+    tjs__mod_httpserver_init(ctx, ns);
+#endif
+    tjs__mod_miniz_init(ctx, ns);
 #ifndef _WIN32
     tjs__mod_posix_socket_init(ctx, ns);
 #endif
@@ -154,6 +181,13 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
 #ifndef TJS__OMIT_ZIG_MODULES
     zig__mod_v8_compat_init(ctx, ns);
 #endif
+
+    /* Internal helpers. */
+    JS_DefinePropertyValueStr(ctx,
+                              ns,
+                              "setCookieJarPath",
+                              JS_NewCFunction(ctx, tjs__set_cookie_jar_path, "setCookieJarPath", 1),
+                              JS_PROP_C_W_E);
 }
 
 JSValue tjs__get_args(JSContext *ctx) {
@@ -263,6 +297,10 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     CHECK_NOT_NULL(rt);
     qrt->rt = rt;
 
+#ifdef DEBUG
+    JS_SetDumpFlags(rt, JS_DUMP_LEAKS);
+#endif
+
     ctx = JS_NewContext(rt);
     CHECK_NOT_NULL(ctx);
     qrt->ctx = ctx;
@@ -359,12 +397,24 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     uv_close((uv_handle_t *) &qrt->jobs.idle, NULL);
     uv_close((uv_handle_t *) &qrt->jobs.check, NULL);
     uv_close((uv_handle_t *) &qrt->stop, NULL);
-    // if (qrt->curl_ctx.curlm_h) {
-    //     uv_close((uv_handle_t *) &qrt->curl_ctx.timer, NULL);
-    // }
 
     /* Destroy all timers */
     tjs__destroy_timers(qrt);
+
+    /* Destroy lws context. Must happen before freeing the JS engine
+     * so that any remaining WSI_DESTROY callbacks can release GC refs. */
+#ifdef TJS__HAS_NETWORK
+    if (qrt->lws.ctx) {
+        lws_context_destroy(qrt->lws.ctx);
+        qrt->lws.ctx = NULL;
+        uv_close((uv_handle_t *) &qrt->lws.keepalive, NULL);
+    }
+#endif
+    js_free(qrt->ctx, qrt->lws.cookie_jar_path);
+    qrt->lws.cookie_jar_path = NULL;
+
+    /* Drain any pending lws close callbacks. */
+    uv_run(&qrt->loop, UV_RUN_NOWAIT);
 
     /* Destroy the JS engine. */
     JS_FreeValue(qrt->ctx, qrt->builtins.dispatch_event_func);
@@ -373,12 +423,6 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     qrt->builtins.promise_event_ctor = JS_UNDEFINED;
     JS_FreeContext(qrt->ctx);
     JS_FreeRuntime(qrt->rt);
-
-    // /* Destroy CURLM handle. */
-    // if (qrt->curl_ctx.curlm_h) {
-    //     curl_multi_cleanup(qrt->curl_ctx.curlm_h);
-    //     qrt->curl_ctx.curlm_h = NULL;
-    // }
 
 #ifndef TJS__OMIT_WASM
     /* Destroy WASM runtime. */
@@ -410,8 +454,6 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
 }
 
 void TJS_Initialize(int argc, char **argv) {
-    // curl_global_init(CURL_GLOBAL_ALL);
-
     CHECK_EQ(0, uv_replace_allocator(tjs__malloc, tjs__realloc, tjs__calloc, tjs__free));
 
     tjs__argc = argc;
@@ -419,6 +461,11 @@ void TJS_Initialize(int argc, char **argv) {
 
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
 
 #ifdef SIGPIPE
     signal(SIGPIPE, SIG_IGN);
@@ -524,7 +571,7 @@ uv_loop_t *TJS_GetLoop(TJSRuntime *qrt) {
     return &qrt->loop;
 }
 
-int tjs__load_file(JSContext *ctx, DynBuf *dbuf, const char *filename) {
+int tjs__load_file(JSContext *ctx, TBuf *dbuf, const char *filename) {
     uv_fs_t req;
     uv_file fd;
     int r;
@@ -547,7 +594,7 @@ int tjs__load_file(JSContext *ctx, DynBuf *dbuf, const char *filename) {
             break;
         }
         offset += r;
-        r = dbuf_put(dbuf, (const uint8_t *) b.base, r);
+        r = tbuf_put(dbuf, (const uint8_t *) b.base, r);
         if (r != 0) {
             break;
         }
@@ -585,15 +632,15 @@ JSValue TJS_EvalModuleContent(JSContext *ctx,
 }
 
 JSValue TJS_EvalScript(JSContext *ctx, const char *filename) {
-    DynBuf dbuf;
+    TBuf dbuf;
     size_t dbuf_size;
     int r;
     JSValue ret;
 
-    tjs_dbuf_init(ctx, &dbuf);
+    tbuf_init(ctx, &dbuf);
     r = tjs__load_file(ctx, &dbuf, filename);
     if (r != 0) {
-        dbuf_free(&dbuf);
+        tbuf_free(&dbuf);
         JS_ThrowReferenceError(ctx, "could not load '%s' - %s: %s", filename, uv_err_name(r), uv_strerror(r));
         return JS_EXCEPTION;
     }
@@ -601,24 +648,24 @@ JSValue TJS_EvalScript(JSContext *ctx, const char *filename) {
     dbuf_size = dbuf.size;
 
     /* Add null termination, required by JS_Eval. */
-    dbuf_putc(&dbuf, '\0');
+    tbuf_putc(&dbuf, '\0');
 
     ret = JS_Eval(ctx, (char *) dbuf.buf, dbuf_size - 1, filename, JS_EVAL_TYPE_GLOBAL);
 
-    dbuf_free(&dbuf);
+    tbuf_free(&dbuf);
     return ret;
 }
 
 JSValue TJS_EvalModule(JSContext *ctx, const char *filename, bool is_main) {
-    DynBuf dbuf;
+    TBuf dbuf;
     size_t dbuf_size;
     int r;
     JSValue ret;
 
-    tjs_dbuf_init(ctx, &dbuf);
+    tbuf_init(ctx, &dbuf);
     r = tjs__load_file(ctx, &dbuf, filename);
     if (r != 0) {
-        dbuf_free(&dbuf);
+        tbuf_free(&dbuf);
         JS_ThrowReferenceError(ctx, "could not load '%s' - %s: %s", filename, uv_err_name(r), uv_strerror(r));
         return JS_EXCEPTION;
     }
@@ -626,10 +673,10 @@ JSValue TJS_EvalModule(JSContext *ctx, const char *filename, bool is_main) {
     dbuf_size = dbuf.size;
 
     /* Add null termination, required by JS_Eval. */
-    dbuf_putc(&dbuf, '\0');
+    tbuf_putc(&dbuf, '\0');
 
     ret = TJS_EvalModuleContent(ctx, filename, is_main, true, (char *) dbuf.buf, dbuf_size - 1);
 
-    dbuf_free(&dbuf);
+    tbuf_free(&dbuf);
     return ret;
 }

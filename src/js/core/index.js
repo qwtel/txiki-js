@@ -1,12 +1,14 @@
 const core = globalThis[Symbol.for('tjs.internal.core')];
 
-import { alert, confirm, prompt } from './alert-confirm-prompt.js';
 import engine from './engine.js';
 import env from './env.js';
 import { open, makeDir, makeTempFile, remove, symlink } from './fs.js';
+import { serve } from './httpserver.js';
 import { lookup } from './lookup.js';
 import pathModule from './path.js';
+import { spawn } from './process.js';
 import { addSignalListener, removeSignalListener } from './signal.js';
+import './direct-sockets/index.js';
 import { connect, listen } from './sockets.js';
 import { createStdin, createStdout, createStderr } from './stdio.js';
 import system from './system.js';
@@ -29,10 +31,8 @@ const exports = [
     'exePath',
     'exec',
     'exit',
-    'format',
     'homeDir',
     'hostName',
-    'inspect',
     'kill',
     'lchown',
     'link',
@@ -46,7 +46,6 @@ const exports = [
     'readLink',
     'realPath',
     'rename',
-    'spawn',
     'stat',
     'statFs',
     'tmpDir',
@@ -65,27 +64,6 @@ for (const key of exports) {
 
 // These values should be immutable.
 tjs.args = Object.freeze(core.args);
-
-// Alert, confirm, prompt.
-// These differ slightly from browsers, they are async.
-Object.defineProperty(tjs, 'alert', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: alert
-});
-Object.defineProperty(tjs, 'confirm', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: confirm
-});
-Object.defineProperty(tjs, 'prompt', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: prompt
-});
 
 // Engine.
 Object.defineProperty(tjs, 'engine', {
@@ -151,6 +129,14 @@ if (!core.isWorker) {
     });
 }
 
+// Process.
+Object.defineProperty(tjs, 'spawn', {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: spawn
+});
+
 // Sockets.
 Object.defineProperty(tjs, 'connect', {
     enumerable: true,
@@ -171,25 +157,52 @@ Object.defineProperty(tjs, 'lookup', {
     value: lookup
 });
 
+// HTTP server.
+Object.defineProperty(tjs, 'serve', {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: serve
+});
+
 // Stdio.
-Object.defineProperty(tjs, 'stdin', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: createStdin()
-});
-Object.defineProperty(tjs, 'stdout', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: createStdout()
-});
-Object.defineProperty(tjs, 'stderr', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: createStderr()
-});
+{
+    let _stdin, _stdout, _stderr;
+
+    Object.defineProperty(tjs, 'stdin', {
+        enumerable: true,
+        configurable: false,
+        get() {
+            if (!_stdin) {
+                _stdin = createStdin();
+            }
+
+            return _stdin;
+        }
+    });
+    Object.defineProperty(tjs, 'stdout', {
+        enumerable: true,
+        configurable: false,
+        get() {
+            if (!_stdout) {
+                _stdout = createStdout();
+            }
+
+            return _stdout;
+        }
+    });
+    Object.defineProperty(tjs, 'stderr', {
+        enumerable: true,
+        configurable: false,
+        get() {
+            if (!_stderr) {
+                _stderr = createStderr();
+            }
+
+            return _stderr;
+        }
+    });
+}
 
 // System.
 Object.defineProperty(tjs, 'system', {

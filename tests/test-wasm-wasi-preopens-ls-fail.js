@@ -14,14 +14,9 @@ const args = [
     wasiDir
 ];
 const proc = tjs.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
-const status = await proc.wait();
+const [ status, stderrStr ] = await Promise.all([ proc.wait(), proc.stderr.text() ]);
 
 // Should exit with error (RuntimeError when WASM program exits with non-zero)
 assert.ok(status.exit_status !== 0, 'WASI ls of nonexistent dir should fail');
-
-// Read stderr for error message
-const buf = new Uint8Array(4096);
-const nread = await proc.stderr.read(buf);
-const stderrStr = nread > 0 ? new TextDecoder().decode(buf.subarray(0, nread)) : '';
 
 assert.ok(stderrStr.match(/Cannot open|RuntimeError/), 'error message indicates failure');

@@ -25,7 +25,6 @@
 #include "mem.h"
 
 #include "cutils.h"
-
 #include <stdlib.h>
 
 #ifdef TJS__HAS_MIMALLOC

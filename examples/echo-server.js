@@ -2,21 +2,15 @@
 //
 
 import getopts from 'tjs:getopts';
-import { addr } from './utils.js';
 
 
 async function handleConnection(conn) {
-    console.log(`Accepted connection! ${addr(conn.localAddress)} <-> ${addr(conn.remoteAddress)}`);
+    const { readable, writable, localAddress, localPort, remoteAddress, remotePort } = await conn.opened;
 
-    const buf = new Uint8Array(65536);
-    while (true) {
-        const nread = await conn.read(buf);
-        if (nread === null) {
-            console.log('connection closed!');
-            break;
-        }
-        await conn.write(buf.subarray(0, nread));
-    }
+    console.log(`Accepted connection! ${localAddress}:${localPort} <-> ${remoteAddress}:${remotePort}`);
+
+    await readable.pipeTo(writable);
+    console.log('connection closed!');
 }
 
 const options = getopts(tjs.args.slice(2), {
@@ -30,11 +24,19 @@ const options = getopts(tjs.args.slice(2), {
     }
 });
 
-const l = await tjs.listen('tcp', options.listen, options.port);
+const server = new TCPServerSocket(options.listen, { localPort: options.port });
+const { readable, localAddress, localPort } = await server.opened;
 
-console.log(`Listening on ${addr(l.localAddress)}`); 
+console.log(`Listening on ${localAddress}:${localPort}`);
 
-for await (let conn of l) {
+const reader = readable.getReader();
+
+while (true) {
+    const { value: conn, done } = await reader.read();
+
+    if (done) {
+        break;
+    }
+
     handleConnection(conn);
-    conn = undefined;
 }

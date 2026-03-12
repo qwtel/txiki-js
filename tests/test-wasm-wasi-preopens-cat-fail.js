@@ -10,17 +10,9 @@ const args = [
     '/nonexistent/file.txt'
 ];
 const proc = tjs.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
-const status = await proc.wait();
+const [ status, errStr ] = await Promise.all([ proc.wait(), proc.stderr.text() ]);
 
 // Should exit with error
 assert.eq(status.exit_status, 1, 'WASI cat of nonexistent file exits with 1');
-
-// Read stderr for error message
-const buf = new Uint8Array(4096);
-const nread = await proc.stderr.read(buf);
-
-assert.ok(nread > 0, 'stderr was read for failed cat');
-
-const errStr = new TextDecoder().decode(buf.subarray(0, nread));
-
+assert.ok(errStr.length > 0, 'stderr was read for failed cat');
 assert.ok(errStr.match(/Cannot open/), 'error message mentions cannot open');

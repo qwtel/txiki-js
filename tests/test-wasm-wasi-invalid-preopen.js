@@ -12,12 +12,7 @@ const args = [
     wasmFile
 ];
 const proc = tjs.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
-const status = await proc.wait();
-
-// Read stderr for error message
-const buf = new Uint8Array(4096);
-const nread = await proc.stderr.read(buf);
-const stderrStr = nread > 0 ? new TextDecoder().decode(buf.subarray(0, nread)) : '';
+const [ status, stderrStr ] = await Promise.all([ proc.wait(), proc.stderr.text() ]);
 
 // On Unix, we expect a LinkError. On Windows, WAMR crashes (bug in WAMR).
 if (status.exit_status === 1) {
