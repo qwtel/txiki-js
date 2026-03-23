@@ -143,7 +143,9 @@ static JSValue tjs__set_cookie_jar_path(JSContext *ctx, JSValue this_val, int ar
 }
 
 static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
+#ifdef TJS__HAS_NETWORK
     tjs__mod_dns_init(ctx, ns);
+#endif
     tjs__mod_engine_init(ctx, ns);
     tjs__mod_error_init(ctx, ns);
     tjs__mod_fs_init(ctx, ns);
@@ -161,7 +163,9 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_sys_init(ctx, ns);
     tjs__mod_text_coding_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
+#ifdef TJS__HAS_NETWORK
     tjs__mod_udp_init(ctx, ns);
+#endif
     tjs__mod_url_init(ctx, ns);
 #ifndef TJS__OMIT_WASM
     tjs__mod_wasm_init(ctx, ns);

@@ -29,6 +29,7 @@
 #include <string.h>
 
 
+#ifndef TJS__OMIT_SUBPROCESS
 static JSClassID tjs_process_class_id;
 
 typedef struct {
@@ -520,7 +521,9 @@ fail:
     return ret;
 }
 #endif
+#endif
 
+#ifndef TJS__OMIT_SUBPROCESS
 static JSValue tjs_kill(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     int32_t pid;
     if (JS_IsUndefined(argv[0]) || JS_ToInt32(ctx, &pid, argv[0])) {
@@ -545,7 +548,9 @@ static JSValue tjs_kill(JSContext *ctx, JSValue this_val, int argc, JSValue *arg
 
     return JS_UNDEFINED;
 }
+#endif
 
+#ifndef TJS__OMIT_SUBPROCESS
 static const JSCFunctionListEntry tjs_process_proto_funcs[] = {
     TJS_CFUNC_DEF("kill", 1, tjs_process_kill),
     TJS_CFUNC_DEF("wait", 0, tjs_process_wait),
@@ -560,15 +565,17 @@ static const JSCFunctionListEntry tjs_process_funcs[] = {
     TJS_CFUNC_DEF("exec", 1, tjs_exec),
 #endif
 };
+#endif
 
 void tjs__mod_process_init(JSContext *ctx, JSValue ns) {
     JSRuntime *rt = JS_GetRuntime(ctx);
 
+#ifndef TJS__OMIT_SUBPROCESS
     JS_NewClassID(rt, &tjs_process_class_id);
     JS_NewClass(rt, tjs_process_class_id, &tjs_process_class);
     JSValue proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, proto, tjs_process_proto_funcs, countof(tjs_process_proto_funcs));
     JS_SetClassProto(ctx, tjs_process_class_id, proto);
-
     JS_SetPropertyFunctionList(ctx, ns, tjs_process_funcs, countof(tjs_process_funcs));
+#endif
 }

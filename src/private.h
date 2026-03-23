@@ -97,7 +97,10 @@ struct TJSRuntime {
     } builtins;
 };
 
+#ifdef TJS__HAS_NETWORK
 void tjs__mod_dns_init(JSContext *ctx, JSValue ns);
+void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
+#endif
 void tjs__mod_engine_init(JSContext *ctx, JSValue ns);
 void tjs__mod_error_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fs_init(JSContext *ctx, JSValue ns);
@@ -118,7 +121,6 @@ void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
 void tjs__mod_text_coding_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
-void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
 #ifndef TJS__OMIT_WASM
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
 #endif

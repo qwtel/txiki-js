@@ -22,6 +22,7 @@ const BuildOpts = struct {
     with_wasm: bool,
     with_sqlite: bool,
     with_network: bool,
+    with_subprocess: bool,
     matrix: bool,
 };
 
@@ -159,7 +160,6 @@ fn build2(
         "src/version.c",
         "src/vm.c",
         "src/worker.c",
-        "src/mod_dns.c",
         "src/mod_engine.c",
         "src/mod_fs.c",
         "src/mod_fswatch.c",
@@ -168,7 +168,6 @@ fn build2(
         "src/mod_process.c",
         "src/mod_streams.c",
         "src/mod_sys.c",
-        "src/mod_udp.c",
         "src/bundles/c/core/core.c",
         "src/bundles/c/core/polyfills.c",
         "src/bundles/c/core/run-main.c",
@@ -179,6 +178,8 @@ fn build2(
     if (opts.with_wasm) try c_sources.append("src/wasm.c");
     if (opts.with_network) {
         try c_sources.appendSlice(&.{
+            "src/mod_dns.c",
+            "src/mod_udp.c",
             "src/lws-utils.c",
             "src/httpclient.c",
             "src/httpserver.c",
@@ -214,6 +215,9 @@ fn build2(
     }
     if (opts.with_network) {
         lib.root_module.addCMacro("TJS__HAS_NETWORK", "1");
+    }
+    if (!opts.with_subprocess) {
+        lib.root_module.addCMacro("TJS__OMIT_SUBPROCESS", "1");
     }
 
     const tjs = b.addExecutable(.{
@@ -346,6 +350,7 @@ pub fn build(b: *std.Build) !void {
     const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without WAMR (WASM)") orelse false;
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build with sqlite3") orelse false;
     const opt_no_network = b.option(bool, "no-network", "If set, build without HTTP/WebSocket support") orelse false;
+    const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable tjs.spawn and tjs.exec (for sandbox/secure builds)") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
     {
@@ -373,6 +378,7 @@ pub fn build(b: *std.Build) !void {
                 .with_wasm = !opt_no_wasm,
                 .with_sqlite = !opt_no_sqlite,
                 .with_network = !opt_no_network,
+                .with_subprocess = !opt_no_subprocess,
                 .matrix = true,
             });
 
@@ -395,6 +401,7 @@ pub fn build(b: *std.Build) !void {
         .with_wasm = !opt_no_wasm,
         .with_sqlite = !opt_no_sqlite,
         .with_network = !opt_no_network,
+        .with_subprocess = !opt_no_subprocess,
         .matrix = false,
     });
 
