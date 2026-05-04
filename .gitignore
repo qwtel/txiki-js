@@ -6,6 +6,10 @@
 .cache
 .zig-cache
 
+# deps/libwebsockets: generated LWS config headers (see deps/libwebsockets/.gitignore)
+deps/libwebsockets/zig/lws_config.h
+deps/libwebsockets/zig/lws_config_private.h
+
 build/
 zig-out/
 src/bundles/js/

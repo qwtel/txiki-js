@@ -1,6 +1,7 @@
 .{
     .name = .ada,
     .version = "0.0.0",
+    .fingerprint = 0x8d7087680d0b0dc9,
     .paths = .{""},
     .minimum_zig_version = "0.15.1",
 }

@@ -10,10 +10,11 @@ pub fn build(b: *std.Build) !void {
         .root_module = b.createModule(.{
             .target = target,
             .optimize = mode,
+            .link_libc = true,
         }),
     });
 
-    lib.addIncludePath(b.path("."));
+    lib.root_module.addIncludePath(b.path("."));
 
     const common_flags: []const []const u8 = &.{
         "-std=c99",
@@ -81,12 +82,10 @@ pub fn build(b: *std.Build) !void {
         flags = common_flags ++ debug_flags;
     }
 
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("sqlite3.c"),
         .flags = flags,
     });
-
-    lib.linkLibC();
 
     lib.installHeader(b.path("sqlite3.h"), "sqlite3.h");
     lib.installHeader(b.path("sqlite3ext.h"), "sqlite3ext.h");

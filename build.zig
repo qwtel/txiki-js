@@ -83,49 +83,50 @@ fn build2(
             .root_source_file = b.path("src/zig_c_bindings.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
-    lib.linkLibrary(dep_quickjs.artifact("qjs"));
+    lib.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
     lib.installLibraryHeaders(dep_quickjs.artifact("qjs"));
 
-    lib.linkLibrary(dep_libuv.artifact("uv_a"));
+    lib.root_module.linkLibrary(dep_libuv.artifact("uv_a"));
     lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
-    lib.linkLibrary(dep_miniz.artifact("miniz"));
+    lib.root_module.linkLibrary(dep_miniz.artifact("miniz"));
     lib.installLibraryHeaders(dep_miniz.artifact("miniz"));
-    lib.linkLibrary(dep_ada.artifact("ada"));
+    lib.root_module.linkLibrary(dep_ada.artifact("ada"));
     lib.installLibraryHeaders(dep_ada.artifact("ada"));
 
     if (opts.with_sqlite) {
-        lib.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        lib.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
         lib.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
     }
 
     if (opts.with_wasm) {
         const wamr = dep_wamr.?;
-        lib.linkLibrary(wamr.artifact("vmlib"));
+        lib.root_module.linkLibrary(wamr.artifact("vmlib"));
         lib.installLibraryHeaders(wamr.artifact("vmlib"));
-        lib.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
+        lib.root_module.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
     }
 
     if (opts.with_mimalloc) {
-        lib.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
+        lib.root_module.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
         lib.installLibraryHeaders(dep_mimalloc.artifact("mimalloc-static"));
     }
 
     if (opts.with_network) {
         const dep_lws = dep_libwebsockets.?;
         const dep_mtls = dep_mbedtls.?;
-        lib.linkLibrary(dep_lws.artifact("websockets"));
+        lib.root_module.linkLibrary(dep_lws.artifact("websockets"));
         lib.installLibraryHeaders(dep_lws.artifact("websockets"));
-        lib.linkLibrary(dep_mtls.artifact("mbedtls"));
-        lib.linkLibrary(dep_mtls.artifact("mbedx509"));
-        lib.linkLibrary(dep_mtls.artifact("mbedcrypto"));
+        lib.root_module.linkLibrary(dep_mtls.artifact("mbedtls"));
+        lib.root_module.linkLibrary(dep_mtls.artifact("mbedx509"));
+        lib.root_module.linkLibrary(dep_mtls.artifact("mbedcrypto"));
         lib.installLibraryHeaders(dep_mtls.artifact("mbedtls"));
     }
 
     if (target.result.os.tag != .windows and !target.result.abi.isAndroid()) {
-        lib.linkSystemLibrary("pthread");
+        lib.root_module.linkSystemLibrary("pthread", .{});
     }
 
     var cflags = std.array_list.Managed([]const u8).init(b.allocator);
@@ -142,7 +143,7 @@ fn build2(
         });
     }
 
-    lib.addIncludePath(b.path("src"));
+    lib.root_module.addIncludePath(b.path("src"));
 
     var c_sources = std.array_list.Managed([]const u8).init(b.allocator);
     try c_sources.appendSlice(&.{
@@ -186,12 +187,12 @@ fn build2(
             "src/ws.c",
         });
     }
-    lib.addCSourceFiles(.{
+    lib.root_module.addCSourceFiles(.{
         .files = c_sources.items,
         .flags = cflags.items,
     });
     if (target.result.os.tag == .linux or target.result.os.tag.isBSD()) {
-        lib.addCSourceFiles(.{
+        lib.root_module.addCSourceFiles(.{
             .files = &.{"src/mod_posix-socket.c"},
             .flags = cflags.items,
         });
@@ -225,10 +226,11 @@ fn build2(
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
-    tjs.linkLibrary(lib);
-    tjs.addCSourceFile(.{
+    tjs.root_module.linkLibrary(lib);
+    tjs.root_module.addCSourceFile(.{
         .file = b.path("src/cli.c"),
         .flags = cflags.items,
     });
@@ -238,15 +240,14 @@ fn build2(
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
-    tjsc.linkLibrary(dep_quickjs.artifact("qjs"));
-    tjsc.addCSourceFile(.{
+    tjsc.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
+    tjsc.root_module.addCSourceFile(.{
         .file = b.path("src/qjsc.c"),
         .flags = cflags.items,
     });
-
-    lib.linkLibC();
 
     if (opts.with_sqlite and !opts.matrix) {
         const sqlite_ext_test = b.addLibrary(.{
@@ -255,10 +256,11 @@ fn build2(
             .root_module = b.createModule(.{
                 .target = target,
                 .optimize = optimize,
+                .link_libc = true,
             }),
         });
-        sqlite_ext_test.addCSourceFile(.{ .file = b.path("tests/fixtures/sqlite-test-ext.c") });
-        sqlite_ext_test.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        sqlite_ext_test.root_module.addCSourceFile(.{ .file = b.path("tests/fixtures/sqlite-test-ext.c") });
+        sqlite_ext_test.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
         const art = b.addInstallArtifact(sqlite_ext_test, .{
             .dest_dir = .{
                 .override = .{ .custom = "../build/" },
@@ -274,21 +276,23 @@ fn build2(
                 .root_source_file = b.path("src/v8_serialize_test.zig"),
                 .target = target,
                 .optimize = optimize,
+                .link_libc = true,
+                .link_libcpp = true,
             }),
         });
-        exe.linkLibrary(dep_quickjs.artifact("qjs"));
-        exe.linkLibrary(dep_sqlite3.artifact("sqlite3"));
-        exe.linkLibrary(dep_libuv.artifact("uv_a"));
-        exe.linkLibrary(dep_miniz.artifact("miniz"));
-        exe.linkLibrary(dep_ada.artifact("ada"));
+        exe.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
+        exe.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        exe.root_module.linkLibrary(dep_libuv.artifact("uv_a"));
+        exe.root_module.linkLibrary(dep_miniz.artifact("miniz"));
+        exe.root_module.linkLibrary(dep_ada.artifact("ada"));
         exe.installLibraryHeaders(dep_libuv.artifact("uv_a"));
         exe.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
         exe.installLibraryHeaders(dep_miniz.artifact("miniz"));
         exe.installLibraryHeaders(dep_ada.artifact("ada"));
-        exe.addIncludePath(b.path("src"));
+        exe.root_module.addIncludePath(b.path("src"));
         if (opts.with_wasm) {
             const wamr = dep_wamr.?;
-            exe.linkLibrary(wamr.artifact("vmlib"));
+            exe.root_module.linkLibrary(wamr.artifact("vmlib"));
             exe.installLibraryHeaders(wamr.artifact("vmlib"));
         } else {
             exe.root_module.addCMacro("TJS__OMIT_WASM", "1");
@@ -305,30 +309,32 @@ fn build2(
                 .root_source_file = b.path("src/v8_serialize_test.zig"),
                 .target = target,
                 .optimize = optimize,
+                .link_libc = true,
+                .link_libcpp = true,
             }),
         });
         // unit_tests.root_module.addCMacro("DUMP_LEAKS", "1");
-        unit_tests.linkLibrary(dep_quickjs.artifact("qjs"));
-        unit_tests.linkLibrary(dep_libuv.artifact("uv_a"));
-        unit_tests.linkLibrary(dep_miniz.artifact("miniz"));
-        unit_tests.linkLibrary(dep_ada.artifact("ada"));
+        unit_tests.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
+        unit_tests.root_module.linkLibrary(dep_libuv.artifact("uv_a"));
+        unit_tests.root_module.linkLibrary(dep_miniz.artifact("miniz"));
+        unit_tests.root_module.linkLibrary(dep_ada.artifact("ada"));
         unit_tests.installLibraryHeaders(dep_libuv.artifact("uv_a"));
         unit_tests.installLibraryHeaders(dep_miniz.artifact("miniz"));
         unit_tests.installLibraryHeaders(dep_ada.artifact("ada"));
         if (opts.with_sqlite) {
-            unit_tests.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+            unit_tests.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
             unit_tests.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
         } else {
             unit_tests.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
         }
         if (opts.with_wasm) {
             const wamr = dep_wamr.?;
-            unit_tests.linkLibrary(wamr.artifact("vmlib"));
+            unit_tests.root_module.linkLibrary(wamr.artifact("vmlib"));
             unit_tests.installLibraryHeaders(wamr.artifact("vmlib"));
         } else {
             unit_tests.root_module.addCMacro("TJS__OMIT_WASM", "1");
         }
-        unit_tests.addIncludePath(b.path("src"));
+        unit_tests.root_module.addIncludePath(b.path("src"));
 
         const run_unit_tests = b.addRunArtifact(unit_tests);
         test_step.dependOn(&run_unit_tests.step);
@@ -355,20 +361,22 @@ pub fn build(b: *std.Build) !void {
 
     {
         const ac = b.allocator;
+        const io = b.graph.io;
+        const cwd = std.Io.Dir.cwd();
 
-        const zon_file = try std.fs.cwd().openFile("build.zig.zon", .{});
-        const zon_buffer = try zon_file.readToEndAllocOptions(ac, 1024 * 1024, null, std.mem.Alignment.@"1", 0);
-        const zon_parsed = try std.zon.parse.fromSlice(BuildZon, ac, zon_buffer, null, .{ .ignore_unknown_fields = true });
+        const zon_buffer = try cwd.readFileAllocOptions(io, "build.zig.zon", ac, std.Io.Limit.limited(1024 * 1024), std.mem.Alignment.@"1", 0);
+        const zon_parsed = try std.zon.parse.fromSliceAlloc(BuildZon, ac, zon_buffer, null, .{ .ignore_unknown_fields = true });
+        defer std.zon.parse.free(ac, zon_parsed);
         const tjs_version = try std.SemanticVersion.parse(zon_parsed.version);
 
-        var buf0 = try std.fs.cwd().readFileAlloc(ac, b.path("src/version.h.in").getPath(b), 1024 * 1024);
+        var buf0 = try cwd.readFileAlloc(io, b.path("src/version.h.in").getPath(b), ac, std.Io.Limit.limited(1024 * 1024));
         var buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_MAJOR@", try usizeToStr(ac, tjs_version.major));
         buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_MINOR@", try usizeToStr(ac, tjs_version.minor));
         buf1 = try std.mem.replaceOwned(u8, ac, buf0, "@TJS__VERSION_PATCH@", try usizeToStr(ac, tjs_version.patch));
         buf0 = try std.mem.replaceOwned(u8, ac, buf1, "@TJS__VERSION_SUFFIX@", if (tjs_version.pre) |s| try std.fmt.allocPrint(ac, "-{s}", .{s}) else "");
-        const f = try std.fs.cwd().createFile(b.path("src/version.h").getPath(b), .{ .truncate = true });
-        defer f.close();
-        try f.writeAll(buf0);
+        const f = try cwd.createFile(io, b.path("src/version.h").getPath(b), .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io, buf0);
     }
 
     if (opt_matrix) {

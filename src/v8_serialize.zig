@@ -325,7 +325,7 @@ pub fn Serializer(comptime Delegate: type) type {
                     @compileError("Only signed integer types can be written as zigzag.");
                 }
             }
-            const UnsignedT = @Type(.{ .int = .{ .bits = @typeInfo(T).int.bits, .signedness = .unsigned } });
+            const UnsignedT = @Int(.unsigned, @typeInfo(T).int.bits);
             const bit_value: UnsignedT = @bitCast(value);
             const sign_bit: UnsignedT = @bitCast(value >> (@bitSizeOf(T) - 1));
             const zigzag_value: UnsignedT = bit_value << 1 ^ sign_bit;
@@ -1154,7 +1154,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                     @compileError("Only signed integer types can be read as zigzag.");
                 }
             }
-            const UnsignedT = @Type(.{ .int = .{ .bits = @typeInfo(T).int.bits, .signedness = .unsigned } });
+            const UnsignedT = @Int(.unsigned, @typeInfo(T).int.bits);
             const unsigned_value: UnsignedT = try self.readVarint(UnsignedT);
             const a: T = @intCast(unsigned_value >> 1);
             const b: T = @intCast(unsigned_value & 1);

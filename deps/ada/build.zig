@@ -10,16 +10,16 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
+            .link_libcpp = true,
         }),
     });
 
-    lib.addIncludePath(b.path("."));
-    lib.addCSourceFile(.{
+    lib.root_module.addIncludePath(b.path("."));
+    lib.root_module.addCSourceFile(.{
         .file = b.path("ada.cpp"),
         .flags = &.{ "-std=c++20" },
     });
-    lib.linkLibC();
-    lib.linkLibCpp();
     lib.installHeadersDirectory(b.path("."), "", .{});
 
     b.installArtifact(lib);

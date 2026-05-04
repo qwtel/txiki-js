@@ -257,7 +257,7 @@ fn allCallbackImpl(w: *AllWork) !void {
     }
 
     // Step rows
-    var rows_builder = std.ArrayListUnmanaged(Row){};
+    var rows_builder: std.ArrayListUnmanaged(Row) = .empty;
     defer rows_builder.deinit(ac);
 
     var rc: c_int = c.SQLITE_OK;

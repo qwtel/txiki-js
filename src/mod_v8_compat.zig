@@ -400,7 +400,7 @@ pub fn initModV8Compat(ctx: ?*c.JSContext, ns: c.JSValue) void {
     c.JS_SetClassProto(ctx, serializer_class_id, ser_proto);
 
     const ser_ctor = c.JS_NewCFunction2(ctx, jsSerializerConstructor, "Serializer", 0, c.JS_CFUNC_constructor_or_func, 0);
-    c.JS_SetConstructor(ctx, ser_ctor, ser_proto);
+    _ = c.JS_SetConstructor(ctx, ser_ctor, ser_proto);
 
     _ = c.JS_NewClassID(rt, &deserializer_class_id);
     _ = c.JS_NewClass(rt, deserializer_class_id, &deserializer_class);
@@ -410,7 +410,7 @@ pub fn initModV8Compat(ctx: ?*c.JSContext, ns: c.JSValue) void {
     c.JS_SetClassProto(ctx, deserializer_class_id, des_proto);
 
     const des_ctor = c.JS_NewCFunction2(ctx, jsDeserializerConstructor, "Deserializer", 1, c.JS_CFUNC_constructor_or_func, 0);
-    c.JS_SetConstructor(ctx, des_ctor, des_proto);
+    _ = c.JS_SetConstructor(ctx, des_ctor, des_proto);
 
     _ = c.JS_DefinePropertyValueStr(ctx, ns, "Serializer", ser_ctor, c.JS_PROP_C_W_E);
     _ = c.JS_DefinePropertyValueStr(ctx, ns, "Deserializer", des_ctor, c.JS_PROP_C_W_E);
