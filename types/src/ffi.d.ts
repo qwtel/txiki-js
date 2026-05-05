@@ -16,10 +16,39 @@
  * @module tjs:ffi
  */
 declare module 'tjs:ffi'{
-    export type PointerAddr = bigint;
+    /**
+     * Opaque pointer object. Stores a native `void*` with full precision.
+     * Null pointers are represented as JavaScript `null`.
+     */
+    export interface NativePointer {
+        /** Returns hex string representation, e.g. `"0x7fff5a2b3c00"`. */
+        toString(): string;
+        /** Returns a new pointer offset by `n` bytes. */
+        offset(n: number): NativePointer;
+        /** Returns `true` if both pointers refer to the same address. */
+        equals(other: NativePointer | null): boolean;
+    }
+
+    /**
+     * Direct memory reads from a pointer at a given byte offset.
+     * Faster than creating an intermediate buffer for one-off reads.
+     */
+    export const read: {
+        u8(ptr: NativePointer, offset?: number): number;
+        i8(ptr: NativePointer, offset?: number): number;
+        u16(ptr: NativePointer, offset?: number): number;
+        i16(ptr: NativePointer, offset?: number): number;
+        u32(ptr: NativePointer, offset?: number): number;
+        i32(ptr: NativePointer, offset?: number): number;
+        u64(ptr: NativePointer, offset?: number): number;
+        i64(ptr: NativePointer, offset?: number): number;
+        f32(ptr: NativePointer, offset?: number): number;
+        f64(ptr: NativePointer, offset?: number): number;
+        ptr(ptr: NativePointer, offset?: number): NativePointer | null;
+    };
 
     export class DlSymbol{
-        readonly addr: PointerAddr;
+        readonly addr: NativePointer;
     }
 
     interface SimpleType<T = any>{
@@ -47,9 +76,14 @@ declare module 'tjs:ffi'{
     export class Lib{
         constructor(libname: string);
         symbol(name: string): DlSymbol;
+        /**
+         * Explicitly close the shared library handle. After calling this,
+         * any symbols obtained from this library must not be used.
+         */
+        close(): void;
         static LIBC_NAME: string;
         static LIBM_NAME: string;
-        
+
         registerType(name: string, type: SimpleType): void;
         getType(name: string): undefined|SimpleType;
         registerFunction(name: string, func: CFunction): void;
@@ -75,7 +109,7 @@ declare module 'tjs:ffi'{
         sint64: SimpleType<number>,
         float: SimpleType<number>,
         double: SimpleType<number>,
-        pointer: SimpleType<PointerAddr>,
+        pointer: SimpleType<NativePointer>,
         longdouble: SimpleType<number>, 
         uchar: SimpleType<number>,
         schar: SimpleType<number>,
@@ -98,27 +132,34 @@ declare module 'tjs:ffi'{
         jscallback: SimpleType<(...args: any)=>any>
     }
 
+    /**
+     * Platform-specific shared library file extension: `'dylib'` on macOS,
+     * `'so'` on Linux, `'dll'` on Windows.
+     */
+    export const suffix: string;
+
     export function bufferToString(buf: Uint8Array): string;
     export function stringToBuffer(s: string): Uint8Array;
+    export function bufferToPointer(buf: Uint8Array): NativePointer;
 
     export class Pointer<T, N extends number>{
-        constructor(addr: PointerAddr, level: N, type: SimpleType<T>);
-        readonly addr: PointerAddr;
+        constructor(addr: NativePointer, level: N, type: SimpleType<T>);
+        readonly addr: NativePointer;
         readonly level: N;
         readonly type: T;
         readonly isNull: boolean;
-        
+
         deref(): N extends 1 ? T : Pointer<T, any>;
-        
+
         derefAll(): T;
-        
+
         static createRef<T>(type: SimpleType<T>, data: T): Pointer<T, 1>;
         static createRefFromBuf<T>(type: SimpleType<T>, buf: Uint8Array): Pointer<T, 1>;
     }
 
     export class PointerType<T, ST extends SimpleType<T>, N extends number> extends AdvancedType<Pointer<T, N>, PointerType<T, ST, N>>{
         constructor(type: ST , level: N);
-        toBuffer(data: Pointer<T, N>|PointerAddr, ctx?: {}): Uint8Array;
+        toBuffer(data: Pointer<T, N>|NativePointer, ctx?: {}): Uint8Array;
         fromBuffer(buf: Uint8Array, ctx?: {}): Pointer<T, N>;
         get type(): ST;
         get level(): N;
@@ -148,6 +189,79 @@ declare module 'tjs:ffi'{
     export function strerror(err?: number): string;
     export class JSCallback<RT, AT extends []>{ //TODO: better typing mechanism for Arg types
         constructor(rtype: SimpleType<RT>, argtypes: Array<SimpleType<AT[0]>>, func: (...args: AT)=>RT);
-        readonly addr: PointerAddr;
+        readonly addr: NativePointer;
     }
+
+    /**
+     * String aliases for FFI types. Can be used in {@link dlopen} symbol definitions
+     * instead of type objects from {@link types}.
+     *
+     * Supports short (`i32`, `u8`, `f64`, `ptr`), C-style (`int`, `char`, `double`),
+     * and stdint-style (`uint32_t`, `int64_t`) names.
+     */
+    export type TypeAlias =
+        | 'void'
+        | 'u8' | 'uint8' | 'uint8_t'
+        | 'i8' | 'sint8' | 'int8_t'
+        | 'u16' | 'uint16' | 'uint16_t'
+        | 'i16' | 'sint16' | 'int16_t'
+        | 'u32' | 'uint32' | 'uint32_t' | 'int'
+        | 'i32' | 'sint32' | 'int32_t'
+        | 'u64' | 'uint64' | 'uint64_t'
+        | 'i64' | 'sint64' | 'int64_t'
+        | 'f32' | 'float'
+        | 'f64' | 'double'
+        | 'pointer' | 'ptr'
+        | 'string' | 'cstring'
+        | 'buffer'
+        | 'uchar' | 'schar' | 'char'
+        | 'ushort' | 'sshort'
+        | 'uint' | 'sint'
+        | 'ulong' | 'slong' | 'long'
+        | 'size_t' | 'ssize_t';
+
+    export type TypeOrAlias = SimpleType | TypeAlias;
+
+    /**
+     * Describes a native function symbol for use with {@link dlopen}.
+     */
+    export interface DlopenSymbol {
+        /** Argument types. Defaults to `[]` (no arguments) if omitted. */
+        args?: TypeOrAlias[];
+        /** Return type. Defaults to `'void'` if omitted. */
+        returns?: TypeOrAlias;
+        /** Number of fixed arguments for variadic functions. */
+        fixed?: number;
+    }
+
+    export interface DlopenResult<T extends Record<string, DlopenSymbol>> {
+        /** Object containing callable functions for each declared symbol. */
+        symbols: { [K in keyof T]: (...args: any[]) => any };
+        /** Close the shared library handle. */
+        close(): void;
+    }
+
+    /**
+     * Load a shared library and bind symbols as callable functions.
+     *
+     * Types can be specified as {@link SimpleType} objects or as string aliases
+     * (e.g. `'i32'`, `'string'`, `'ptr'`).
+     *
+     * ```js
+     * import { dlopen } from 'tjs:ffi';
+     *
+     * const { symbols, close } = dlopen('./libfoo.dylib', {
+     *     add: { args: ['i32', 'i32'], returns: 'i32' },
+     *     version: { args: [], returns: 'string' },
+     * });
+     *
+     * console.log(symbols.add(1, 2));
+     * console.log(symbols.version());
+     * close();
+     * ```
+     *
+     * @param path - Path to the shared library.
+     * @param symbols - Object mapping symbol names to their type signatures.
+     */
+    export function dlopen<T extends Record<string, DlopenSymbol>>(path: string, symbols: T): DlopenResult<T>;
 }

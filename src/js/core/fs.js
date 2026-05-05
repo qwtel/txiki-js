@@ -24,12 +24,17 @@ const fhProxyHandler = {
                                 if (nread === null) {
                                     controller.close();
                                     controller.byobRequest.respond(0);
+                                    await target.close();
                                 } else {
                                     controller.byobRequest.respond(nread);
                                 }
                             } catch (e) {
                                 controller.error(e);
+                                await target.close();
                             }
+                        },
+                        async cancel() {
+                            await target.close();
                         }
                     });
                 }
@@ -117,6 +122,21 @@ export async function symlink(path, newPath, options) {
     return core.symlink(path, newPath, flags);
 }
 
+export async function writeFile(path, data, options = {}) {
+    const mode = options.mode ?? 0o644;
+    const f = await core.open(path, 'w', mode);
+
+    try {
+        if (typeof data === 'string') {
+            data = new TextEncoder().encode(data);
+        }
+
+        await f.write(data);
+    } finally {
+        await f.close();
+    }
+}
+
 // This is an adaptation of the 'rimraf' version bundled in Node.
 //
 
@@ -135,7 +155,8 @@ const retryErrors = new Set([
 const isWindows = core.platform === 'windows';
 const _epermHandler = isWindows ? _fixWinEPERM : _rmdir;
 
-export async function remove(path, options = { maxRetries: 0, retryDelay: 100 }) {
+export async function remove(path, options = {}) {
+    options = { maxRetries: 0, retryDelay: 100, ...options };
     let stats;
 
     try {

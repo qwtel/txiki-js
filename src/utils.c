@@ -170,33 +170,15 @@ void tjs_call_handler(JSContext *ctx, JSValue func, int argc, JSValue *argv) {
         TJS_Stop(qrt);
     }
     JS_FreeValue(ctx, ret);
+    tjs__drain_microtasks(ctx);
 }
 
 JSValue TJS_InitPromise(JSContext *ctx, TJSPromise *p) {
-    JSValue rfuncs[2];
-    p->p = JS_NewPromiseCapability(ctx, rfuncs);
+    p->p = JS_NewPromiseCapability(ctx, p->rfuncs);
     if (JS_IsException(p->p)) {
         return JS_EXCEPTION;
     }
-    p->rfuncs[0] = JS_DupValue(ctx, rfuncs[0]);
-    p->rfuncs[1] = JS_DupValue(ctx, rfuncs[1]);
     return JS_DupValue(ctx, p->p);
-}
-
-bool TJS_IsPromisePending(JSContext *ctx, TJSPromise *p) {
-    return !JS_IsUndefined(p->p);
-}
-
-void TJS_FreePromise(JSContext *ctx, TJSPromise *p) {
-    JS_FreeValue(ctx, p->rfuncs[0]);
-    JS_FreeValue(ctx, p->rfuncs[1]);
-    JS_FreeValue(ctx, p->p);
-}
-
-void TJS_FreePromiseRT(JSRuntime *rt, TJSPromise *p) {
-    JS_FreeValueRT(rt, p->rfuncs[0]);
-    JS_FreeValueRT(rt, p->rfuncs[1]);
-    JS_FreeValueRT(rt, p->p);
 }
 
 void TJS_ClearPromise(JSContext *ctx, TJSPromise *p) {
@@ -205,57 +187,14 @@ void TJS_ClearPromise(JSContext *ctx, TJSPromise *p) {
     p->rfuncs[1] = JS_UNDEFINED;
 }
 
-void TJS_MarkPromise(JSRuntime *rt, TJSPromise *p, JS_MarkFunc *mark_func) {
-    JS_MarkValue(rt, p->p, mark_func);
-    JS_MarkValue(rt, p->rfuncs[0], mark_func);
-    JS_MarkValue(rt, p->rfuncs[1], mark_func);
-}
-
-void TJS_SettlePromise(JSContext *ctx, TJSPromise *p, bool is_reject, int argc, JSValue *argv) {
-    JSValue ret = JS_Call(ctx, p->rfuncs[is_reject], JS_UNDEFINED, argc, argv);
-    for (int i = 0; i < argc; i++) {
-        JS_FreeValue(ctx, argv[i]);
-    }
+void TJS_SettlePromise(JSContext *ctx, TJSPromise *p, bool is_reject, JSValue arg) {
+    JSValue ret = JS_Call(ctx, p->rfuncs[is_reject], JS_UNDEFINED, 1, &arg);
+    JS_FreeValue(ctx, arg);
     JS_FreeValue(ctx, ret); /* XXX: what to do if exception ? */
     JS_FreeValue(ctx, p->rfuncs[0]);
     JS_FreeValue(ctx, p->rfuncs[1]);
-    TJS_FreePromise(ctx, p);
-}
-
-void TJS_ResolvePromise(JSContext *ctx, TJSPromise *p, int argc, JSValue *argv) {
-    TJS_SettlePromise(ctx, p, false, argc, argv);
-}
-
-void TJS_RejectPromise(JSContext *ctx, TJSPromise *p, int argc, JSValue *argv) {
-    TJS_SettlePromise(ctx, p, true, argc, argv);
-}
-
-static inline JSValue tjs__settled_promise(JSContext *ctx, bool is_reject, int argc, JSValue *argv) {
-    JSValue promise, resolving_funcs[2], ret;
-
-    promise = JS_NewPromiseCapability(ctx, resolving_funcs);
-    if (JS_IsException(promise)) {
-        return JS_EXCEPTION;
-    }
-
-    ret = JS_Call(ctx, resolving_funcs[is_reject], JS_UNDEFINED, argc, argv);
-
-    for (int i = 0; i < argc; i++) {
-        JS_FreeValue(ctx, argv[i]);
-    }
-    JS_FreeValue(ctx, ret);
-    JS_FreeValue(ctx, resolving_funcs[0]);
-    JS_FreeValue(ctx, resolving_funcs[1]);
-
-    return promise;
-}
-
-JSValue TJS_NewResolvedPromise(JSContext *ctx, int argc, JSValue *argv) {
-    return tjs__settled_promise(ctx, false, argc, argv);
-}
-
-JSValue TJS_NewRejectedPromise(JSContext *ctx, int argc, JSValue *argv) {
-    return tjs__settled_promise(ctx, true, argc, argv);
+    JS_FreeValue(ctx, p->p);
+    TJS_ClearPromise(ctx, p);
 }
 
 static void tjs__buf_free(JSRuntime *rt, void *opaque, void *ptr) {
@@ -264,6 +203,50 @@ static void tjs__buf_free(JSRuntime *rt, void *opaque, void *ptr) {
 
 JSValue TJS_NewUint8Array(JSContext *ctx, uint8_t *data, size_t size) {
     return JS_NewUint8Array(ctx, data, size, tjs__buf_free, NULL, false);
+}
+
+void tjs_buf_ref_init(TJSBufferRef *ref) {
+    ref->abuf = JS_UNDEFINED;
+    ref->data = NULL;
+    ref->size = 0;
+    ref->was_immutable = false;
+}
+
+int tjs_buf_ref_get(JSContext *ctx, JSValueConst obj, TJSBufferRef *ref) {
+    tjs_buf_ref_init(ref);
+
+    uint8_t *data = JS_GetUint8Array(ctx, &ref->size, obj);
+    if (!data) {
+        return -1;
+    }
+
+    ref->abuf = JS_GetTypedArrayBuffer(ctx, obj, NULL, NULL, NULL);
+    if (JS_IsException(ref->abuf)) {
+        ref->abuf = JS_UNDEFINED;
+        ref->size = 0;
+        return -1;
+    }
+
+    ref->data = data;
+    ref->was_immutable = JS_IsImmutableArrayBuffer(ref->abuf) == 1;
+    if (!ref->was_immutable) {
+        JS_SetImmutableArrayBuffer(ref->abuf, true);
+    }
+
+    return 0;
+}
+
+void tjs_buf_ref_release(JSContext *ctx, TJSBufferRef *ref) {
+    if (JS_IsUndefined(ref->abuf)) {
+        return;
+    }
+    if (!ref->was_immutable) {
+        JS_SetImmutableArrayBuffer(ref->abuf, false);
+    }
+    JS_FreeValue(ctx, ref->abuf);
+    ref->abuf = JS_UNDEFINED;
+    ref->data = NULL;
+    ref->size = 0;
 }
 
 const char *tjs_signal_map[] = {

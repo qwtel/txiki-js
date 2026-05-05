@@ -2,16 +2,18 @@ const core = globalThis[Symbol.for('tjs.internal.core')];
 
 import engine from './engine.js';
 import env from './env.js';
-import { open, makeDir, makeTempFile, remove, symlink } from './fs.js';
+import { open, makeDir, makeTempFile, remove, symlink, writeFile } from './fs.js';
 import { serve } from './httpserver.js';
+import { parseImportMap } from './import-map.js';
 import { lookup } from './lookup.js';
 import pathModule from './path.js';
 import { spawn } from './process.js';
 import { addSignalListener, removeSignalListener } from './signal.js';
 import './direct-sockets/index.js';
 import { connect, listen } from './sockets.js';
-import { createStdin, createStdout, createStderr } from './stdio.js';
+import { getStdin, getStdout, getStderr } from './stdio.js';
 import system from './system.js';
+import './sourcemap.js';
 
 
 // The "tjs" global.
@@ -112,6 +114,12 @@ Object.defineProperty(tjs, 'symlink', {
     writable: false,
     value: symlink
 });
+Object.defineProperty(tjs, 'writeFile', {
+    enumerable: true,
+    configurable: false,
+    writable: false,
+    value: writeFile
+});
 
 // Signals.
 if (!core.isWorker) {
@@ -166,43 +174,27 @@ Object.defineProperty(tjs, 'serve', {
 });
 
 // Stdio.
-{
-    let _stdin, _stdout, _stderr;
-
-    Object.defineProperty(tjs, 'stdin', {
-        enumerable: true,
-        configurable: false,
-        get() {
-            if (!_stdin) {
-                _stdin = createStdin();
-            }
-
-            return _stdin;
-        }
-    });
-    Object.defineProperty(tjs, 'stdout', {
-        enumerable: true,
-        configurable: false,
-        get() {
-            if (!_stdout) {
-                _stdout = createStdout();
-            }
-
-            return _stdout;
-        }
-    });
-    Object.defineProperty(tjs, 'stderr', {
-        enumerable: true,
-        configurable: false,
-        get() {
-            if (!_stderr) {
-                _stderr = createStderr();
-            }
-
-            return _stderr;
-        }
-    });
-}
+Object.defineProperty(tjs, 'stdin', {
+    enumerable: true,
+    configurable: false,
+    get() {
+        return getStdin();
+    }
+});
+Object.defineProperty(tjs, 'stdout', {
+    enumerable: true,
+    configurable: false,
+    get() {
+        return getStdout();
+    }
+});
+Object.defineProperty(tjs, 'stderr', {
+    enumerable: true,
+    configurable: false,
+    get() {
+        return getStderr();
+    }
+});
 
 // System.
 Object.defineProperty(tjs, 'system', {
@@ -211,6 +203,14 @@ Object.defineProperty(tjs, 'system', {
     writable: false,
     value: system
 });
+
+// Import map support: internal bootstrap API.
+// baseDir is the directory relative paths in the map resolve against.
+core.setImportMap = function setImportMap(mapObj, baseDir) {
+    const resolver = parseImportMap(mapObj, baseDir);
+
+    core.setImportMapResolver(resolver);
+};
 
 // Internal stuff needed by the runtime.
 globalThis[Symbol.for('tjs.internal.modules.path')] = pathModule;

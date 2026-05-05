@@ -28,10 +28,6 @@
 #include <string.h>
 #include <uv.h>
 
-#if defined(_MSC_VER)
-#include <dirent_compat.h>
-#endif
-
 static JSClassID tjs_file_class_id;
 
 typedef struct {
@@ -120,9 +116,7 @@ typedef struct {
     JSContext *ctx;
     JSValue obj;
     TJSPromise result;
-    struct {
-        JSValue tarray;
-    } rw;
+    TJSBufferRef buf_ref;
 } TJSFsReq;
 
 typedef struct {
@@ -285,7 +279,7 @@ static JSValue tjs_fsreq_init(JSContext *ctx, TJSFsReq *fr, JSValue obj) {
     fr->ctx = ctx;
     fr->req.data = fr;
     fr->obj = JS_DupValue(ctx, obj);
-    fr->rw.tarray = JS_UNDEFINED;
+    tjs_buf_ref_init(&fr->buf_ref);
 
     return TJS_InitPromise(ctx, &fr->result);
 }
@@ -400,10 +394,10 @@ static void uv__fs_req_cb(uv_fs_t *req) {
     }
 
 skip:
-    TJS_SettlePromise(ctx, &fr->result, is_reject, 1, &arg);
+    TJS_SettlePromise(ctx, &fr->result, is_reject, arg);
 
     JS_FreeValue(ctx, fr->obj);
-    JS_FreeValue(ctx, fr->rw.tarray);
+    tjs_buf_ref_release(ctx, &fr->buf_ref);
 
     uv_fs_req_cleanup(&fr->req);
     js_free(ctx, fr);
@@ -418,24 +412,25 @@ static JSValue tjs_file_rw(JSContext *ctx, JSValue this_val, int argc, JSValue *
     }
 
     /* arg 0: buffer */
-    size_t size;
-    uint8_t *buf = JS_GetUint8Array(ctx, &size, argv[0]);
-    if (!buf) {
+    TJSBufferRef buf_ref;
+    if (tjs_buf_ref_get(ctx, argv[0], &buf_ref)) {
         return JS_EXCEPTION;
     }
 
     /* arg 1: position (on the file) */
     int64_t pos = -1;
     if (!JS_IsUndefined(argv[1]) && JS_ToInt64(ctx, &pos, argv[1])) {
+        tjs_buf_ref_release(ctx, &buf_ref);
         return JS_EXCEPTION;
     }
 
     TJSFsReq *fr = js_malloc(ctx, sizeof(*fr));
     if (!fr) {
+        tjs_buf_ref_release(ctx, &buf_ref);
         return JS_EXCEPTION;
     }
 
-    uv_buf_t b = uv_buf_init((char *) buf, size);
+    uv_buf_t b = uv_buf_init((char *) buf_ref.data, buf_ref.size);
 
     int r;
     if (magic) {
@@ -444,12 +439,13 @@ static JSValue tjs_file_rw(JSContext *ctx, JSValue this_val, int argc, JSValue *
         r = uv_fs_read(tjs_get_loop(ctx), &fr->req, f->fd, &b, 1, pos, uv__fs_req_cb);
     }
     if (r != 0) {
+        tjs_buf_ref_release(ctx, &buf_ref);
         js_free(ctx, fr);
         return tjs_throw_errno(ctx, r);
     }
 
     tjs_fsreq_init(ctx, fr, this_val);
-    fr->rw.tarray = JS_DupValue(ctx, argv[0]);
+    fr->buf_ref = buf_ref;
     return fr->result.p;
 }
 
@@ -1286,20 +1282,40 @@ static void tjs__readfile_after_work_cb(uv_work_t *req, int status) {
     if (status != 0) {
         arg = tjs_new_error(ctx, status);
         is_reject = true;
-        tbuf_free(&fr->dbuf);
     } else if (fr->r < 0) {
         arg = tjs_new_error(ctx, fr->r);
         is_reject = true;
-        tbuf_free(&fr->dbuf);
     } else {
-        arg = TJS_NewUint8Array(ctx, fr->dbuf.buf, fr->dbuf.size);
-        if (JS_IsException(arg)) {
-            tbuf_free(&fr->dbuf);
+        /* The buffer was allocated with raw (untracked) realloc on the worker
+           thread to avoid a data race on QJS malloc_state. We must copy it
+           into a QJS-tracked allocation here because ArrayBuffer.prototype.transfer
+           calls js_realloc on the backing buffer, which would corrupt malloc_state
+           if the buffer was never tracked. */
+        size_t size = fr->dbuf.size;
+        if (size == 0) {
+            arg = TJS_NewUint8Array(ctx, NULL, 0);
+            if (JS_IsException(arg)) {
+                is_reject = true;
+            }
+        } else {
+            uint8_t *buf = js_malloc(ctx, size);
+            if (buf) {
+                memcpy(buf, fr->dbuf.buf, size);
+                arg = TJS_NewUint8Array(ctx, buf, size);
+                if (JS_IsException(arg)) {
+                    js_free(ctx, buf);
+                    is_reject = true;
+                }
+            } else {
+                arg = JS_EXCEPTION;
+                is_reject = true;
+            }
         }
     }
 
-    TJS_SettlePromise(ctx, &fr->result, is_reject, 1, &arg);
+    TJS_SettlePromise(ctx, &fr->result, is_reject, arg);
 
+    tbuf_free(&fr->dbuf);
     js_free(ctx, fr->filename);
     js_free(ctx, fr);
 }
@@ -1317,7 +1333,7 @@ static JSValue tjs_fs_readfile(JSContext *ctx, JSValue this_val, int argc, JSVal
     }
 
     fr->ctx = ctx;
-    tbuf_init(ctx, &fr->dbuf);
+    tbuf_init(NULL, &fr->dbuf);
     fr->r = -1;
     fr->filename = js_strdup(ctx, path);
     fr->req.data = fr;

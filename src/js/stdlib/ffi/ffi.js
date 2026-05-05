@@ -3,6 +3,10 @@ const ffiInt = core.ffi_load_native();
 
 import buildCParser from './ffiutils.js';
 
+const suffixMap = { macOS: 'dylib', Windows: 'dll' };
+
+export const suffix = suffixMap[navigator.userAgentData.platform] ?? 'so';
+
 
 export class DlSymbol {
     constructor(name, uvlib, dlsym) {
@@ -86,6 +90,10 @@ export class Lib {
         }
 
         return func.call(...args);
+    }
+
+    close() {
+        this._uvlib.close();
     }
 
     parseCProto(header) {
@@ -270,6 +278,10 @@ export function stringToBuffer(s) {
     return ffiInt.toCString(s);
 }
 
+export function bufferToPointer(buf) {
+    return ffiInt.getArrayBufPtr(buf);
+}
+
 export class Pointer {
     constructor(addr, level, type) {
         this._type = type;
@@ -286,7 +298,7 @@ export class Pointer {
         return this._type;
     }
     get isNull() {
-        return this._addr === 0n;
+        return this._addr === null;
     }
     deref() {
         if (this.level === 1) {
@@ -455,6 +467,8 @@ export class StaticStringType extends ArrayType {
     }
 }
 
+export const read = ffiInt.read;
+
 export function errno() {
     return ffiInt.errno();
 }
@@ -491,3 +505,101 @@ export class JSCallback {
 }
 
 const { parseCProto, astToLib } = buildCParser({ StructType, CFunction, PointerType, types });
+
+const typeAliases = {
+    void: types.void,
+    u8: types.uint8, uint8: types.uint8, uint8_t: types.uint8,
+    i8: types.sint8, sint8: types.sint8, int8_t: types.sint8,
+    u16: types.uint16, uint16: types.uint16, uint16_t: types.uint16,
+    i16: types.sint16, sint16: types.sint16, int16_t: types.sint16,
+    u32: types.uint32, uint32: types.uint32, uint32_t: types.uint32,
+    i32: types.sint32, sint32: types.sint32, int32_t: types.sint32, int: types.sint32,
+    u64: types.uint64, uint64: types.uint64, uint64_t: types.uint64,
+    i64: types.sint64, sint64: types.sint64, int64_t: types.sint64,
+    f32: types.float, float: types.float,
+    f64: types.double, double: types.double,
+    pointer: types.pointer, ptr: types.pointer,
+    string: types.string, cstring: types.string,
+    buffer: types.buffer,
+    uchar: types.uchar, schar: types.schar, char: types.schar,
+    ushort: types.ushort, sshort: types.sshort,
+    uint: types.uint, sint: types.sint,
+    ulong: types.ulong, slong: types.slong, long: types.slong,
+    size_t: types.size, ssize_t: types.ssize,
+};
+
+function resolveType(t) {
+    if (typeof t === 'string') {
+        const resolved = typeAliases[t];
+
+        if (!resolved) {
+            throw new TypeError(`Unknown FFI type: '${t}'`);
+        }
+
+        return resolved;
+    }
+
+    return t;
+}
+
+export function dlopen(path, symbols) {
+    // Resolve all types before opening the library so that type errors
+    // don't leave a library handle open.
+    const resolved = {};
+
+    for (const [ name, def ] of Object.entries(symbols)) {
+        resolved[name] = {
+            returns: resolveType(def.returns ?? 'void'),
+            args: (def.args ?? []).map(resolveType),
+            fixed: def.fixed,
+        };
+    }
+
+    const lib = new Lib(path);
+    const result = {};
+
+    for (const [ name, def ] of Object.entries(resolved)) {
+        const sym = lib.symbol(name);
+
+        // Check if all arg types are simple (scalar/pointer/string/buffer)
+        // and if so, use the fast call path.
+        const canFastCall = def.args.length <= 16 && def.args.every(t =>
+            t === types.string || t === types.buffer || !t.ffiType
+        ) && (def.returns === types.string || !def.returns.ffiType);
+
+        if (canFastCall) {
+            // Build bitmasks for string and buffer arguments.
+            let stringMask = 0;
+            let bufferMask = 0;
+
+            for (let i = 0; i < def.args.length; i++) {
+                if (def.args[i] === types.string) {
+                    stringMask |= (1 << i);
+                } else if (def.args[i] === types.buffer) {
+                    bufferMask |= (1 << i);
+                }
+            }
+
+            if (def.returns === types.string) {
+                stringMask |= (1 << 31);
+            }
+
+            const ffiArgTypes = def.args.map(t => t.ffiType ?? t);
+            const ffiRetType = def.returns.ffiType ?? def.returns;
+            const cif = new ffiInt.FfiCif(ffiRetType, ...ffiArgTypes, def.fixed);
+            const dlsym = sym._dlsym;
+
+            result[name] = (...a) => cif.fast_call(dlsym, stringMask, bufferMask, ...a);
+        } else {
+            // Fallback to CFunction for complex types (structs, etc.)
+            const func = new CFunction(sym, def.returns, def.args, def.fixed);
+
+            result[name] = (...a) => func.call(...a);
+        }
+    }
+
+    return {
+        symbols: result,
+        close: () => lib.close(),
+    };
+}

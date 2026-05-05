@@ -24,18 +24,31 @@
 
 #include "mem.h"
 
-#include "cutils.h"
-#include <stdlib.h>
+#include "utils.h"
 
-#ifdef TJS__HAS_MIMALLOC
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(TJS__HAS_MIMALLOC)
 #include <mimalloc.h>
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
+#else
+#include <malloc.h>
 #endif
 
 size_t tjs__malloc_usable_size(const void *ptr) {
+    CHECK_NOT_NULL(ptr);
 #if defined(TJS__HAS_MIMALLOC)
     return mi_malloc_usable_size(ptr);
+#elif defined(__APPLE__)
+    return malloc_size(ptr);
+#elif defined(_WIN32)
+    return _msize((void *) ptr);
+#elif defined(__linux__) || defined(__ANDROID__) || defined(__CYGWIN__) || defined(__FreeBSD__) || defined(__GLIBC__)
+    return malloc_usable_size((void *) ptr);
 #else
-    return js__malloc_usable_size(ptr);
+    return 0;
 #endif
 }
 
@@ -68,9 +81,28 @@ void tjs__free(void *ptr) {
 }
 
 void *tjs__realloc(void *ptr, size_t size) {
+    if (size == 0) {
+        tjs__free(ptr);
+        return NULL;
+    }
+    if (!ptr) {
+        return tjs__malloc(size);
+    }
 #ifdef TJS__HAS_MIMALLOC
     return mi_realloc(ptr, size);
 #else
     return realloc(ptr, size);
 #endif
+}
+
+char *tjs__strdup(const char *s) {
+    if (!s) {
+        return NULL;
+    }
+    size_t len = strlen(s) + 1;
+    char *p = tjs__malloc(len);
+    if (p) {
+        memcpy(p, s, len);
+    }
+    return p;
 }

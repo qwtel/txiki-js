@@ -22,9 +22,10 @@
  * THE SOFTWARE.
  */
 
-#include "../deps/quickjs/list.h"
 #include "hash.h"
+#include "list.h"
 #include "private.h"
+#include "utils.h"
 
 #include <string.h>
 
@@ -58,6 +59,7 @@ typedef struct TJSHttpRequest {
     char url[2048];
     char remote_addr[64];
     bool body_complete;
+    bool chunked; /* true for Transfer-Encoding: chunked — body is streamed to JS */
 
     /* Response state. */
     bool responded;
@@ -94,6 +96,9 @@ typedef struct TJSWsConnection {
     uint16_t close_code;
     char close_reason[124];
     char remote_addr[64];
+    /* Custom response headers for the 101 upgrade (parallel arrays, consumed in ADD_HEADERS). */
+    JSValue header_names;
+    JSValue header_values;
 } TJSWsConnection;
 
 enum { WS_EVENT_OPEN = 0, WS_EVENT_MESSAGE, WS_EVENT_CLOSE, WS_EVENT_ERROR, WS_EVENT_MAX };
@@ -115,6 +120,7 @@ typedef struct {
 typedef struct {
     JSContext *ctx;
     JSValue callback;                   /* JS onrequest handler */
+    JSValue body_chunk_callback;        /* JS onBodyChunk handler for streaming bodies */
     JSValue this_val;                   /* prevent GC while listening */
     JSValue ws_callbacks[WS_EVENT_MAX]; /* server-level: open, message, close, error */
     struct lws_vhost *vhost;
@@ -125,6 +131,16 @@ typedef struct {
     TJSHttpRequest *active_requests;   /* uthash table keyed by id */
     TJSUpgradeCtx *upgrade_contexts;   /* uthash table keyed by id */
     TJSWsConnection *pending_upgrades; /* uthash table keyed by wsi */
+    /* Mutable protocol name buffer.  During a WS upgrade the name is
+     * temporarily swapped to the negotiated subprotocol so that lws's own
+     * protocol matching and Sec-WebSocket-Protocol response header work
+     * correctly.  Reset in LWS_CALLBACK_ESTABLISHED / rejection. */
+    char ws_protocol_name[256];
+    /* TLS data, kept alive for the lifetime of the vhost. */
+    char *ssl_cert_mem;
+    char *ssl_key_mem;
+    char *ssl_ca_mem;
+    char *ssl_passphrase;
 } TJSHttpServer;
 
 static JSClassID tjs_httpserver_class_id;
@@ -154,6 +170,8 @@ static void tjs_wsconn_finalizer(JSRuntime *rt, JSValue val) {
     TJSWsConnection *ws = JS_GetOpaque(val, tjs_wsconn_class_id);
     if (ws) {
         JS_FreeValueRT(rt, ws->data);
+        JS_FreeValueRT(rt, ws->header_names);
+        JS_FreeValueRT(rt, ws->header_values);
 
         struct list_head *el, *el1;
         list_for_each_safe(el, el1, &ws->pending_writes) {
@@ -172,6 +190,8 @@ static void tjs_wsconn_mark(JSRuntime *rt, JSValue val, JS_MarkFunc *mark_func) 
     TJSWsConnection *ws = JS_GetOpaque(val, tjs_wsconn_class_id);
     if (ws) {
         JS_MarkValue(rt, ws->data, mark_func);
+        JS_MarkValue(rt, ws->header_names, mark_func);
+        JS_MarkValue(rt, ws->header_values, mark_func);
     }
 }
 
@@ -189,6 +209,7 @@ static void tjs_httpserver_finalizer(JSRuntime *rt, JSValue val) {
     TJSHttpServer *s = JS_GetOpaque(val, tjs_httpserver_class_id);
     if (s) {
         JS_FreeValueRT(rt, s->callback);
+        JS_FreeValueRT(rt, s->body_chunk_callback);
 
         for (int i = 0; i < WS_EVENT_MAX; i++) {
             JS_FreeValueRT(rt, s->ws_callbacks[i]);
@@ -216,6 +237,11 @@ static void tjs_httpserver_finalizer(JSRuntime *rt, JSValue val) {
             JS_FreeValueRT(rt, cls_val);
         }
 
+        js_free_rt(rt, s->ssl_cert_mem);
+        js_free_rt(rt, s->ssl_key_mem);
+        js_free_rt(rt, s->ssl_ca_mem);
+        js_free_rt(rt, s->ssl_passphrase);
+
         js_free_rt(rt, s);
     }
 }
@@ -224,6 +250,7 @@ static void tjs_httpserver_mark(JSRuntime *rt, JSValue val, JS_MarkFunc *mark_fu
     TJSHttpServer *s = JS_GetOpaque(val, tjs_httpserver_class_id);
     if (s) {
         JS_MarkValue(rt, s->callback, mark_func);
+        JS_MarkValue(rt, s->body_chunk_callback, mark_func);
         for (int i = 0; i < WS_EVENT_MAX; i++) {
             JS_MarkValue(rt, s->ws_callbacks[i], mark_func);
         }
@@ -249,9 +276,19 @@ typedef struct {
 
 static void tjs_http_custom_header_cb(const char *name, int nlen, void *opaque) {
     TJSHeaderCollectCtx *hctx = (TJSHeaderCollectCtx *) opaque;
-    char val[4096];
 
-    int vlen = lws_hdr_custom_copy(hctx->wsi, val, sizeof(val), name, nlen);
+    int total_len = lws_hdr_custom_length(hctx->wsi, name, nlen);
+    if (total_len < 0) {
+        return;
+    }
+
+    size_t buf_size = (size_t) total_len + 1;
+    char *val = js_malloc(hctx->ctx, buf_size);
+    if (!val) {
+        return;
+    }
+
+    int vlen = lws_hdr_custom_copy(hctx->wsi, val, (int) buf_size, name, nlen);
     if (vlen >= 0) {
         /* name includes trailing ':', strip it. */
         int name_len = nlen;
@@ -261,10 +298,11 @@ static void tjs_http_custom_header_cb(const char *name, int nlen, void *opaque) 
         JS_SetPropertyUint32(hctx->ctx, hctx->arr, hctx->idx++, JS_NewStringLen(hctx->ctx, name, name_len));
         JS_SetPropertyUint32(hctx->ctx, hctx->arr, hctx->idx++, JS_NewStringLen(hctx->ctx, val, vlen));
     }
+
+    js_free(hctx->ctx, val);
 }
 
 static JSValue tjs_http_collect_headers(JSContext *ctx, struct lws *wsi) {
-    char val[4096];
     JSValue arr = JS_NewArray(ctx);
     uint32_t idx = 0;
 
@@ -279,15 +317,23 @@ static JSValue tjs_http_collect_headers(JSContext *ctx, struct lws *wsi) {
         if (tn_len == 0 || tn[tn_len - 1] != ':') {
             continue;
         }
-        if (lws_hdr_total_length(wsi, n) <= 0) {
+        int total_len = lws_hdr_total_length(wsi, n);
+        if (total_len <= 0) {
             continue;
         }
-        if (lws_hdr_copy(wsi, val, sizeof(val), n) < 0) {
+        size_t buf_size = (size_t) total_len + 1;
+        char *val = js_malloc(ctx, buf_size);
+        if (!val) {
+            continue;
+        }
+        if (lws_hdr_copy(wsi, val, (int) buf_size, n) < 0) {
+            js_free(ctx, val);
             continue;
         }
         /* Strip trailing colon from token name. */
         JS_SetPropertyUint32(ctx, arr, idx++, JS_NewStringLen(ctx, tn, tn_len - 1));
         JS_SetPropertyUint32(ctx, arr, idx++, JS_NewString(ctx, val));
+        js_free(ctx, val);
     }
 
     /* Collect custom (unknown) headers. */
@@ -323,7 +369,7 @@ static const char *tjs_http_method_name(int method_idx) {
 static void tjs_http_invoke_handler(TJSHttpServer *s, TJSHttpRequest *req) {
     JSContext *ctx = s->ctx;
 
-    JSValue args[7];
+    JSValue args[8];
     args[0] = JS_NewInt64(ctx, req->id);
     args[1] = JS_NewString(ctx, tjs_http_method_name(req->method));
     args[2] = JS_NewString(ctx, req->url);
@@ -335,6 +381,7 @@ static void tjs_http_invoke_handler(TJSHttpServer *s, TJSHttpRequest *req) {
     }
     args[5] = JS_NewString(ctx, req->remote_addr);
     args[6] = JS_FALSE; /* not a WS upgrade */
+    args[7] = JS_NewBool(ctx, req->chunked);
 
     tjs_call_handler(ctx, s->callback, countof(args), args);
 
@@ -383,7 +430,69 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
         /*
          * WebSocket callbacks (after upgrade).
          */
+        case LWS_CALLBACK_ADD_HEADERS: {
+            /* Add custom headers to the 101 upgrade response. */
+            TJSWsConnection *ws = NULL;
+            HASH_FIND_PTR(s->pending_upgrades, &wsi, ws);
+            if (!ws || !JS_IsArray(ws->header_names)) {
+                break;
+            }
+
+            struct lws_process_html_args *args = (struct lws_process_html_args *) in;
+            unsigned char **p = (unsigned char **) &args->p;
+            unsigned char *end = (unsigned char *) args->p + args->max_len;
+            JSContext *ctx = ws->ctx;
+            int64_t n_headers;
+            JS_GetLength(ctx, ws->header_names, &n_headers);
+
+            for (int64_t i = 0; i < n_headers; i++) {
+                JSValue js_name = JS_GetPropertyUint32(ctx, ws->header_names, i);
+                JSValue js_value = JS_GetPropertyUint32(ctx, ws->header_values, i);
+
+                const char *name = JS_ToCString(ctx, js_name);
+                const char *value = JS_ToCString(ctx, js_value);
+                JS_FreeValue(ctx, js_name);
+                JS_FreeValue(ctx, js_value);
+
+                if (!name || !value) {
+                    JS_FreeCString(ctx, name);
+                    JS_FreeCString(ctx, value);
+                    return -1;
+                }
+
+                /* Skip sec-websocket-protocol — handled via lws protocol name. */
+                if (!strcasecmp(name, "sec-websocket-protocol:")) {
+                    JS_FreeCString(ctx, name);
+                    JS_FreeCString(ctx, value);
+                    continue;
+                }
+
+                int r = lws_add_http_header_by_name(wsi,
+                                                    (const unsigned char *) name,
+                                                    (const unsigned char *) value,
+                                                    (int) strlen(value),
+                                                    p,
+                                                    end);
+                JS_FreeCString(ctx, name);
+                JS_FreeCString(ctx, value);
+
+                if (r) {
+                    return -1;
+                }
+            }
+
+            /* Headers consumed, release them. */
+            JS_FreeValue(ctx, ws->header_names);
+            JS_FreeValue(ctx, ws->header_values);
+            ws->header_names = JS_UNDEFINED;
+            ws->header_values = JS_UNDEFINED;
+            break;
+        }
+
         case LWS_CALLBACK_ESTABLISHED: {
+            /* Restore the protocol name after the upgrade handshake. */
+            strncpy(s->ws_protocol_name, TJS_HTTP_PROTOCOL_NAME, sizeof(s->ws_protocol_name));
+
             TJSWsConnection *ws = NULL;
             HASH_FIND_PTR(s->pending_upgrades, &wsi, ws);
             if (!ws) {
@@ -543,6 +652,10 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
                 return -1;
             }
 
+            /* Reset the protocol name before each upgrade attempt, in case a
+             * previous upgrade failed after the name was swapped. */
+            strncpy(s->ws_protocol_name, TJS_HTTP_PROTOCOL_NAME, sizeof(s->ws_protocol_name));
+
             JSContext *ctx = s->ctx;
 
             /* Collect headers (ah still attached). */
@@ -618,8 +731,15 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
 
             if (uri_ptr && uri_len > 0) {
                 size_t copy_len = MIN((size_t) uri_len, sizeof(req->url) - 1);
+                size_t copy_query_len = sizeof(req->url) - copy_len - 1;
                 memcpy(req->url, uri_ptr, copy_len);
-                req->url[copy_len] = '\0';
+
+                if (lws_hdr_copy(wsi, req->url + copy_len + 1, copy_query_len, WSI_TOKEN_HTTP_URI_ARGS) > 0) {
+                    /* \0 ending is handled by lws_hdr_copy. */
+                    req->url[copy_len] = '?';
+                } else {
+                    req->url[copy_len] = '\0';
+                }
             } else if (in) {
                 strncpy(req->url, (const char *) in, sizeof(req->url) - 1);
             }
@@ -636,8 +756,17 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
             /* Check if this request has a body. */
             char cl[32];
             int has_cl = lws_hdr_copy(wsi, cl, sizeof(cl), WSI_TOKEN_HTTP_CONTENT_LENGTH);
-            if (has_cl > 0 && atoi(cl) > 0) {
+            int has_te = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_TRANSFER_ENCODING);
+            if ((has_cl > 0 && atoi(cl) > 0) || has_te > 0) {
                 /* Body expected, wait for LWS_CALLBACK_HTTP_BODY. */
+                req->chunked = has_te > 0 && !(has_cl > 0 && atoi(cl) > 0);
+
+                /* For chunked requests, invoke the handler immediately so JS
+                 * can set up a ReadableStream for the request body. */
+                if (req->chunked) {
+                    tjs_http_invoke_handler(s, req);
+                }
+
                 return 0;
             }
 
@@ -653,8 +782,87 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
                 return -1;
             }
 
-            /* Accumulate body chunks. */
-            tbuf_put(&req->body_buf, in, len);
+            if (!req->chunked) {
+                /* Non-chunked: accumulate as-is. */
+                tbuf_put(&req->body_buf, in, len);
+                return 0;
+            }
+
+            /* Chunked: de-chunk the data and detect the terminator. */
+            const uint8_t *p = (const uint8_t *) in;
+            const uint8_t *end = p + len;
+            JSContext *ctx = s->ctx;
+
+            while (p < end) {
+                /* Parse chunk size (hex digits terminated by \r\n). */
+                const uint8_t *crlf = NULL;
+                for (const uint8_t *scan = p; scan + 1 < end; scan++) {
+                    if (scan[0] == '\r' && scan[1] == '\n') {
+                        crlf = scan;
+                        break;
+                    }
+                }
+                if (!crlf) {
+                    break;
+                }
+
+                /* Convert hex to size. */
+                size_t chunk_size = 0;
+                for (const uint8_t *h = p; h < crlf; h++) {
+                    chunk_size <<= 4;
+                    if (*h >= '0' && *h <= '9') {
+                        chunk_size += *h - '0';
+                    } else if (*h >= 'a' && *h <= 'f') {
+                        chunk_size += *h - 'a' + 10;
+                    } else if (*h >= 'A' && *h <= 'F') {
+                        chunk_size += *h - 'A' + 10;
+                    }
+                }
+
+                const uint8_t *data_start = crlf + 2; /* skip \r\n after size */
+
+                if (chunk_size == 0) {
+                    /* Terminal chunk. */
+                    req->body_complete = true;
+
+                    if (req->chunked) {
+                        /* Signal end-of-stream to JS. */
+                        JSValue cb_args[2];
+                        cb_args[0] = JS_NewInt64(ctx, req->id);
+                        cb_args[1] = JS_NULL;
+                        tjs_call_handler(ctx, s->body_chunk_callback, 2, cb_args);
+                        JS_FreeValue(ctx, cb_args[0]);
+                    } else {
+                        tjs_http_invoke_handler(s, req);
+                    }
+
+                    return 0;
+                }
+
+                /* Process chunk data. */
+                size_t avail = end - data_start;
+                size_t to_copy = chunk_size < avail ? chunk_size : avail;
+
+                if (req->chunked) {
+                    /* Stream chunk to JS via body_chunk_callback. */
+                    JSValue cb_args[2];
+                    cb_args[0] = JS_NewInt64(ctx, req->id);
+                    cb_args[1] = JS_NewArrayBufferCopy(ctx, data_start, to_copy);
+                    tjs_call_handler(ctx, s->body_chunk_callback, 2, cb_args);
+                    JS_FreeValue(ctx, cb_args[0]);
+                    JS_FreeValue(ctx, cb_args[1]);
+                } else {
+                    /* Accumulate for buffered path. */
+                    tbuf_put(&req->body_buf, data_start, to_copy);
+                }
+
+                /* Skip past chunk data + trailing \r\n. */
+                p = data_start + chunk_size;
+                if (p + 2 <= end) {
+                    p += 2; /* skip trailing \r\n */
+                }
+            }
+
             return 0;
         }
 
@@ -748,6 +956,16 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
                 return 0;
             }
 
+            /* If streaming body was in progress, signal end-of-stream. */
+            if (req->chunked && !req->body_complete) {
+                req->body_complete = true;
+                JSValue cb_args[2];
+                cb_args[0] = JS_NewInt64(s->ctx, req->id);
+                cb_args[1] = JS_NULL;
+                tjs_call_handler(s->ctx, s->body_chunk_callback, 2, cb_args);
+                JS_FreeValue(s->ctx, cb_args[0]);
+            }
+
             HASH_DEL(s->active_requests, req);
             tjs_http_req_free(JS_GetRuntime(s->ctx), req);
             lws_set_wsi_user(wsi, NULL);
@@ -758,8 +976,9 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
             /* lws is fully done with this vhost/protocol. Release the
              * GC-prevention self-reference so the object can be collected. */
             if (!JS_IsUndefined(s->this_val)) {
-                JS_FreeValue(s->ctx, s->this_val);
+                JSValue this_val = s->this_val;
                 s->this_val = JS_UNDEFINED;
+                JS_FreeValue(s->ctx, this_val);
             }
             return 0;
         }
@@ -771,15 +990,8 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
     return 0;
 }
 
-static const struct lws_protocols tjs_http_protocol = {
-    .name = TJS_HTTP_PROTOCOL_NAME,
-    .callback = tjs_http_callback,
-    .per_session_data_size = 0,
-    .rx_buffer_size = 0,
-};
-
 /*
- * HttpServer.prototype._acceptUpgrade(upgradeId, data)
+ * HttpServer.prototype._acceptUpgrade(upgradeId, data, headerNames, headerValues)
  *
  * Called from JS server.upgrade(). Looks up the upgrade context by ID,
  * allocates a TJSWsConnection, and adds it to the pending_upgrades hash.
@@ -819,8 +1031,38 @@ static JSValue tjs_httpserver_accept_upgrade(JSContext *ctx, JSValue this_val, i
     ws->this_val = JS_UNDEFINED;
     ws->wsi = uctx->wsi;
     ws->data = JS_DupValue(ctx, argv[1]);
+    ws->header_names = JS_UNDEFINED;
+    ws->header_values = JS_UNDEFINED;
     tbuf_init(ctx, &ws->recv_buf);
     init_list_head(&ws->pending_writes);
+
+    /* Optional header arrays (argv[2] = names, argv[3] = values). */
+    if (argc > 3 && JS_IsArray(argv[2])) {
+        ws->header_names = JS_DupValue(ctx, argv[2]);
+        ws->header_values = JS_DupValue(ctx, argv[3]);
+
+        /* Check if sec-websocket-protocol is among the headers.
+         * If so, swap the lws protocol name so lws's own protocol matching
+         * and response header generation work correctly. */
+        int64_t n_headers;
+        JS_GetLength(ctx, ws->header_names, &n_headers);
+        for (int64_t i = 0; i < n_headers; i++) {
+            JSValue js_name = JS_GetPropertyUint32(ctx, ws->header_names, i);
+            const char *name = JS_ToCString(ctx, js_name);
+            JS_FreeValue(ctx, js_name);
+            if (name && !strcasecmp(name, "sec-websocket-protocol:")) {
+                JSValue js_value = JS_GetPropertyUint32(ctx, ws->header_values, i);
+                const char *value = JS_ToCString(ctx, js_value);
+                JS_FreeValue(ctx, js_value);
+                if (value) {
+                    strncpy(s->ws_protocol_name, value, sizeof(s->ws_protocol_name) - 1);
+                    s->ws_protocol_name[sizeof(s->ws_protocol_name) - 1] = '\0';
+                }
+                JS_FreeCString(ctx, value);
+            }
+            JS_FreeCString(ctx, name);
+        }
+    }
 
     /* Create JS object. */
     JSValue ws_obj = JS_NewObjectClass(ctx, tjs_wsconn_class_id);
@@ -847,7 +1089,21 @@ static JSValue tjs_httpserver_accept_upgrade(JSContext *ctx, JSValue this_val, i
 }
 
 /*
- * HttpServer constructor: new HttpServer(port, listenIp, callback, wsOpen, wsMessage, wsClose, wsError)
+ * HttpServer constructor: new HttpServer(options)
+ *
+ * Options object (constructed by JS layer, properties are guaranteed):
+ *   port: number
+ *   listenIp: string
+ *   onRequest: function
+ *   wsOpen: function | null
+ *   wsMessage: function | null
+ *   wsClose: function | null
+ *   wsError: function | null
+ *   certPem: string | null  (TLS certificate PEM)
+ *   keyPem: string | null   (TLS private key PEM)
+ *   caPem: string | null    (TLS CA certificate PEM, for client cert verification)
+ *   passphrase: string | null (passphrase for encrypted private key)
+ *   requestCert: boolean    (require client certificate)
  */
 static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, int argc, JSValue *argv) {
     JSValue obj = JS_NewObjectClass(ctx, tjs_httpserver_class_id);
@@ -863,44 +1119,93 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
 
     s->ctx = ctx;
     s->callback = JS_UNDEFINED;
+    s->body_chunk_callback = JS_UNDEFINED;
     s->this_val = JS_UNDEFINED;
     for (int i = 0; i < WS_EVENT_MAX; i++) {
         s->ws_callbacks[i] = JS_UNDEFINED;
     }
     s->active_requests = NULL;
+    s->ssl_cert_mem = NULL;
+    s->ssl_key_mem = NULL;
+    s->ssl_ca_mem = NULL;
+    s->ssl_passphrase = NULL;
 
-    /* Parse arguments. */
+    JSValue options = argv[0];
+
+    /* Required properties — JS layer guarantees these. */
+    JSValue js_port = JS_GetPropertyStr(ctx, options, "port");
     int port;
-    if (JS_ToInt32(ctx, &port, argv[0])) {
-        js_free(ctx, s);
-        JS_FreeValue(ctx, obj);
-        return JS_EXCEPTION;
-    }
+    CHECK_EQ(JS_ToInt32(ctx, &port, js_port), 0);
+    JS_FreeValue(ctx, js_port);
 
-    const char *listen_ip = JS_ToCString(ctx, argv[1]);
-    if (!listen_ip) {
-        js_free(ctx, s);
-        JS_FreeValue(ctx, obj);
-        return JS_EXCEPTION;
-    }
+    JSValue js_listen_ip = JS_GetPropertyStr(ctx, options, "listenIp");
+    const char *listen_ip = JS_ToCString(ctx, js_listen_ip);
+    CHECK_NOT_NULL(listen_ip);
+    JS_FreeValue(ctx, js_listen_ip);
 
-    if (!JS_IsFunction(ctx, argv[2])) {
-        JS_FreeCString(ctx, listen_ip);
-        js_free(ctx, s);
-        JS_FreeValue(ctx, obj);
-        return JS_ThrowTypeError(ctx, "callback must be a function");
-    }
-
-    s->callback = JS_DupValue(ctx, argv[2]);
+    JSValue js_callback = JS_GetPropertyStr(ctx, options, "onRequest");
+    CHECK(JS_IsFunction(ctx, js_callback));
+    s->callback = js_callback; /* already a new reference from GetPropertyStr */
     s->port = port;
 
-    /* Store WS callbacks (argv[3..6]: open, message, close, error). */
+    /* Body chunk callback for streaming request bodies (required). */
+    JSValue js_body_chunk = JS_GetPropertyStr(ctx, options, "onBodyChunk");
+    CHECK(JS_IsFunction(ctx, js_body_chunk));
+    s->body_chunk_callback = js_body_chunk;
+
+    /* WS callbacks (may be null). */
+    static const char *ws_prop_names[] = { "wsOpen", "wsMessage", "wsClose", "wsError" };
     for (int i = 0; i < WS_EVENT_MAX; i++) {
-        int arg_idx = 3 + i;
-        if (arg_idx < argc && JS_IsFunction(ctx, argv[arg_idx])) {
-            s->ws_callbacks[i] = JS_DupValue(ctx, argv[arg_idx]);
+        JSValue cb = JS_GetPropertyStr(ctx, options, ws_prop_names[i]);
+        if (JS_IsFunction(ctx, cb)) {
+            s->ws_callbacks[i] = cb;
+        } else {
+            JS_FreeValue(ctx, cb);
         }
     }
+
+    /* Optional TLS options. */
+    JSValue js_cert = JS_GetPropertyStr(ctx, options, "certPem");
+    JSValue js_key = JS_GetPropertyStr(ctx, options, "keyPem");
+
+    bool use_tls = JS_IsString(js_cert) && JS_IsString(js_key);
+
+    if (use_tls) {
+        const char *cert_str = JS_ToCString(ctx, js_cert);
+        const char *key_str = JS_ToCString(ctx, js_key);
+        CHECK_NOT_NULL(cert_str);
+        CHECK_NOT_NULL(key_str);
+
+        s->ssl_cert_mem = js_strdup(ctx, cert_str);
+        s->ssl_key_mem = js_strdup(ctx, key_str);
+        JS_FreeCString(ctx, cert_str);
+        JS_FreeCString(ctx, key_str);
+
+        /* CA certificate for client cert verification. */
+        JSValue js_ca = JS_GetPropertyStr(ctx, options, "caPem");
+        if (JS_IsString(js_ca)) {
+            const char *ca_str = JS_ToCString(ctx, js_ca);
+            CHECK_NOT_NULL(ca_str);
+            s->ssl_ca_mem = js_strdup(ctx, ca_str);
+            JS_FreeCString(ctx, ca_str);
+        }
+        JS_FreeValue(ctx, js_ca);
+
+        /* Passphrase for encrypted private key. */
+        JSValue js_passphrase = JS_GetPropertyStr(ctx, options, "passphrase");
+        if (JS_IsString(js_passphrase)) {
+            const char *pp_str = JS_ToCString(ctx, js_passphrase);
+            CHECK_NOT_NULL(pp_str);
+            s->ssl_passphrase = js_strdup(ctx, pp_str);
+            JS_FreeCString(ctx, pp_str);
+        }
+        JS_FreeValue(ctx, js_passphrase);
+    }
+
+    JS_FreeValue(ctx, js_cert);
+    JS_FreeValue(ctx, js_key);
+
+    strncpy(s->ws_protocol_name, TJS_HTTP_PROTOCOL_NAME, sizeof(s->ws_protocol_name));
 
     JS_SetOpaque(obj, s);
 
@@ -912,8 +1217,10 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
         return JS_ThrowInternalError(ctx, "failed to get lws context");
     }
 
-    const struct lws_protocols protocols[] = {
-        tjs_http_protocol,
+    /* Use a mutable protocol name so we can swap it during WS upgrades
+     * to match the negotiated subprotocol. */
+    struct lws_protocols protocols[] = {
+        { .name = s->ws_protocol_name, .callback = tjs_http_callback, .per_session_data_size = 0, .rx_buffer_size = 0 },
         LWS_PROTOCOL_LIST_TERM,
     };
 
@@ -925,6 +1232,31 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
     vhost_info.user = s;
     vhost_info.vhost_name = "tjs-http-server";
     vhost_info.options = 0;
+
+    /* Configure TLS if cert/key were provided. */
+    if (use_tls) {
+        vhost_info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+        vhost_info.server_ssl_cert_mem = s->ssl_cert_mem;
+        vhost_info.server_ssl_cert_mem_len = (unsigned int) strlen(s->ssl_cert_mem);
+        vhost_info.server_ssl_private_key_mem = s->ssl_key_mem;
+        vhost_info.server_ssl_private_key_mem_len = (unsigned int) strlen(s->ssl_key_mem);
+
+        if (s->ssl_ca_mem) {
+            vhost_info.server_ssl_ca_mem = s->ssl_ca_mem;
+            vhost_info.server_ssl_ca_mem_len = (unsigned int) strlen(s->ssl_ca_mem);
+        }
+
+        if (s->ssl_passphrase) {
+            vhost_info.ssl_private_key_password = s->ssl_passphrase;
+        }
+
+        /* Client certificate requirement. */
+        JSValue js_request_cert = JS_GetPropertyStr(ctx, options, "requestCert");
+        if (JS_ToBool(ctx, js_request_cert)) {
+            vhost_info.options |= LWS_SERVER_OPTION_REQUIRE_VALID_OPENSSL_CLIENT_CERT;
+        }
+        JS_FreeValue(ctx, js_request_cert);
+    }
 
     s->vhost = lws_create_vhost(lws_ctx, &vhost_info);
 
@@ -969,6 +1301,9 @@ static JSValue tjs_httpserver_close(JSContext *ctx, JSValue this_val, int argc, 
     JS_FreeValue(ctx, s->callback);
     s->callback = JS_UNDEFINED;
 
+    JS_FreeValue(ctx, s->body_chunk_callback);
+    s->body_chunk_callback = JS_UNDEFINED;
+
     for (int i = 0; i < WS_EVENT_MAX; i++) {
         JS_FreeValue(ctx, s->ws_callbacks[i]);
         s->ws_callbacks[i] = JS_UNDEFINED;
@@ -985,6 +1320,9 @@ static TJSHttpRequest *tjs_http_find_request(TJSHttpServer *s, uint64_t req_id) 
     HASH_FIND(hh, s->active_requests, &req_id, sizeof(req_id), req);
     return req;
 }
+
+/* Max size for response header buffer.  Matches Node.js / Deno default. */
+#define TJS_MAX_HEADER_SIZE 16384
 
 /*
  * HttpServer.prototype.sendResponse(requestId, status, headersArray, bodyBuffer)
@@ -1018,17 +1356,24 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
         return JS_EXCEPTION;
     }
 
-    /* Build response headers with LWS_PRE padding for HTTP/2 compatibility. */
-    unsigned char header_buf[LWS_PRE + 4096];
+    /* Build response headers with LWS_PRE padding. */
+    size_t hdr_buf_size = LWS_PRE + TJS_MAX_HEADER_SIZE;
+    unsigned char *header_buf = js_malloc(ctx, hdr_buf_size);
+    if (!header_buf) {
+        return JS_ThrowOutOfMemory(ctx);
+    }
     unsigned char *start = &header_buf[LWS_PRE];
     unsigned char *p = start;
-    unsigned char *end = header_buf + sizeof(header_buf) - 1;
+    unsigned char *end = header_buf + hdr_buf_size - 1;
 
     if (lws_add_http_header_status(req->wsi, (unsigned int) status, &p, end)) {
+        js_free(ctx, header_buf);
         return JS_ThrowInternalError(ctx, "failed to add status header");
     }
 
     /* Iterate headers array. */
+    bool has_content_length = false;
+
     if (JS_IsArray(argv[2])) {
         int64_t headers_len;
         JS_GetLength(ctx, argv[2], &headers_len);
@@ -1043,6 +1388,10 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
             const char *value = JS_ToCStringLen(ctx, &value_len, value_val);
 
             if (name && value) {
+                if (strcasecmp(name, "content-length") == 0) {
+                    has_content_length = true;
+                }
+
                 if (lws_add_http_header_by_name(req->wsi,
                                                 (const unsigned char *) name,
                                                 (const unsigned char *) value,
@@ -1054,6 +1403,7 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
                     JS_FreeValue(ctx, name_val);
                     JS_FreeValue(ctx, value_val);
                     JS_FreeValue(ctx, pair);
+                    js_free(ctx, header_buf);
                     return JS_ThrowInternalError(ctx, "failed to add response header");
                 }
             }
@@ -1088,13 +1438,17 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
         }
     }
 
-    /* Add content-length. */
-    if (lws_add_http_header_content_length(req->wsi, (lws_filepos_t) body_len, &p, end)) {
-        return JS_ThrowInternalError(ctx, "failed to add content-length header");
+    /* Add content-length unless the user already provided one. */
+    if (!has_content_length) {
+        if (lws_add_http_header_content_length(req->wsi, (lws_filepos_t) body_len, &p, end)) {
+            js_free(ctx, header_buf);
+            return JS_ThrowInternalError(ctx, "failed to add content-length header");
+        }
     }
 
     /* Finalize headers. */
     if (lws_finalize_http_header(req->wsi, &p, end)) {
+        js_free(ctx, header_buf);
         return JS_ThrowInternalError(ctx, "failed to finalize headers");
     }
 
@@ -1104,10 +1458,12 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
     req->response_data = js_malloc(ctx, LWS_PRE + hdr_len + body_len);
     if (!req->response_data) {
         JS_FreeValue(ctx, body_ab);
+        js_free(ctx, header_buf);
         return JS_ThrowOutOfMemory(ctx);
     }
 
     memcpy(req->response_data + LWS_PRE, start, hdr_len);
+    js_free(ctx, header_buf);
     if (body_data && body_len > 0) {
         memcpy(req->response_data + LWS_PRE + hdr_len, body_data, body_len);
     }
@@ -1167,13 +1523,18 @@ static JSValue tjs_httpserver_send_headers(JSContext *ctx, JSValue this_val, int
     }
 
     /* Build headers with LWS_PRE padding. */
-    unsigned char header_buf[LWS_PRE + 4096];
+    size_t hdr_buf_size = LWS_PRE + TJS_MAX_HEADER_SIZE;
+    unsigned char *header_buf = js_malloc(ctx, hdr_buf_size);
+    if (!header_buf) {
+        return JS_ThrowOutOfMemory(ctx);
+    }
     unsigned char *start = &header_buf[LWS_PRE];
     unsigned char *p = start;
-    unsigned char *end = header_buf + sizeof(header_buf) - 1;
+    unsigned char *end = header_buf + hdr_buf_size - 1;
 
     /* Status line without Content-Length (streaming / unknown size). */
     if (lws_add_http_common_headers(req->wsi, (unsigned int) status, NULL, LWS_ILLEGAL_HTTP_CONTENT_LEN, &p, end)) {
+        js_free(ctx, header_buf);
         return JS_ThrowInternalError(ctx, "failed to add status header");
     }
 
@@ -1203,6 +1564,7 @@ static JSValue tjs_httpserver_send_headers(JSContext *ctx, JSValue this_val, int
                     JS_FreeValue(ctx, name_val);
                     JS_FreeValue(ctx, value_val);
                     JS_FreeValue(ctx, pair);
+                    js_free(ctx, header_buf);
                     return JS_ThrowInternalError(ctx, "failed to add response header");
                 }
             }
@@ -1217,9 +1579,11 @@ static JSValue tjs_httpserver_send_headers(JSContext *ctx, JSValue this_val, int
 
     /* Finalize and write headers in one call. */
     if (lws_finalize_write_http_header(req->wsi, start, &p, end)) {
+        js_free(ctx, header_buf);
         return JS_ThrowInternalError(ctx, "failed to write response headers");
     }
 
+    js_free(ctx, header_buf);
     return JS_UNDEFINED;
 }
 
@@ -1359,22 +1723,26 @@ static JSValue tjs_wsconn_send_binary(JSContext *ctx, JSValue this_val, int argc
     }
 
     size_t size;
-    uint8_t *buf = JS_GetArrayBuffer(ctx, &size, argv[0]);
+    size_t off = 0;
+    uint8_t *buf;
+
+    /* Try ArrayBuffer first, then TypedArray/DataView. */
+    buf = JS_GetArrayBuffer(ctx, &size, argv[0]);
     if (!buf) {
-        return JS_EXCEPTION;
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        size_t bpe, asize;
+        JSValue abuf = JS_GetTypedArrayBuffer(ctx, argv[0], &off, &size, &bpe);
+        if (JS_IsException(abuf)) {
+            return JS_EXCEPTION;
+        }
+        buf = JS_GetArrayBuffer(ctx, &asize, abuf);
+        JS_FreeValue(ctx, abuf);
+        if (!buf) {
+            return JS_EXCEPTION;
+        }
     }
 
-    uint64_t off;
-    if (JS_ToIndex(ctx, &off, argv[1])) {
-        return JS_EXCEPTION;
-    }
-
-    uint64_t blen;
-    if (JS_ToIndex(ctx, &blen, argv[2])) {
-        return JS_EXCEPTION;
-    }
-
-    wsconn_queue_write(ws, buf + off, blen, false);
+    wsconn_queue_write(ws, buf + off, size, false);
     return JS_UNDEFINED;
 }
 
@@ -1463,7 +1831,7 @@ static const JSCFunctionListEntry tjs_wsconn_proto_funcs[] = {
     JS_CGETSET_DEF("remoteAddress", tjs_wsconn_remoteaddr_get, NULL),
     JS_CGETSET_DEF("bufferedAmount", tjs_wsconn_bufferedamount_get, NULL),
     TJS_CFUNC_DEF("sendText", 1, tjs_wsconn_send_text),
-    TJS_CFUNC_DEF("sendBinary", 3, tjs_wsconn_send_binary),
+    TJS_CFUNC_DEF("sendBinary", 1, tjs_wsconn_send_binary),
     TJS_CFUNC_DEF("close", 2, tjs_wsconn_close),
 };
 
@@ -1473,7 +1841,7 @@ static const JSCFunctionListEntry tjs_httpserver_proto_funcs[] = {
     TJS_CFUNC_DEF("sendResponse", 4, tjs_httpserver_send_response),
     TJS_CFUNC_DEF("sendHeaders", 3, tjs_httpserver_send_headers),
     TJS_CFUNC_DEF("sendBody", 3, tjs_httpserver_send_body),
-    TJS_CFUNC_DEF("acceptUpgrade", 2, tjs_httpserver_accept_upgrade),
+    TJS_CFUNC_DEF("acceptUpgrade", 4, tjs_httpserver_accept_upgrade),
 };
 
 void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns) {
@@ -1495,6 +1863,6 @@ void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns) {
     JS_SetClassProto(ctx, tjs_httpserver_class_id, proto);
 
     /* HttpServer constructor */
-    obj = JS_NewCFunction2(ctx, tjs_httpserver_constructor, "HttpServer", 7, JS_CFUNC_constructor, 0);
+    obj = JS_NewCFunction2(ctx, tjs_httpserver_constructor, "HttpServer", 1, JS_CFUNC_constructor, 0);
     JS_DefinePropertyValueStr(ctx, ns, "HttpServer", obj, JS_PROP_C_W_E);
 }

@@ -1,6 +1,4 @@
-/// <reference path="../../../types/src/index.d.ts" />
 /* global tjs */
-// @ts-check
 
 import getopts from 'tjs:getopts';
 import path from 'tjs:path';
@@ -9,6 +7,7 @@ import { bundle } from './bundle.js';
 import { evalStdin } from './eval-stdin.js';
 import { mkdirSync } from './mkdirSync.js';
 import { runTests } from './run-tests.js';
+import { TpkTrailer, runTpk, appInit, appPack, appCompile } from './tpk.js';
 
 const core = globalThis[Symbol.for('tjs.internal.core')];
 
@@ -27,6 +26,14 @@ try {
 }
 
 core.setCookieJarPath(path.join(TJS_HOME, 'cookies.txt'));
+
+/**
+ * CA bundle override.
+ * Precedence: --tls-ca > TJS_CA_BUNDLE > SSL_CERT_FILE > embedded bundle.
+ * The value is applied later in option parsing, but we resolve the env
+ * var fallback here so it's available regardless of subcommand.
+ */
+const TJS_CA_BUNDLE = tjs.env.TJS_CA_BUNDLE ?? tjs.env.SSL_CERT_FILE ?? null;
 
 /**
  * Trailer for standalone binaries. When some code gets bundled with the tjs
@@ -60,6 +67,13 @@ Options:
   --stack-size STACKSIZE
         Set the maximum JavaScript stack size
 
+  --wasm-stack-size SIZE
+        Set the WebAssembly stack size (default: 524288)
+
+  --tls-ca FILE
+        Path to a custom CA bundle PEM file
+        (env: TJS_CA_BUNDLE, SSL_CERT_FILE)
+
 Subcommands:
   run
         Run a JavaScript program
@@ -77,7 +91,10 @@ Subcommands:
         Bundle a JavaScript/TypeScript file using esbuild
 
   compile infile [outfile]
-        Compile the given file into a standalone executable`;
+        Compile the given file into a standalone executable
+
+  app <subcommand>
+        Manage tpk app packages`;
 
 const helpBundle = `Usage: ${exeName} bundle [options] infile [outfile]
 
@@ -85,22 +102,29 @@ Bundle a JavaScript/TypeScript file using esbuild. If outfile is not
 specified it defaults to <infile-stem>.bundle.js.
 
 Options:
-  -m, --minify    Minify the output`;
+  -m, --minify    Minify the output
+
+Any other --option flags are passed through to esbuild.`;
 
 const helpEval = `Usage: ${exeName} eval EXPRESSION`;
 
-const helpRun = `Usage: ${exeName} run FILE`;
-
-const helpCompile = `Usage: ${exeName} compile [options] infile [outfile]
+const helpRun = `Usage: ${exeName} run [options] FILE
 
 Options:
-  -x, --exePath
-        Path to the tjs executable to bundle with the compiled file.
-        Defaults to the current executable. This is likely to be useful when cross-compiling.
+  --import-map FILE
+        Path to an import map JSON file`;
 
-  -h, --help
-        Print help
-`;
+const helpApp = `Usage: ${exeName} app <subcommand>
+
+Subcommands:
+  init
+        Create a template app in the current directory
+
+  pack [outfile]
+        Package the app into a .tpk file
+
+  compile [outfile]
+        Compile the app into a standalone executable`;
 
 const helpServe = `Usage: ${exeName} serve [options] FILE
 
@@ -123,23 +147,42 @@ The file must default export an object with a fetch method:
 
 Options:
   -p, --port PORT
-        Port to listen on (default: 8000)`;
+        Port to listen on (default: 8000)
+  --tls-cert FILE
+        Path to TLS certificate PEM file
+  --tls-key FILE
+        Path to TLS private key PEM file`;
+
+const decoder = new TextDecoder();
 
 // First, let's check if this is a standalone binary.
-await (async () => {
+const isBundled = await (async () => {
     const exef = await tjs.open(tjs.exePath, 'rb');
     const exeSize = (await exef.stat()).size;
+
+    // Check for TPK bundle first (4-byte magic at EOF).
+    const tpkMagicBuf = new Uint8Array(TpkTrailer.MagicSize);
+
+    await exef.read(tpkMagicBuf, exeSize - TpkTrailer.MagicSize);
+
+    if (decoder.decode(tpkMagicBuf) === TpkTrailer.Magic) {
+        await runTpk(exef, exeSize);
+
+        return true;
+    }
+
+    // Check for bytecode bundle (12-byte trailer).
     const trailerBuf = new Uint8Array(Trailer.Size);
 
     await exef.read(trailerBuf, exeSize - Trailer.Size);
 
     const magic = new Uint8Array(trailerBuf.buffer, 0, Trailer.MagicSize);
-    const maybeMagic = new TextDecoder().decode(magic);
+    const maybeMagic = decoder.decode(magic);
 
     if (maybeMagic === Trailer.Magic) {
         const dw = new DataView(trailerBuf.buffer, Trailer.MagicSize, Trailer.DataSize);
         const offset = dw.getUint32(0, true);
-        const buf = new Uint8Array(offset - Trailer.Size);
+        const buf = new Uint8Array(exeSize - offset - Trailer.Size);
 
         await exef.read(buf, offset);
         await exef.close();
@@ -148,176 +191,224 @@ await (async () => {
 
         await tjs.engine.evalBytecode(bytecode);
 
-        tjs.exit(0);
+        return true;
     }
 
     await exef.close();
 })();
 
-const options = getopts(tjs.args.slice(1), {
-    alias: {
-        eval: 'e',
-        help: 'h',
-        version: 'v'
-    },
-    boolean: [ 'h', 'v' ],
-    string: [ 'e' ],
-    stopEarly: true,
-    unknown: option => {
-        if (![ 'memory-limit', 'stack-size' ].includes(option)) {
-            throw `unrecognized option: ${option}`;
-        }
-
-        return !!option;
-    }
-});
-
-if (options.help) {
-    console.log(help);
-} else if (options.version) {
-    console.log(`v${tjs.version}`);
-} else {
-    const memoryLimit = options['memory-limit'];
-    const stackSize = options['stack-size'];
-
-    if (typeof memoryLimit !== 'undefined') {
-        core.setMemoryLimit(parseNumberOption(memoryLimit, 'memory-limit'));
-    }
-
-    if (typeof stackSize !== 'undefined') {
-        core.setMaxStackSize(parseNumberOption(stackSize, 'stack-size'));
-    }
-
-    const [ command, ...subargv ] = options._;
-
-    if (!command) {
-        if (tjs.stdin.isTerminal) {
-            core.runRepl();
-        } else {
-            evalStdin();
-        }
-    } else if (command === 'eval') {
-        const [ expr ] = subargv;
-
-        if (!expr) {
-            throw helpEval;
-        }
-
-        core.evalScript(expr);
-    } else if (command === 'run') {
-        const [ filename ] = subargv;
-
-        if (!filename) {
-            throw helpRun;
-        }
-
-        const ext = path.extname(filename).toLowerCase();
-
-        if (ext === '.wasm') {
-            if (!('wasm' in core)) {
-                throw 'WASM support is not enabled';
+if (!isBundled) {
+    const options = getopts(tjs.args.slice(1), {
+        alias: {
+            eval: 'e',
+            help: 'h',
+            version: 'v'
+        },
+        boolean: [ 'h', 'v' ],
+        string: [ 'e', 'tls-ca' ],
+        stopEarly: true,
+        unknown: option => {
+            if (![ 'memory-limit', 'stack-size', 'wasm-stack-size' ].includes(option)) {
+                throw `unrecognized option: ${option}`;
             }
-            const { WASI } = await import('tjs:wasi');
-            const bytes = await tjs.readFile(filename);
-            const module = new WebAssembly.Module(/** @type {Uint8Array<ArrayBuffer>} */(bytes));
-            const wasi = new WASI({
-                version: 'wasi_snapshot_preview1',
-                args: subargv,
-                preopens: {
-                    '.': tjs.cwd,
-                    '/': '/'
-                }
+
+            return option;
+        }
+    });
+
+    if (options.help) {
+        console.log(help);
+    } else if (options.version) {
+        console.log(`v${tjs.version}`);
+    } else {
+        const memoryLimit = options['memory-limit'];
+        const stackSize = options['stack-size'];
+
+        if (typeof memoryLimit !== 'undefined') {
+            core.setMemoryLimit(parseNumberOption(memoryLimit, 'memory-limit'));
+        }
+
+        if (typeof stackSize !== 'undefined') {
+            core.setMaxStackSize(parseNumberOption(stackSize, 'stack-size'));
+        }
+
+        const wasmStackSize = options['wasm-stack-size'];
+
+        if (typeof wasmStackSize !== 'undefined') {
+            core.setWasmStackSize(parseNumberOption(wasmStackSize, 'wasm-stack-size'));
+        }
+
+        const caBundlePath = options['tls-ca'] || TJS_CA_BUNDLE;
+
+        if (caBundlePath) {
+            core.setCABundlePath(path.resolve(caBundlePath));
+        }
+
+        const [ command, ...subargv ] = options._;
+
+        if (!command) {
+            if (tjs.stdin.isTerminal) {
+                core.runRepl();
+            } else {
+                evalStdin();
+            }
+        } else if (command === 'eval') {
+            const [ expr ] = subargv;
+
+            if (!expr) {
+                throw helpEval;
+            }
+
+            core.evalScript(expr);
+        } else if (command === 'run') {
+            const runOpts = getopts(subargv, {
+                string: [ 'import-map' ],
+                stopEarly: true,
             });
-            const instance = new WebAssembly.Instance(module, wasi.getImportObject());
 
-            wasi.start(instance);
-        } else {
-            await core.evalFile(filename);
-        }
-    } else if (command === 'serve') {
-        const serveOpts = getopts(subargv, {
-            alias: { port: 'p' },
-            string: [ 'p' ],
-        });
+            const [ filename ] = runOpts._;
 
-        const [ filename ] = serveOpts._;
-
-        if (!filename) {
-            throw helpServe;
-        }
-
-        const port = serveOpts.port ? parseNumberOption(serveOpts.port, 'port') : 8000;
-
-        const mod = await import(path.resolve(filename));
-        const handler = mod.default?.fetch;
-
-        if (typeof handler !== 'function') {
-            throw 'Module must default export an object with a fetch method';
-        }
-
-        const server = tjs.serve({ fetch: handler, port, websocket: mod.default.websocket });
-
-        console.log(`Listening on http://localhost:${server.port}/`);
-    } else if (command === 'bundle') {
-        const ok = await bundle(TJS_HOME, subargv);
-
-        if (!ok) {
-            throw helpBundle;
-        }
-    } else if (command === 'test') {
-        const [ dir ] = subargv;
-
-        runTests(dir);
-    } else if (command === 'compile') {
-        const compOpts = getopts(subargv, {
-            alias: {
-                exePath: 'x',
-                help: 'h',
-            },
-            string: [ 'x', 'h' ],
-            stopEarly: true,
-            unknown: option => {
-                console.log(`${exeName} compile: unrecognized option: ${option}`);
-                return !!option;
+            if (!filename) {
+                throw helpRun;
             }
-        });
 
-        const [ infile, outfile ] = compOpts._;
+            const ext = path.extname(filename).toLowerCase();
 
-        if (!infile || compOpts.help) {
+            if (ext === '.wasm') {
+                if (!('wasm' in core)) {
+                    throw 'WASM support is not enabled';
+                }
+                const { WASI } = await import('tjs:wasi');
+                const bytes = await tjs.readFile(filename);
+                const module = new WebAssembly.Module(bytes);
+                const wasi = new WASI({
+                    version: 'wasi_snapshot_preview1',
+                    args: runOpts._,
+                    preopens: {
+                        '.': tjs.cwd,
+                        '/': '/'
+                    }
+                });
+                const instance = new WebAssembly.Instance(module, wasi.getImportObject());
+
+                wasi.start(instance);
+            } else {
+                const importMapPath = runOpts['import-map'];
+
+                if (importMapPath) {
+                    const resolvedMapPath = path.resolve(importMapPath);
+                    const mapData = await tjs.readFile(resolvedMapPath);
+                    const mapObj = JSON.parse(new TextDecoder().decode(mapData));
+
+                    core.setImportMap(mapObj, path.dirname(resolvedMapPath));
+                }
+
+                await core.evalFile(filename);
+            }
+        } else if (command === 'serve') {
+            const serveOpts = getopts(subargv, {
+                alias: { port: 'p' },
+                string: [ 'p', 'tls-cert', 'tls-key' ],
+            });
+
+            const [ filename ] = serveOpts._;
+
+            if (!filename) {
+                throw helpServe;
+            }
+
+            const port = serveOpts.port ? parseNumberOption(serveOpts.port, 'port') : 8000;
+            const tlsCertPath = serveOpts['tls-cert'];
+            const tlsKeyPath = serveOpts['tls-key'];
+
+            if ((tlsCertPath && !tlsKeyPath) || (!tlsCertPath && tlsKeyPath)) {
+                throw 'Both --tls-cert and --tls-key must be specified';
+            }
+
+            let tls;
+
+            if (tlsCertPath && tlsKeyPath) {
+                tls = {
+                    cert: decoder.decode(await tjs.readFile(tlsCertPath)),
+                    key: decoder.decode(await tjs.readFile(tlsKeyPath)),
+                };
+            }
+
+            const mod = await import(path.resolve(filename));
+            const handler = mod.default?.fetch;
+
+            if (typeof handler !== 'function') {
+                throw 'Module must default export an object with a fetch method';
+            }
+
+            const server = tjs.serve({ fetch: handler, port, tls, websocket: mod.default.websocket });
+            const scheme = tls ? 'https' : 'http';
+
+            console.log(`Listening on ${scheme}://localhost:${server.port}/`);
+        } else if (command === 'bundle') {
+            const ok = await bundle(TJS_HOME, subargv);
+
+            if (!ok) {
+                throw helpBundle;
+            }
+        } else if (command === 'test') {
+            const [ dir ] = subargv;
+
+            runTests(dir);
+        } else if (command === 'compile') {
+            const [ infile, outfile ] = subargv;
+
+            if (!infile) {
+                throw help;
+            }
+
+            const infilePath = path.parse(infile);
+            const data = await tjs.readFile(infile);
+            const bytecode = tjs.engine.serialize(tjs.engine.compile(data, infilePath.base));
+            const exe = await tjs.readFile(tjs.exePath);
+            const exeSize = exe.length;
+            const newBuffer = exe.buffer.transfer(exeSize + bytecode.length + Trailer.Size);
+            const newExe = new Uint8Array(newBuffer);
+
+            newExe.set(bytecode, exeSize);
+            newExe.set(new TextEncoder().encode(Trailer.Magic), exeSize + bytecode.length);
+
+            const dw = new DataView(newBuffer, exeSize + bytecode.length + Trailer.MagicSize, Trailer.DataSize);
+
+            dw.setUint32(0, exeSize, true);
+
+            let newFileName = outfile ?? `${infilePath.name}`;
+
+            if (navigator.userAgentData.platform === 'Windows' && !newFileName.endsWith('.exe')) {
+                newFileName += '.exe';
+            }
+
+            await tjs.writeFile(newFileName, newExe, { mode: 0o755 });
+        } else if (command === 'app') {
+            const [ appCommand, ...appSubargv ] = subargv;
+
+            if (!appCommand) {
+                throw helpApp;
+            }
+
+            if (appCommand === 'init') {
+                await appInit();
+            } else if (appCommand === 'pack') {
+                const [ outfile ] = appSubargv;
+
+                await appPack(outfile);
+            } else if (appCommand === 'compile') {
+                const [ outfile ] = appSubargv;
+
+                await appCompile(outfile);
+            } else {
+                throw helpApp;
+            }
+        } else {
             throw help;
         }
-
-        const infilePath = path.parse(infile);
-        const data = await tjs.readFile(infile);
-        const bytecode = tjs.engine.serialize(tjs.engine.compile(data, infilePath.base));
-        const exe = await tjs.readFile(compOpts.exePath || tjs.exePath);
-        const exeSize = exe.length;
-        const newBuffer = /** @type {any} */(exe.buffer).transfer(exeSize + bytecode.length + Trailer.Size);
-        const newExe = new Uint8Array(newBuffer);
-
-        newExe.set(bytecode, exeSize);
-        newExe.set(new TextEncoder().encode(Trailer.Magic), exeSize + bytecode.length);
-
-        const dw = new DataView(newBuffer, exeSize + bytecode.length + Trailer.MagicSize, Trailer.DataSize);
-
-        dw.setUint32(0, exeSize, true);
-
-        let newFileName = outfile ?? `${infilePath.name}`;
-
-        if (navigator.userAgentData.platform === 'Windows' && !newFileName.endsWith('.exe')) {
-            newFileName += '.exe';
-        }
-
-        const newFile = await tjs.open(newFileName, 'w', 0o755);
-
-        await newFile.write(newExe);
-        await newFile.close();
-    } else {
-        throw help;
     }
 }
-
 
 function parseNumberOption(num, option) {
     const n = Number.parseInt(num, 10);
@@ -328,3 +419,4 @@ function parseNumberOption(num, option) {
 
     return n;
 }
+

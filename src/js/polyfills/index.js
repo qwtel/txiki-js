@@ -19,7 +19,7 @@ import './form-data.js';
 import './abort-controller.js';
 
 import './console.js';
-import './crypto.js';
+import './crypto/crypto.js';
 import './performance.js';
 import './worker.js';
 

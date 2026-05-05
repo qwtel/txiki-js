@@ -9,13 +9,15 @@ const kWsUpgrade = Symbol('kWsUpgrade');
 class Server {
     #handle;
     #handler;
+    #isTLS;
+    #streamControllers = new Map();
 
     constructor(options) {
         if (typeof options === 'function') {
             options = { fetch: options };
         }
 
-        const { fetch: handler, port = 0, listenIp = '0.0.0.0', websocket } = options;
+        const { fetch: handler, port = 0, listenIp = '0.0.0.0', websocket, tls } = options;
 
         if (typeof handler !== 'function') {
             throw new TypeError('fetch handler must be a function');
@@ -23,20 +25,64 @@ class Server {
 
         this.#handler = handler;
 
-        const wsOpen = websocket?.open ?? null;
-        const wsMessage = websocket?.message ?? null;
-        const wsClose = websocket?.close ?? null;
-        const wsError = websocket?.error ?? null;
+        let certPem = null;
+        let keyPem = null;
+        let caPem = null;
+        let passphrase = null;
+        let requestCert = false;
 
-        const onRequest = (requestId, method, url, headersArr, bodyBuffer, remoteAddr, isWsUpgrade) => {
+        if (tls) {
+            if (typeof tls.cert !== 'string' || typeof tls.key !== 'string') {
+                throw new TypeError('tls.cert and tls.key must be strings containing PEM data');
+            }
+
+            certPem = tls.cert;
+            keyPem = tls.key;
+            caPem = tls.ca ?? null;
+            passphrase = tls.passphrase ?? null;
+            requestCert = !!tls.requestCert;
+        }
+
+        this.#isTLS = !!tls;
+
+        const onRequest = (requestId, method, url, headersArr, bodyBuffer, remoteAddr, isWsUpgrade, isStreaming) => {
             if (isWsUpgrade) {
                 this.#handleWsUpgrade(requestId, method, url, headersArr, remoteAddr);
             } else {
-                this.#handleRequest(requestId, method, url, headersArr, bodyBuffer, remoteAddr);
+                this.#handleRequest(requestId, method, url, headersArr, bodyBuffer, remoteAddr, isStreaming);
             }
         };
 
-        this.#handle = new HttpServer(port, listenIp, onRequest, wsOpen, wsMessage, wsClose, wsError);
+        const onBodyChunk = (requestId, chunk) => {
+            const controller = this.#streamControllers.get(requestId);
+
+            if (!controller) {
+                return;
+            }
+
+            if (chunk) {
+                controller.enqueue(new Uint8Array(chunk));
+            } else {
+                controller.close();
+                this.#streamControllers.delete(requestId);
+            }
+        };
+
+        this.#handle = new HttpServer({
+            port,
+            listenIp,
+            onRequest,
+            onBodyChunk,
+            wsOpen: websocket?.open ?? null,
+            wsMessage: websocket?.message ?? null,
+            wsClose: websocket?.close ?? null,
+            wsError: websocket?.error ?? null,
+            certPem,
+            keyPem,
+            caPem,
+            passphrase,
+            requestCert,
+        });
     }
 
     get port() {
@@ -56,14 +102,36 @@ class Server {
         }
 
         const data = options?.data ?? null;
+        const headers = options?.headers;
 
-        return this.#handle.acceptUpgrade(upgradeId, data);
+        let headerNames = null;
+        let headerValues = null;
+
+        if (headers) {
+            headerNames = [];
+            headerValues = [];
+
+            if (headers instanceof Headers) {
+                headers.forEach((value, name) => {
+                    headerNames.push(name + ':');
+                    headerValues.push(value);
+                });
+            } else if (typeof headers === 'object') {
+                for (const [ name, value ] of Object.entries(headers)) {
+                    headerNames.push(name + ':');
+                    headerValues.push(String(value));
+                }
+            }
+        }
+
+        return this.#handle.acceptUpgrade(upgradeId, data, headerNames, headerValues);
     }
 
     #handleWsUpgrade(upgradeId, method, url, headersArr, remoteAddr) {
         const headers = Server.#parseHeaders(headersArr);
         const host = headers.get('host') || 'localhost';
-        const fullUrl = `http://${host}${url}`;
+        const scheme = this.#isTLS ? 'https' : 'http';
+        const fullUrl = `${scheme}://${host}${url}`;
         const request = new Request(fullUrl, { method, headers });
 
         request[kWsUpgrade] = upgradeId;
@@ -71,7 +139,7 @@ class Server {
         // server.upgrade(req) must have been called synchronously
     }
 
-    async #handleRequest(requestId, method, url, headersArr, bodyBuffer, remoteAddr) {
+    async #handleRequest(requestId, method, url, headersArr, bodyBuffer, remoteAddr, isStreaming) {
         let headersSent = false;
 
         try {
@@ -79,10 +147,20 @@ class Server {
 
             // Build Request.
             const host = headers.get('host') || 'localhost';
-            const fullUrl = `http://${host}${url}`;
+            const scheme = this.#isTLS ? 'https' : 'http';
+            const fullUrl = `${scheme}://${host}${url}`;
             const requestInit = { method, headers };
 
-            if (bodyBuffer && bodyBuffer.byteLength > 0 && method !== 'GET' && method !== 'HEAD') {
+            if (isStreaming && method !== 'GET' && method !== 'HEAD') {
+                const stream = new ReadableStream({
+                    start: controller => {
+                        this.#streamControllers.set(requestId, controller);
+                    },
+                });
+
+                requestInit.body = stream;
+                requestInit.duplex = 'half';
+            } else if (bodyBuffer && bodyBuffer.byteLength > 0 && method !== 'GET' && method !== 'HEAD') {
                 requestInit.body = bodyBuffer;
             }
 

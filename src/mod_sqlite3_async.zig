@@ -197,12 +197,12 @@ fn afterRunCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
     if (w.stmt) |stmt| _ = c.sqlite3_finalize(stmt);
 
     if (w.rc == c.SQLITE_OK) {
-        var argv = [_]c.JSValue{ z.JS_UNDEFINED };
-        c.TJS_ResolvePromise(ctx, &w.promise, 1, &argv);
+        const argv = [_]c.JSValue{z.JS_UNDEFINED};
+        c.TJS_SettlePromise(ctx, &w.promise, false, argv[0]);
     } else {
         const err = newSqliteError(ctx, w.rc, w.db);
-        var argv = [_]c.JSValue{ err };
-        c.TJS_RejectPromise(ctx, &w.promise, 1, &argv);
+        const argv = [_]c.JSValue{err};
+        c.TJS_SettlePromise(ctx, &w.promise, true, argv[0]);
     }
 }
 
@@ -401,11 +401,11 @@ fn afterAllCallback(req: [*c]c.uv_work_t, _: c_int) callconv(.c) void {
         };
     };
 
-    var argv = [_]c.JSValue{ res };
+    const argv = [_]c.JSValue{res};
     if (!is_rejected) {
-        c.TJS_ResolvePromise(w.ctx, &w.promise, 1, &argv);
+        c.TJS_SettlePromise(w.ctx, &w.promise, false, argv[0]);
     } else {
-        c.TJS_RejectPromise(w.ctx, &w.promise, 1, &argv);
+        c.TJS_SettlePromise(w.ctx, &w.promise, true, argv[0]);
     }
 }
 

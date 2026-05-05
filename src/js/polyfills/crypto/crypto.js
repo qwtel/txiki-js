@@ -1,8 +1,9 @@
+import { SubtleCrypto } from './subtle.js';
+
 const core = globalThis[Symbol.for('tjs.internal.core')];
 
 const TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 const TypedArrayProto_toStringTag = Object.getOwnPropertyDescriptor(TypedArrayPrototype, Symbol.toStringTag).get;
-
 
 function getRandomValues(obj) {
     const type = TypedArrayProto_toStringTag.call(obj);
@@ -35,11 +36,12 @@ function randomUUID() {
     return core.randomUUID();
 }
 
+const subtle = new SubtleCrypto();
 
 const crypto = Object.freeze({
     getRandomValues,
     randomUUID,
-    subtle: undefined
+    subtle,
 });
 
 Object.defineProperty(window, 'crypto', {
@@ -48,4 +50,3 @@ Object.defineProperty(window, 'crypto', {
     writable: true,
     value: crypto
 });
-

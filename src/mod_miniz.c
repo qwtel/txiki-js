@@ -219,14 +219,14 @@ static JSValue tjs_compressor_process(JSContext *ctx, JSValue this_val, int argc
         return JS_ThrowInternalError(ctx, "compressor is not initialized");
     }
 
-    size_t in_size = 0;
-    const uint8_t *in_data = NULL;
+    if (argc < 1) {
+        return JS_ThrowTypeError(ctx, "expected data argument");
+    }
 
-    if (argc > 0 && !JS_IsUndefined(argv[0]) && !JS_IsNull(argv[0])) {
-        in_data = JS_GetUint8Array(ctx, &in_size, argv[0]);
-        if (!in_data && in_size != 0) {
-            return JS_EXCEPTION;
-        }
+    size_t in_size;
+    uint8_t *in_data = JS_GetUint8Array(ctx, &in_size, argv[0]);
+    if (!in_data) {
+        return JS_EXCEPTION;
     }
 
     int flush = MZ_NO_FLUSH;
@@ -239,7 +239,7 @@ static JSValue tjs_compressor_process(JSContext *ctx, JSValue this_val, int argc
     }
 
     /* Track CRC32 and total input for gzip. */
-    if (c->format == FORMAT_GZIP && in_data && in_size > 0) {
+    if (c->format == FORMAT_GZIP && in_size > 0) {
         c->crc32 = mz_crc32(c->crc32, in_data, in_size);
         c->total_in += in_size;
     }
@@ -253,7 +253,6 @@ static JSValue tjs_compressor_process(JSContext *ctx, JSValue this_val, int argc
         c->header_written = true;
     }
 
-    /* Compress. */
     c->stream.next_in = in_data;
     c->stream.avail_in = (mz_uint32) in_size;
 
@@ -294,7 +293,7 @@ static JSValue tjs_compressor_process(JSContext *ctx, JSValue this_val, int argc
 
     if (out.size == 0) {
         tbuf_free(&out);
-        return JS_NewUint8ArrayCopy(ctx, NULL, 0);
+        return TJS_NewUint8Array(ctx, NULL, 0);
     }
 
     JSValue result = TJS_NewUint8Array(ctx, out.buf, out.size);
@@ -542,14 +541,14 @@ static JSValue tjs_decompressor_process(JSContext *ctx, JSValue this_val, int ar
         return JS_EXCEPTION;
     }
 
-    size_t in_size = 0;
-    const uint8_t *in_data = NULL;
+    if (argc < 1) {
+        return JS_ThrowTypeError(ctx, "expected data argument");
+    }
 
-    if (argc > 0 && !JS_IsUndefined(argv[0]) && !JS_IsNull(argv[0])) {
-        in_data = JS_GetUint8Array(ctx, &in_size, argv[0]);
-        if (!in_data && in_size != 0) {
-            return JS_EXCEPTION;
-        }
+    size_t in_size;
+    uint8_t *in_data = JS_GetUint8Array(ctx, &in_size, argv[0]);
+    if (!in_data) {
+        return JS_EXCEPTION;
     }
 
     TBuf out;
@@ -562,7 +561,7 @@ static JSValue tjs_decompressor_process(JSContext *ctx, JSValue this_val, int ar
 
     if (out.size == 0) {
         tbuf_free(&out);
-        return JS_NewUint8ArrayCopy(ctx, NULL, 0);
+        return TJS_NewUint8Array(ctx, NULL, 0);
     }
 
     JSValue result = TJS_NewUint8Array(ctx, out.buf, out.size);
@@ -577,6 +576,167 @@ static const JSCFunctionListEntry tjs_decompressor_proto_funcs[] = {
     TJS_CFUNC_DEF("process", 1, tjs_decompressor_process),
 };
 /* clang-format on */
+
+/*
+ * Internal ZIP APIs for tpk support.
+ *
+ * zipCreate(entries) - entries is an array of { name: string, data: Uint8Array }
+ *   Returns a Uint8Array containing the ZIP archive.
+ *
+ * zipExtract(data) - data is a Uint8Array containing a ZIP archive
+ *   Returns an array of { name: string, data: Uint8Array }.
+ */
+
+static JSValue tjs_zip_create(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    if (argc < 1) {
+        return JS_ThrowTypeError(ctx, "expected entries array");
+    }
+
+    JSValue entries = argv[0];
+
+    if (!JS_IsArray(entries)) {
+        return JS_ThrowTypeError(ctx, "expected an array of entries");
+    }
+
+    JSValue lengthVal = JS_GetPropertyStr(ctx, entries, "length");
+    uint32_t length;
+
+    if (JS_ToUint32(ctx, &length, lengthVal)) {
+        JS_FreeValue(ctx, lengthVal);
+        return JS_EXCEPTION;
+    }
+
+    JS_FreeValue(ctx, lengthVal);
+
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+
+    if (!mz_zip_writer_init_heap(&zip, 0, 0)) {
+        return JS_ThrowInternalError(ctx, "failed to initialize ZIP writer");
+    }
+
+    for (uint32_t i = 0; i < length; i++) {
+        JSValue entry = JS_GetPropertyUint32(ctx, entries, i);
+
+        if (JS_IsException(entry)) {
+            mz_zip_writer_end(&zip);
+            return JS_EXCEPTION;
+        }
+
+        JSValue nameVal = JS_GetPropertyStr(ctx, entry, "name");
+        const char *name = JS_ToCString(ctx, nameVal);
+
+        JS_FreeValue(ctx, nameVal);
+
+        if (!name) {
+            JS_FreeValue(ctx, entry);
+            mz_zip_writer_end(&zip);
+            return JS_EXCEPTION;
+        }
+
+        JSValue dataVal = JS_GetPropertyStr(ctx, entry, "data");
+        size_t data_size;
+        uint8_t *data = JS_GetUint8Array(ctx, &data_size, dataVal);
+        if (!data) {
+            JS_FreeCString(ctx, name);
+            JS_FreeValue(ctx, dataVal);
+            JS_FreeValue(ctx, entry);
+            mz_zip_writer_end(&zip);
+            return JS_EXCEPTION;
+        }
+
+        mz_bool ok = mz_zip_writer_add_mem(&zip, name, data, data_size, MZ_DEFAULT_COMPRESSION);
+
+        JS_FreeCString(ctx, name);
+        JS_FreeValue(ctx, dataVal);
+        JS_FreeValue(ctx, entry);
+
+        if (!ok) {
+            mz_zip_writer_end(&zip);
+            return JS_ThrowInternalError(ctx, "failed to add entry to ZIP");
+        }
+    }
+
+    void *buf = NULL;
+    size_t buf_size = 0;
+
+    if (!mz_zip_writer_finalize_heap_archive(&zip, &buf, &buf_size)) {
+        mz_zip_writer_end(&zip);
+        return JS_ThrowInternalError(ctx, "failed to finalize ZIP archive");
+    }
+
+    mz_zip_writer_end(&zip);
+
+    JSValue result = JS_NewUint8ArrayCopy(ctx, buf, buf_size);
+
+    free(buf);
+
+    return result;
+}
+
+static JSValue tjs_zip_extract(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    if (argc < 1) {
+        return JS_ThrowTypeError(ctx, "expected ZIP data");
+    }
+
+    size_t zip_size;
+    uint8_t *zip_data = JS_GetUint8Array(ctx, &zip_size, argv[0]);
+    if (!zip_data) {
+        return JS_EXCEPTION;
+    }
+
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof(zip));
+
+    if (!mz_zip_reader_init_mem(&zip, zip_data, zip_size, 0)) {
+        return JS_ThrowInternalError(ctx, "failed to read ZIP archive");
+    }
+
+    mz_uint num_files = mz_zip_reader_get_num_files(&zip);
+    JSValue result = JS_NewArray(ctx);
+
+    if (JS_IsException(result)) {
+        mz_zip_reader_end(&zip);
+        return JS_EXCEPTION;
+    }
+
+    uint32_t entry_idx = 0;
+
+    for (mz_uint i = 0; i < num_files; i++) {
+        mz_zip_archive_file_stat file_stat;
+
+        if (!mz_zip_reader_file_stat(&zip, i, &file_stat)) {
+            JS_FreeValue(ctx, result);
+            mz_zip_reader_end(&zip);
+            return JS_ThrowInternalError(ctx, "failed to stat ZIP entry");
+        }
+
+        /* Skip directories. */
+        if (mz_zip_reader_is_file_a_directory(&zip, i)) {
+            continue;
+        }
+
+        size_t file_size;
+        void *file_data = mz_zip_reader_extract_to_heap(&zip, i, &file_size, 0);
+
+        if (!file_data) {
+            JS_FreeValue(ctx, result);
+            mz_zip_reader_end(&zip);
+            return JS_ThrowInternalError(ctx, "failed to extract ZIP entry");
+        }
+
+        JSValue entry = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, entry, "name", JS_NewString(ctx, file_stat.m_filename));
+        JS_SetPropertyStr(ctx, entry, "data", JS_NewUint8ArrayCopy(ctx, file_data, file_size));
+        free(file_data);
+
+        JS_SetPropertyUint32(ctx, result, entry_idx++, entry);
+    }
+
+    mz_zip_reader_end(&zip);
+
+    return result;
+}
 
 void tjs__mod_miniz_init(JSContext *ctx, JSValue ns) {
     JSRuntime *rt = JS_GetRuntime(ctx);
@@ -601,4 +761,8 @@ void tjs__mod_miniz_init(JSContext *ctx, JSValue ns) {
 
     obj = JS_NewCFunction2(ctx, tjs_decompressor_constructor, "Decompressor", 1, JS_CFUNC_constructor, 0);
     JS_DefinePropertyValueStr(ctx, ns, "Decompressor", obj, JS_PROP_C_W_E);
+
+    /* Internal ZIP functions for tpk support. */
+    JS_SetPropertyStr(ctx, ns, "zipCreate", JS_NewCFunction(ctx, tjs_zip_create, "zipCreate", 1));
+    JS_SetPropertyStr(ctx, ns, "zipExtract", JS_NewCFunction(ctx, tjs_zip_extract, "zipExtract", 1));
 }

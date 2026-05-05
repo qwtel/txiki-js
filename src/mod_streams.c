@@ -55,6 +55,7 @@ typedef struct {
         uv_tty_t tty;
         uv_pipe_t pipe;
     } h;
+    JSValue obj; /* prevent GC while the handle is active (reading / listening) */
     JSValue callbacks[STREAM_CB_MAX];
     struct {
         uint8_t *buf;
@@ -63,7 +64,7 @@ typedef struct {
 
 typedef struct {
     uv_write_t req;
-    JSValue tarray;
+    TJSBufferRef buf_ref;
 } TJSWriteReq;
 
 static TJSStream *tjs_tcp_get(JSContext *ctx, JSValue obj);
@@ -135,6 +136,9 @@ static JSValue tjs_stream_close(JSContext *ctx, JSValue this_val, int argc, JSVa
         maybe_invoke_callback(s, STREAM_CB_CONNECTION, 2, args);
     }
 
+    JS_FreeValue(ctx, s->obj);
+    s->obj = JS_UNDEFINED;
+
     maybe_close(s);
     return JS_UNDEFINED;
 }
@@ -198,6 +202,13 @@ static JSValue tjs_stream_start_read(JSContext *ctx, JSValue this_val, int argc,
         return tjs_throw_errno(ctx, r);
     }
 
+    /* Pin the JS object so the GC cannot collect it while the handle is
+       actively reading.  The reference is intentionally NOT marked in gc_mark
+       so the cycle-collector cannot account for it. */
+    if (JS_IsUndefined(s->obj)) {
+        s->obj = JS_DupValue(ctx, this_val);
+    }
+
     return JS_UNDEFINED;
 }
 
@@ -215,6 +226,33 @@ static JSValue tjs_stream_stop_read(JSContext *ctx, JSValue this_val, int argc, 
     js_free(ctx, s->read.buf);
     s->read.buf = NULL;
 
+    JS_FreeValue(ctx, s->obj);
+    s->obj = JS_UNDEFINED;
+
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_stream_ref(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    JSClassID class_id;
+    TJSStream *s = JS_GetAnyOpaque(this_val, &class_id);
+    if (!s) {
+        return JS_EXCEPTION;
+    }
+    if (!uv_is_closing(&s->h.handle)) {
+        uv_ref(&s->h.handle);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_stream_unref(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    JSClassID class_id;
+    TJSStream *s = JS_GetAnyOpaque(this_val, &class_id);
+    if (!s) {
+        return JS_EXCEPTION;
+    }
+    if (!uv_is_closing(&s->h.handle)) {
+        uv_unref(&s->h.handle);
+    }
     return JS_UNDEFINED;
 }
 
@@ -233,7 +271,7 @@ static void uv__stream_write_cb(uv_write_t *req, int status) {
     }
 
     maybe_invoke_callback(s, STREAM_CB_WRITE, 1, &arg);
-    JS_FreeValue(ctx, wr->tarray);
+    tjs_buf_ref_release(ctx, &wr->buf_ref);
     js_free(ctx, wr);
 }
 
@@ -247,45 +285,46 @@ static JSValue tjs_stream_write(JSContext *ctx, JSValue this_val, int argc, JSVa
         return JS_ThrowInternalError(ctx, "stream is closed");
     }
 
-    size_t size;
-    uint8_t *buf = JS_GetUint8Array(ctx, &size, argv[0]);
-    if (!buf) {
+    TJSBufferRef buf_ref;
+    if (tjs_buf_ref_get(ctx, argv[0], &buf_ref)) {
         return JS_EXCEPTION;
     }
 
     /* First try to do the write inline */
     int r;
     uv_buf_t b;
-    b = uv_buf_init((char *) buf, size);
+    b = uv_buf_init((char *) buf_ref.data, buf_ref.size);
     r = uv_try_write(&s->h.stream, &b, 1);
 
-    if (r == size) {
-        return JS_NewInt64(ctx, size);
+    if (r == (int) buf_ref.size) {
+        tjs_buf_ref_release(ctx, &buf_ref);
+        return JS_TRUE;
     }
 
-    /* Do an async write, copy the data. */
+    /* Do an async write, pin the buffer. */
     if (r >= 0) {
-        buf += r;
-        size -= r;
+        buf_ref.data += r;
+        buf_ref.size -= r;
     }
 
     TJSWriteReq *wr = js_malloc(ctx, sizeof(*wr));
     if (!wr) {
+        tjs_buf_ref_release(ctx, &buf_ref);
         return JS_EXCEPTION;
     }
 
     wr->req.data = wr;
-    wr->tarray = JS_DupValue(ctx, argv[0]);
+    wr->buf_ref = buf_ref;
 
-    b = uv_buf_init((char *) buf, size);
+    b = uv_buf_init((char *) buf_ref.data, buf_ref.size);
     r = uv_write(&wr->req, &s->h.stream, &b, 1, uv__stream_write_cb);
     if (r != 0) {
-        JS_FreeValue(ctx, wr->tarray);
+        tjs_buf_ref_release(ctx, &wr->buf_ref);
         js_free(ctx, wr);
         return tjs_throw_errno(ctx, r);
     }
 
-    return JS_UNDEFINED;
+    return JS_FALSE;
 }
 
 static void uv__stream_shutdown_cb(uv_shutdown_t *req, int status) {
@@ -364,6 +403,14 @@ static void uv__stream_connect_cb(uv_connect_t *req, int status) {
 
     maybe_invoke_callback(s, STREAM_CB_CONNECT, 1, &arg);
 
+    /* Unpin unless start_read (or listen) has re-pinned in the meantime.
+       We check uv_is_active: if the user called startRead inside the connect
+       callback the handle is active and obj was already re-pinned there. */
+    if (!uv_is_active(&s->h.handle)) {
+        JS_FreeValue(ctx, s->obj);
+        s->obj = JS_UNDEFINED;
+    }
+
     js_free(ctx, req);
 }
 
@@ -424,6 +471,11 @@ static JSValue tjs_stream_listen(JSContext *ctx, JSValue this_val, int argc, JSV
     if (r != 0) {
         return tjs_throw_errno(ctx, r);
     }
+
+    if (JS_IsUndefined(s->obj)) {
+        s->obj = JS_DupValue(ctx, this_val);
+    }
+
     return JS_UNDEFINED;
 }
 
@@ -449,6 +501,7 @@ static JSValue tjs_stream_set_blocking(JSContext *ctx, JSValue this_val, int arg
 static JSValue tjs_init_stream(JSContext *ctx, JSValue obj, TJSStream *s) {
     s->ctx = ctx;
     s->h.handle.data = s;
+    s->obj = JS_UNDEFINED;
     s->read.buf = NULL;
 
     for (int i = 0; i < STREAM_CB_MAX; i++) {
@@ -461,6 +514,7 @@ static JSValue tjs_init_stream(JSContext *ctx, JSValue obj, TJSStream *s) {
 
 static void tjs_stream_finalizer(JSRuntime *rt, TJSStream *s) {
     if (s) {
+        JS_FreeValueRT(rt, s->obj);
         for (int i = 0; i < STREAM_CB_MAX; i++) {
             JS_FreeValueRT(rt, s->callbacks[i]);
         }
@@ -468,7 +522,7 @@ static void tjs_stream_finalizer(JSRuntime *rt, TJSStream *s) {
         s->read.buf = NULL;
         s->finalized = 1;
         if (s->closed) {
-            js_free_rt(rt, s);
+            tjs__free(s);
         } else {
             maybe_close(s);
         }
@@ -587,6 +641,10 @@ static JSValue tjs_tcp_connect(JSContext *ctx, JSValue this_val, int argc, JSVal
     if (r != 0) {
         js_free(ctx, req);
         return tjs_throw_errno(ctx, r);
+    }
+
+    if (JS_IsUndefined(t->obj)) {
+        t->obj = JS_DupValue(ctx, this_val);
     }
 
     return JS_UNDEFINED;
@@ -871,6 +929,10 @@ static JSValue tjs_pipe_connect(JSContext *ctx, JSValue this_val, int argc, JSVa
         return tjs_throw_errno(ctx, r);
     }
 
+    if (JS_IsUndefined(t->obj)) {
+        t->obj = JS_DupValue(ctx, this_val);
+    }
+
     return JS_UNDEFINED;
 }
 
@@ -933,6 +995,8 @@ static const JSCFunctionListEntry tjs_stream_proto_funcs[] = {
     TJS_CFUNC_DEF("close", 0, tjs_stream_close),
     TJS_CFUNC_DEF("write", 1, tjs_stream_write),
     TJS_CFUNC_DEF("fileno", 0, tjs_stream_fileno),
+    TJS_CFUNC_DEF("ref", 0, tjs_stream_ref),
+    TJS_CFUNC_DEF("unref", 0, tjs_stream_unref),
 };
 /* clang-format on */
 

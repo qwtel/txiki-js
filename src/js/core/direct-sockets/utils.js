@@ -49,15 +49,16 @@ export class BaseStreamSocket {
         const { promise, resolve, reject } = Promise.withResolvers();
 
         this[kClosed] = promise;
+        // Prevent unhandled rejection if the socket fails to open and
+        // nobody observes the closed promise.
+        promise.catch(() => {});
         this._closedResolve = resolve;
         this._closedReject = reject;
     }
 
     _doWrite(buf) {
-        const result = this[kHandle].write(buf);
-
-        if (typeof result === 'number') {
-            return Promise.resolve(result);
+        if (this[kHandle].write(buf)) {
+            return Promise.resolve();
         }
 
         const { promise, resolve, reject } = Promise.withResolvers();
@@ -235,6 +236,9 @@ export class BaseStreamServerSocket {
         const { promise, resolve, reject } = Promise.withResolvers();
 
         this[kClosed] = promise;
+        // Prevent unhandled rejection if the server fails to bind and
+        // nobody observes the closed promise.
+        promise.catch(() => {});
         this._closedResolve = resolve;
         this._closedReject = reject;
     }

@@ -135,9 +135,20 @@ typedef struct {
 
 static void custom_header_foreach_cb(const char *name, int nlen, void *opaque) {
     TJSHttpHdrCtx *hctx = opaque;
-    char val[4096];
 
-    if (lws_hdr_custom_copy(hctx->wsi, val, sizeof(val), name, nlen) < 0) {
+    int total_len = lws_hdr_custom_length(hctx->wsi, name, nlen);
+    if (total_len < 0) {
+        return;
+    }
+
+    size_t buf_size = (size_t) total_len + 1;
+    char *val = js_malloc(hctx->h->ctx, buf_size);
+    if (!val) {
+        return;
+    }
+
+    if (lws_hdr_custom_copy(hctx->wsi, val, (int) buf_size, name, nlen) < 0) {
+        js_free(hctx->h->ctx, val);
         return;
     }
 
@@ -151,6 +162,8 @@ static void custom_header_foreach_cb(const char *name, int nlen, void *opaque) {
     args[0] = JS_NewStringLen(hctx->h->ctx, name, name_len);
     args[1] = JS_NewString(hctx->h->ctx, val);
     maybe_invoke_callback(hctx->h, HC_CALLBACK_HEADER, 2, args);
+
+    js_free(hctx->h->ctx, val);
 }
 
 static void fire_response_headers(TJSHttpClient *h, struct lws *wsi) {
@@ -165,11 +178,17 @@ static void fire_response_headers(TJSHttpClient *h, struct lws *wsi) {
         if (tn_len == 0 || tn[tn_len - 1] != ':') {
             continue;
         }
-        if (lws_hdr_total_length(wsi, n) <= 0) {
+        int total_len = lws_hdr_total_length(wsi, n);
+        if (total_len <= 0) {
             continue;
         }
-        char val[4096];
-        if (lws_hdr_copy(wsi, val, sizeof(val), n) < 0) {
+        size_t buf_size = (size_t) total_len + 1;
+        char *val = js_malloc(h->ctx, buf_size);
+        if (!val) {
+            continue;
+        }
+        if (lws_hdr_copy(wsi, val, (int) buf_size, n) < 0) {
+            js_free(h->ctx, val);
             continue;
         }
 
@@ -178,6 +197,7 @@ static void fire_response_headers(TJSHttpClient *h, struct lws *wsi) {
         args[0] = JS_NewStringLen(h->ctx, tn, tn_len - 1);
         args[1] = JS_NewString(h->ctx, val);
         maybe_invoke_callback(h, HC_CALLBACK_HEADER, 2, args);
+        js_free(h->ctx, val);
     }
 
     /* Iterate custom headers. */
@@ -254,14 +274,16 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
         case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
             unsigned char **p = (unsigned char **) in, *end = (*p) + len;
 
-            /* Add User-Agent header. */
-            if (lws_add_http_header_by_name(wsi,
-                                            (const unsigned char *) "user-agent:",
-                                            (const unsigned char *) TJS__UA_STRING,
-                                            (int) strlen(TJS__UA_STRING),
-                                            p,
-                                            end)) {
-                return -1;
+            /* Add User-Agent header unless the user already set one. */
+            if (!has_request_header(&h->req_headers, "User-Agent")) {
+                if (lws_add_http_header_by_name(wsi,
+                                                (const unsigned char *) "user-agent:",
+                                                (const unsigned char *) TJS__UA_STRING,
+                                                (int) strlen(TJS__UA_STRING),
+                                                p,
+                                                end)) {
+                    return -1;
+                }
             }
 
             /* Add Accept-Encoding unless the user already set it. */
@@ -280,6 +302,7 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
             /* Add custom headers stored in req_headers TBuf.
              * Format: "Name: Value\r\nName2: Value2\r\n" */
             if (h->req_headers.size > 0) {
+                tbuf_putc(&h->req_headers, '\0');
                 char *headers = (char *) h->req_headers.buf;
                 char *line = headers;
                 while (line && *line) {
@@ -708,6 +731,7 @@ static int tjs_httpclient_connect(TJSHttpClient *h) {
     cci.local_protocol_name = TJS_LWS_HTTP_PROTOCOL_NAME;
     cci.userdata = h;
     cci.pwsi = &h->wsi;
+    cci.vhost = tjs__lws_select_vhost(ctx, prot_str, ads, port);
 
     tjs__lws_conn_ref(ctx);
 

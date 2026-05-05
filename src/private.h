@@ -25,13 +25,19 @@
 #ifndef TJS_PRIVATE_H
 #define TJS_PRIVATE_H
 
-#include "cutils.h"
+#include "list.h"
 #include "tbuf.h"
 #include "tjs.h"
 
 #ifdef TJS__HAS_NETWORK
 #include <libwebsockets.h>
+#else
+struct lws_context;
+struct lws_vhost;
 #endif
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/x509_crt.h>
 #include <quickjs.h>
 #ifndef TJS__OMIT_SQLITE
 #include <sqlite3.h>
@@ -61,7 +67,12 @@
 #endif
 
 typedef struct TJSTimer TJSTimer;
-struct lws_context;
+
+typedef struct {
+    struct list_head link;
+    JSValue promise;
+    JSValue reason;
+} TJSPendingRejection;
 
 struct TJSRuntime {
     TJSRunOptions options;
@@ -76,14 +87,25 @@ struct TJSRuntime {
     uv_async_t stop;
     bool is_worker;
     bool freeing;
+    bool draining_microtasks;
 #ifndef TJS__OMIT_WASM
     struct {
         bool initialized;
+        uint32_t stack_size;
     } wasm_ctx;
 #endif
     struct {
         struct lws_context *ctx;
+        struct lws_vhost *vh_direct;
+        struct lws_vhost *vh_http_proxy;
+        struct lws_vhost *vh_https_proxy;
+        char **no_proxy_entries;
+        int no_proxy_count;
+        bool no_proxy_wildcard;
         char *cookie_jar_path;
+        char *ca_bundle_path;
+        uint8_t *ca_bundle_data;
+        unsigned int ca_bundle_len;
         uv_async_t keepalive;
         int active_conns;
     } lws;
@@ -92,19 +114,29 @@ struct TJSRuntime {
         int64_t next_timer;
     } timers;
     struct {
+        bool initialized;
+        mbedtls_entropy_context entropy;
+        mbedtls_ctr_drbg_context ctr_drbg;
+        mbedtls_x509_crt cacert;
+        char *ca_bundle_path;
+    } tls;
+    struct {
         JSValue promise_event_ctor;
         JSValue dispatch_event_func;
+        JSValue import_map_resolver;
     } builtins;
+    struct list_head pending_rejections;
 };
 
 #ifdef TJS__HAS_NETWORK
 void tjs__mod_dns_init(JSContext *ctx, JSValue ns);
-void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_engine_init(JSContext *ctx, JSValue ns);
 void tjs__mod_error_init(JSContext *ctx, JSValue ns);
+void tjs__mod_ffi_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fs_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fswatch_init(JSContext *ctx, JSValue ns);
+void tjs__mod_hashing_init(JSContext *ctx, JSValue ns);
 void tjs__mod_httpclient_init(JSContext *ctx, JSValue ns);
 void tjs__mod_miniz_init(JSContext *ctx, JSValue ns);
 typedef struct TJSDecompressor TJSDecompressor;
@@ -118,13 +150,19 @@ void tjs__mod_signals_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sqlite3_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
+void tjs__mod_tls_init(JSContext *ctx, JSValue ns);
+void tjs__mod_tls_cleanup(TJSRuntime *qrt);
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
 void tjs__mod_text_coding_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
+#ifdef TJS__HAS_NETWORK
+void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
+#endif
 #ifndef TJS__OMIT_WASM
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_worker_init(JSContext *ctx, JSValue ns);
+void tjs__webcrypto_init(JSContext *ctx, JSValue ns);
 #ifdef TJS__HAS_NETWORK
 void tjs__mod_ws_init(JSContext *ctx, JSValue ns);
 void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns);
@@ -140,6 +178,7 @@ JSValue tjs_throw_errno(JSContext *ctx, int err);
 JSValue tjs_new_pipe(JSContext *ctx);
 uv_stream_t *tjs_pipe_get_stream(JSContext *ctx, JSValue obj);
 
+void tjs__drain_microtasks(JSContext *ctx);
 void tjs__execute_jobs(JSContext *ctx);
 JSModuleDef *tjs__load_builtin(JSContext *ctx, const char *name);
 int tjs__load_file(JSContext *ctx, TBuf *dbuf, const char *filename);
@@ -158,11 +197,14 @@ void tjs__destroy_timers(TJSRuntime *qrt);
 void tjs__sab_free(void *opaque, void *ptr);
 void tjs__sab_dup(void *opaque, void *ptr);
 
+#ifdef TJS__HAS_NETWORK
 struct lws_context *tjs__lws_get_context(JSContext *ctx);
 void tjs__lws_init(TJSRuntime *qrt);
 void tjs__lws_conn_ref(JSContext *ctx);
 void tjs__lws_conn_unref(JSContext *ctx);
+struct lws_vhost *tjs__lws_select_vhost(JSContext *ctx, const char *scheme, const char *hostname, int port);
 int tjs__lws_load_http(TJSRuntime *qrt, TBuf *dbuf, const char *url);
+#endif
 
 uv_loop_t *TJS_GetLoop(TJSRuntime *qrt);
 TJSRuntime *TJS_NewRuntimeWorker(void);

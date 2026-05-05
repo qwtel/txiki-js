@@ -64,10 +64,10 @@ fn build2(
         .target = target,
         .optimize = optimize,
     });
-    const dep_mbedtls = if (opts.with_network) b.dependency("mbedtls", .{
+    const dep_mbedtls = b.dependency("mbedtls", .{
         .target = target,
         .optimize = optimize,
-    }) else null;
+    });
     const dep_libwebsockets = if (opts.with_network) b.dependency("libwebsockets", .{
         .target = target,
         .optimize = optimize,
@@ -93,6 +93,7 @@ fn build2(
     translate_c.addIncludePath(dep_quickjs.artifact("qjs").getEmittedIncludeTree());
     translate_c.addIncludePath(dep_sqlite3.artifact("sqlite3").getEmittedIncludeTree());
     translate_c.addIncludePath(dep_libuv.artifact("uv_a").getEmittedIncludeTree());
+    translate_c.addIncludePath(dep_mbedtls.artifact("mbedcrypto").getEmittedIncludeTree());
     translate_c.defineCMacro("TJS__PLATFORM", tjs_platform);
     if (!opts.with_sqlite) {
         translate_c.defineCMacro("TJS__OMIT_SQLITE", "1");
@@ -109,9 +110,7 @@ fn build2(
     }
     if (opts.with_network) {
         const dep_lws = dep_libwebsockets.?;
-        const dep_mtls = dep_mbedtls.?;
         translate_c.addIncludePath(dep_lws.artifact("websockets").getEmittedIncludeTree());
-        translate_c.addIncludePath(dep_mtls.artifact("mbedcrypto").getEmittedIncludeTree());
         translate_c.defineCMacro("TJS__HAS_NETWORK", "1");
     }
     if (!opts.with_subprocess) {
@@ -152,6 +151,11 @@ fn build2(
     lib.installLibraryHeaders(dep_miniz.artifact("miniz"));
     lib.root_module.linkLibrary(dep_ada.artifact("ada"));
     lib.installLibraryHeaders(dep_ada.artifact("ada"));
+    lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedtls"));
+    lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedx509"));
+    lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedcrypto"));
+    lib.installLibraryHeaders(dep_mbedtls.artifact("mbedtls"));
+    lib.root_module.linkSystemLibrary("ffi", .{});
 
     if (opts.with_sqlite) {
         lib.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
@@ -162,7 +166,18 @@ fn build2(
         const wamr = dep_wamr.?;
         lib.root_module.linkLibrary(wamr.artifact("vmlib"));
         lib.installLibraryHeaders(wamr.artifact("vmlib"));
+        lib.root_module.addCMacro("WASM_ENABLE_REF_TYPES", "1");
+        lib.root_module.addCMacro("WASM_ENABLE_GC", "0");
         lib.root_module.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
+        lib.root_module.addIncludePath(b.path("deps/wamr/core/iwasm/interpreter"));
+        lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/utils"));
+        if (target.result.os.tag.isDarwin()) {
+            lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/platform/darwin"));
+        } else if (target.result.os.tag == .windows) {
+            lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/platform/windows"));
+        } else {
+            lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/platform/linux"));
+        }
     }
 
     if (opts.with_mimalloc) {
@@ -172,13 +187,8 @@ fn build2(
 
     if (opts.with_network) {
         const dep_lws = dep_libwebsockets.?;
-        const dep_mtls = dep_mbedtls.?;
         lib.root_module.linkLibrary(dep_lws.artifact("websockets"));
         lib.installLibraryHeaders(dep_lws.artifact("websockets"));
-        lib.root_module.linkLibrary(dep_mtls.artifact("mbedtls"));
-        lib.root_module.linkLibrary(dep_mtls.artifact("mbedx509"));
-        lib.root_module.linkLibrary(dep_mtls.artifact("mbedcrypto"));
-        lib.installLibraryHeaders(dep_mtls.artifact("mbedtls"));
     }
 
     if (target.result.os.tag != .windows and !target.result.abi.isAndroid()) {
@@ -217,14 +227,19 @@ fn build2(
         "src/version.c",
         "src/vm.c",
         "src/worker.c",
+        "src/mod_ffi.c",
         "src/mod_engine.c",
         "src/mod_fs.c",
         "src/mod_fswatch.c",
+        "src/mod_hashing.c",
         "src/mod_miniz.c",
         "src/mod_os.c",
         "src/mod_process.c",
         "src/mod_streams.c",
+        "src/mod_tls.c",
         "src/mod_sys.c",
+        "src/ed25519.c",
+        "src/webcrypto.c",
         "src/bundles/c/core/core.c",
         "src/bundles/c/core/polyfills.c",
         "src/bundles/c/core/run-main.c",
@@ -255,6 +270,7 @@ fn build2(
     }
 
     lib.root_module.addCMacro("TJS__PLATFORM", tjs_platform);
+    lib.root_module.addCMacro("TJS__HAS_ZIG_MODULES", "1");
     if (!opts.with_sqlite) {
         lib.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
     }
@@ -460,7 +476,7 @@ pub fn build(b: *std.Build) !void {
                 continue;
             }
 
-            const tjs_output = b.addInstallArtifact(tjs.?, .{ .dest_dir = .{ 
+            const tjs_output = b.addInstallArtifact(tjs.?, .{ .dest_dir = .{
                 .override = .{
                     .custom = try q.zigTriple(b.allocator),
                 },

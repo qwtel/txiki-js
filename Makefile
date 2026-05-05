@@ -1,5 +1,6 @@
 BUILD_DIR=build
 BUILDTYPE?=Release
+MIMALLOC?=ON
 
 JOBS?=$(shell getconf _NPROCESSORS_ONLN)
 ifeq ($(JOBS),)
@@ -29,7 +30,7 @@ endif
 all: $(TJS)
 
 $(BUILD_DIR)/CMakeCache.txt:
-	cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILDTYPE)
+	cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILDTYPE) -DBUILD_WITH_MIMALLOC=$(MIMALLOC)
 
 $(TJS): $(BUILD_DIR)/CMakeCache.txt
 	cmake --build $(BUILD_DIR) -j $(JOBS)
@@ -37,7 +38,7 @@ $(TJS): $(BUILD_DIR)/CMakeCache.txt
 $(TJSC): $(BUILD_DIR)/CMakeCache.txt
 	cmake --build $(BUILD_DIR) --target tjsc -j $(JOBS)
 
-src/bundles/js/core/polyfills.js: src/js/polyfills/*.js src/js/stdlib/utils.js
+src/bundles/js/core/polyfills.js: src/js/polyfills/*.js src/js/polyfills/**/*.js src/js/stdlib/utils.js
 	$(ESBUILD) src/js/polyfills/index.js \
 		--bundle \
 		--metafile=$@.json \
