@@ -25,7 +25,6 @@
 #ifndef TJS_UTILS_H
 #define TJS_UTILS_H
 
-#include "cutils.h"
 #include <limits.h>
 #include <quickjs.h>
 #include <stdbool.h>
