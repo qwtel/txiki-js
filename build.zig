@@ -5,6 +5,15 @@ const BuildZon = struct {
     version: []const u8,
 };
 
+const WamrMacro = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
+const WamrConfig = struct {
+    wasm_macros: []const WamrMacro,
+};
+
 const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .aarch64, .os_tag = .macos },
     .{ .cpu_arch = .aarch64, .os_tag = .windows },
@@ -34,6 +43,8 @@ fn build2(
     sanitize_tjs_c_import_exe: *std.Build.Step.Compile,
 ) ![2]?*std.Build.Step.Compile {
     const target = b.resolveTargetQuery(query);
+    const wamr_config = if (opts.with_wasm) try loadWamrConfig(b) else null;
+    defer if (wamr_config) |config| freeWamrConfig(b, config);
 
     if (opts.with_wasm and target.result.abi == .gnueabihf) {
         return .{ null, null };
@@ -166,18 +177,9 @@ fn build2(
         const wamr = dep_wamr.?;
         lib.root_module.linkLibrary(wamr.artifact("vmlib"));
         lib.installLibraryHeaders(wamr.artifact("vmlib"));
-        lib.root_module.addCMacro("WASM_ENABLE_REF_TYPES", "1");
-        lib.root_module.addCMacro("WASM_ENABLE_GC", "0");
-        lib.root_module.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
-        lib.root_module.addIncludePath(b.path("deps/wamr/core/iwasm/interpreter"));
-        lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/utils"));
-        if (target.result.os.tag.isDarwin()) {
-            lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/platform/darwin"));
-        } else if (target.result.os.tag == .windows) {
-            lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/platform/windows"));
-        } else {
-            lib.root_module.addIncludePath(b.path("deps/wamr/core/shared/platform/linux"));
-        }
+        lib.root_module.addIncludePath(wamr.artifact("vmlib").getEmittedIncludeTree());
+        addWamrSourceIncludePaths(lib.root_module, wamr, target);
+        addWamrRuntimeCMacros(lib.root_module, wamr_config.?, target, optimize);
     }
 
     if (opts.with_mimalloc) {
@@ -247,7 +249,6 @@ fn build2(
         "src/bundles/c/core/worker-bootstrap.c",
     });
     if (opts.with_sqlite) try c_sources.append("src/mod_sqlite3.c");
-    if (opts.with_wasm) try c_sources.append("src/wasm.c");
     if (opts.with_network) {
         try c_sources.appendSlice(&.{
             "src/mod_dns.c",
@@ -262,6 +263,12 @@ fn build2(
         .files = c_sources.items,
         .flags = cflags.items,
     });
+    if (opts.with_wasm) {
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("src/wasm.c"),
+            .flags = cflags.items,
+        });
+    }
     if (target.result.os.tag == .linux or target.result.os.tag.isBSD()) {
         lib.root_module.addCSourceFiles(.{
             .files = &.{"src/mod_posix-socket.c"},
@@ -413,6 +420,68 @@ fn build2(
     }
 
     return .{ tjs, tjsc };
+}
+
+fn loadWamrConfig(b: *std.Build) !WamrConfig {
+    const ac = b.allocator;
+    const io = b.graph.io;
+    const cwd = std.Io.Dir.cwd();
+    const zon_buffer = try cwd.readFileAllocOptions(
+        io,
+        b.path("deps/wamr/txiki_wamr_config.zon").getPath(b),
+        ac,
+        std.Io.Limit.limited(1024 * 1024),
+        std.mem.Alignment.@"1",
+        0,
+    );
+    return std.zon.parse.fromSliceAlloc(WamrConfig, ac, zon_buffer, null, .{ .ignore_unknown_fields = true });
+}
+
+fn freeWamrConfig(b: *std.Build, config: WamrConfig) void {
+    std.zon.parse.free(b.allocator, config);
+}
+
+fn addWamrRuntimeCMacros(
+    mod: *std.Build.Module,
+    config: WamrConfig,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    for (config.wasm_macros) |macro| {
+        mod.addCMacro(macro.name, macro.value);
+    }
+
+    if (optimize == .Debug) {
+        mod.addCMacro("BH_DEBUG", "1");
+    }
+    if (target.result.os.tag == .linux) {
+        mod.addCMacro("WASM_HAVE_MREMAP", "1");
+        mod.addCMacro("_GNU_SOURCE", "1");
+    } else {
+        mod.addCMacro("WASM_HAVE_MREMAP", "0");
+    }
+}
+
+fn addWamrSourceIncludePaths(
+    mod: *std.Build.Module,
+    dep_wamr: *std.Build.Dependency,
+    target: std.Build.ResolvedTarget,
+) void {
+    mod.addIncludePath(dep_wamr.path("core/iwasm/include"));
+    mod.addIncludePath(dep_wamr.path("core/iwasm/common"));
+    mod.addIncludePath(dep_wamr.path("core/iwasm/interpreter"));
+    mod.addIncludePath(dep_wamr.path("core/shared/utils"));
+    mod.addIncludePath(dep_wamr.path("core/shared/platform/include"));
+    mod.addIncludePath(dep_wamr.path("core/iwasm/libraries/libc-wasi/sandboxed-system-primitives/include"));
+    mod.addIncludePath(dep_wamr.path("core/iwasm/libraries/libc-wasi/sandboxed-system-primitives/src"));
+
+    if (target.result.os.tag.isDarwin()) {
+        mod.addIncludePath(dep_wamr.path("core/shared/platform/darwin"));
+    } else if (target.result.os.tag == .windows) {
+        mod.addIncludePath(dep_wamr.path("core/shared/platform/windows"));
+    } else {
+        mod.addIncludePath(dep_wamr.path("core/shared/platform/linux"));
+    }
 }
 
 fn usizeToStr(allocator: std.mem.Allocator, value: usize) ![]const u8 {
