@@ -20,7 +20,7 @@ pub fn main() !void {
         c.JS_FreeRuntime(rt);
     }
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const allocator = gpa.allocator();
     defer {
         const status = gpa.deinit();

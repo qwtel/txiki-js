@@ -3,16 +3,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const c = @cImport({
-    @cInclude("cutils.h");
-    @cInclude("dtoa.h");
-    @cInclude("list.h");
-    @cInclude("libregexp.h");
-    @cInclude("quickjs.h");
-    @cInclude("sqlite3.h");
-    @cInclude("uv.h");
-    @cInclude("private.h");
-});
+pub const c = @import("c");
 
 pub const JSString = opaque {};
 

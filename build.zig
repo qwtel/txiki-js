@@ -31,6 +31,7 @@ fn build2(
     query: std.Target.Query,
     optimize: std.builtin.OptimizeMode,
     opts: BuildOpts,
+    sanitize_tjs_c_import_exe: *std.Build.Step.Compile,
 ) ![2]?*std.Build.Step.Compile {
     const target = b.resolveTargetQuery(query);
 
@@ -76,6 +77,58 @@ fn build2(
         .optimize = optimize,
     }) else null;
 
+    const tjs_platform = try std.fmt.allocPrint(
+        b.allocator,
+        "\"{s}\"",
+        .{if (target.result.os.tag.isDarwin()) "darwin" else @tagName(target.result.os.tag)},
+    );
+
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/tjs_c_import.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    translate_c.addIncludePath(b.path("src"));
+    translate_c.addIncludePath(dep_quickjs.artifact("qjs").getEmittedIncludeTree());
+    translate_c.addIncludePath(dep_sqlite3.artifact("sqlite3").getEmittedIncludeTree());
+    translate_c.addIncludePath(dep_libuv.artifact("uv_a").getEmittedIncludeTree());
+    translate_c.defineCMacro("TJS__PLATFORM", tjs_platform);
+    if (!opts.with_sqlite) {
+        translate_c.defineCMacro("TJS__OMIT_SQLITE", "1");
+    }
+    if (opts.with_wasm) {
+        const wamr = dep_wamr.?;
+        translate_c.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
+        translate_c.addIncludePath(wamr.artifact("vmlib").getEmittedIncludeTree());
+    } else {
+        translate_c.defineCMacro("TJS__OMIT_WASM", "1");
+    }
+    if (opts.with_mimalloc) {
+        translate_c.defineCMacro("TJS__HAS_MIMALLOC", "1");
+    }
+    if (opts.with_network) {
+        const dep_lws = dep_libwebsockets.?;
+        const dep_mtls = dep_mbedtls.?;
+        translate_c.addIncludePath(dep_lws.artifact("websockets").getEmittedIncludeTree());
+        translate_c.addIncludePath(dep_mtls.artifact("mbedcrypto").getEmittedIncludeTree());
+        translate_c.defineCMacro("TJS__HAS_NETWORK", "1");
+    }
+    if (!opts.with_subprocess) {
+        translate_c.defineCMacro("TJS__OMIT_SUBPROCESS", "1");
+    }
+
+    const run_sanitize_tjs_c_import = b.addRunArtifact(sanitize_tjs_c_import_exe);
+    run_sanitize_tjs_c_import.addFileArg(translate_c.getOutput());
+    const sanitized_tjs_c_import_zig = run_sanitize_tjs_c_import.addOutputFileArg("tjs_c_import.zig");
+
+    const c_mod = b.createModule(.{
+        .root_source_file = sanitized_tjs_c_import_zig,
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "tjs",
@@ -84,6 +137,9 @@ fn build2(
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            .imports = &.{
+                .{ .name = "c", .module = c_mod },
+            },
         }),
     });
 
@@ -198,12 +254,6 @@ fn build2(
         });
     }
 
-    const tjs_platform = try std.fmt.allocPrint(
-        b.allocator,
-        "\"{s}\"",
-        .{if (target.result.os.tag.isDarwin()) "darwin" else @tagName(target.result.os.tag)},
-    );
-
     lib.root_module.addCMacro("TJS__PLATFORM", tjs_platform);
     if (!opts.with_sqlite) {
         lib.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
@@ -278,6 +328,9 @@ fn build2(
                 .optimize = optimize,
                 .link_libc = true,
                 .link_libcpp = true,
+                .imports = &.{
+                    .{ .name = "c", .module = c_mod },
+                },
             }),
         });
         exe.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
@@ -311,6 +364,9 @@ fn build2(
                 .optimize = optimize,
                 .link_libc = true,
                 .link_libcpp = true,
+                .imports = &.{
+                    .{ .name = "c", .module = c_mod },
+                },
             }),
         });
         // unit_tests.root_module.addCMacro("DUMP_LEAKS", "1");
@@ -379,6 +435,16 @@ pub fn build(b: *std.Build) !void {
         try f.writeStreamingAll(io, buf0);
     }
 
+    // Host-only helper; shared by every translate-c + sanitize pipeline (including matrix builds).
+    const sanitize_tjs_c_import_exe = b.addExecutable(.{
+        .name = "sanitize_tjs_c_import",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("build_sanitize_tjs_c_import.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+
     if (opt_matrix) {
         for (targets) |q| {
             const tjs, const tjsc = try build2(b, q, std_optimize, .{
@@ -388,14 +454,22 @@ pub fn build(b: *std.Build) !void {
                 .with_network = !opt_no_network,
                 .with_subprocess = !opt_no_subprocess,
                 .matrix = true,
-            });
+            }, sanitize_tjs_c_import_exe);
 
             if (tjs == null or tjsc == null) {
                 continue;
             }
 
-            const tjs_output = b.addInstallArtifact(tjs.?, .{ .dest_dir = .{ .override = .{ .custom = try q.zigTriple(b.allocator) } } });
-            const tjsc_output = b.addInstallArtifact(tjsc.?, .{ .dest_dir = .{ .override = .{ .custom = try q.zigTriple(b.allocator), }, } });
+            const tjs_output = b.addInstallArtifact(tjs.?, .{ .dest_dir = .{ 
+                .override = .{
+                    .custom = try q.zigTriple(b.allocator),
+                },
+            } });
+            const tjsc_output = b.addInstallArtifact(tjsc.?, .{ .dest_dir = .{
+                .override = .{
+                    .custom = try q.zigTriple(b.allocator),
+                },
+            } });
 
             b.getInstallStep().dependOn(&tjs_output.step);
             b.getInstallStep().dependOn(&tjsc_output.step);
@@ -411,7 +485,7 @@ pub fn build(b: *std.Build) !void {
         .with_network = !opt_no_network,
         .with_subprocess = !opt_no_subprocess,
         .matrix = false,
-    });
+    }, sanitize_tjs_c_import_exe);
 
     b.installArtifact(tjs.?);
     b.installArtifact(tjsc.?);
