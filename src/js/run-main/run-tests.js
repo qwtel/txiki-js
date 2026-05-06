@@ -36,6 +36,10 @@ class Test {
     }
 
     run() {
+        if (typeof tjs.spawn !== 'function') {
+            throw new TypeError('test runner requires subprocess support (tjs.spawn); rebuild without -Dno-subprocess');
+        }
+
         const args = [ tjs.exePath, 'run', this._fileName ];
 
         this._proc = tjs.spawn(args, { stdout: 'pipe', stderr: 'pipe' });

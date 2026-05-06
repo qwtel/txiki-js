@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 
 #include "cacert.h"
 #include "mem.h"

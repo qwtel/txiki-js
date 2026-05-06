@@ -181,6 +181,9 @@ class Subprocess {
 }
 
 export function spawn(args, options) {
+    if (typeof core.spawn !== 'function') {
+        throw new TypeError('tjs.spawn is not available in this build (subprocess support was omitted)');
+    }
     const opts = { ...options };
     let stdin, stdout, stderr;
 

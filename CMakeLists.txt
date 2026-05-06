@@ -52,11 +52,12 @@ macro(xoption OPTION_NAME OPTION_TEXT OPTION_DEFAULT)
 endmacro()
 
 xoption(BUILD_WITH_MIMALLOC "If ON (default), build with mimalloc" ON)
-xoption(BUILD_WITH_WASM "If ON (default), build with WASM (WAMR)" ON)
-xoption(BUILD_WITH_SQLITE "If ON (default), build with sqlite3" ON)
-xoption(BUILD_WITH_NETWORK "If ON (default), build with HTTP/WebSocket support (libwebsockets)" ON)
-xoption(BUILD_WITH_CRYPTO "If ON (default), build with WebCrypto and global crypto" ON)
-xoption(BUILD_WITH_FFI "If ON (default), build with native FFI support" ON)
+xoption(BUILD_NO_WASM "If ON, build without WASM (WAMR)" OFF)
+xoption(BUILD_NO_SQLITE "If ON, build without sqlite3" OFF)
+xoption(BUILD_NO_NETWORK "If ON, build without HTTP/WebSocket support (libwebsockets)" OFF)
+xoption(BUILD_NO_CRYPTO "If ON, build without WebCrypto and global crypto" OFF)
+xoption(BUILD_NO_FFI "If ON, build without native FFI support" OFF)
+xoption(BUILD_NO_SUBPROCESS "If ON, build without tjs.spawn, tjs.exec, and process helpers" OFF)
 xoption(BUILD_WITH_ASAN "Build with AddressSanitizer" OFF)
 xoption(BUILD_WITH_UBSAN "Build with UndefinedBehaviorSanitizer" OFF)
 
@@ -135,11 +136,12 @@ if(UNIX)
 endif()
 
 target_compile_definitions(tjs PRIVATE
-    $<$<NOT:$<BOOL:${BUILD_WITH_SQLITE}>>:TJS__OMIT_SQLITE>
-    $<$<NOT:$<BOOL:${BUILD_WITH_WASM}>>:TJS__OMIT_WASM>
-    $<$<NOT:$<BOOL:${BUILD_WITH_CRYPTO}>>:TJS__OMIT_CRYPTO>
-    $<$<NOT:$<BOOL:${BUILD_WITH_FFI}>>:TJS__OMIT_FFI>
-    $<$<BOOL:${BUILD_WITH_NETWORK}>:TJS__HAS_NETWORK>
+    $<$<BOOL:${BUILD_NO_SQLITE}>:TJS__OMIT_SQLITE>
+    $<$<BOOL:${BUILD_NO_WASM}>:TJS__OMIT_WASM>
+    $<$<BOOL:${BUILD_NO_CRYPTO}>:TJS__OMIT_CRYPTO>
+    $<$<BOOL:${BUILD_NO_FFI}>:TJS__OMIT_FFI>
+    $<$<BOOL:${BUILD_NO_NETWORK}>:TJS__OMIT_NETWORK>
+    $<$<BOOL:${BUILD_NO_SUBPROCESS}>:TJS__OMIT_SUBPROCESS>
 )
 
 set_target_properties(tjs PROPERTIES
@@ -201,7 +203,7 @@ option(libuv_buildtests "" OFF)
 add_subdirectory(deps/libuv EXCLUDE_FROM_ALL)
 target_link_libraries(tjs PUBLIC uv_a)
 
-if(BUILD_WITH_SQLITE)
+if(NOT BUILD_NO_SQLITE)
     add_subdirectory(deps/sqlite3 EXCLUDE_FROM_ALL)
     target_link_libraries(tjs PUBLIC sqlite3)
     add_library(sqlite-test SHARED
@@ -211,7 +213,7 @@ if(BUILD_WITH_SQLITE)
     list(APPEND tjs_test_libraries sqlite-test)
 endif()
 
-if(BUILD_WITH_FFI)
+if(NOT BUILD_NO_FFI)
     if (WIN32)
         find_package(unofficial-libffi CONFIG REQUIRED)
         target_link_libraries(tjs PUBLIC unofficial::libffi::libffi)
@@ -221,9 +223,7 @@ if(BUILD_WITH_FFI)
         target_include_directories(tjs PRIVATE ${FFI_INCLUDE_DIR})
         target_link_libraries(tjs PUBLIC ${FFI_LIB})
     endif()
-endif()
 
-if(BUILD_WITH_FFI)
     add_library(ffi-test SHARED
         tests/fixtures/ffi-test-lib.c
     )
@@ -251,7 +251,7 @@ endif()
 add_subdirectory(deps/ada EXCLUDE_FROM_ALL)
 target_link_libraries(tjs PUBLIC ada)
 
-if(BUILD_WITH_WASM)
+if(NOT BUILD_NO_WASM)
     # WAMR Configuration (interpreter only for maximum portability)
     set(WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/wamr)
 
@@ -308,7 +308,7 @@ set(MSVC_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
 add_subdirectory(deps/mbedtls EXCLUDE_FROM_ALL)
 target_link_libraries(tjs PUBLIC mbedtls mbedx509 mbedcrypto)
 
-if(BUILD_WITH_NETWORK)
+if(NOT BUILD_NO_NETWORK)
     if (NOT CMAKE_BUILD_TYPE MATCHES "Debug")
         set(LWS_WITH_NO_LOGS ON CACHE BOOL "" FORCE)
     endif()

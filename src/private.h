@@ -29,7 +29,7 @@
 #include "tbuf.h"
 #include "tjs.h"
 
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 #include <libwebsockets.h>
 #else
 struct lws_context;
@@ -128,7 +128,7 @@ struct TJSRuntime {
     struct list_head pending_rejections;
 };
 
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 void tjs__mod_dns_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_engine_init(JSContext *ctx, JSValue ns);
@@ -152,14 +152,14 @@ void tjs__mod_signals_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sqlite3_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 void tjs__mod_tls_init(JSContext *ctx, JSValue ns);
 void tjs__mod_tls_cleanup(TJSRuntime *qrt);
 #endif
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
 void tjs__mod_text_coding_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
 #endif
 #ifndef TJS__OMIT_WASM
@@ -169,7 +169,7 @@ void tjs__mod_worker_init(JSContext *ctx, JSValue ns);
 #ifndef TJS__OMIT_CRYPTO
 void tjs__webcrypto_init(JSContext *ctx, JSValue ns);
 #endif
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 void tjs__mod_ws_init(JSContext *ctx, JSValue ns);
 void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns);
 #endif
@@ -203,7 +203,7 @@ void tjs__destroy_timers(TJSRuntime *qrt);
 void tjs__sab_free(void *opaque, void *ptr);
 void tjs__sab_dup(void *opaque, void *ptr);
 
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 struct lws_context *tjs__lws_get_context(JSContext *ctx);
 void tjs__lws_init(TJSRuntime *qrt);
 void tjs__lws_conn_ref(JSContext *ctx);

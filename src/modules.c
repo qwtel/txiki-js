@@ -134,7 +134,7 @@ int tjs_module_attr_checker(JSContext *ctx, void *opaque, JSValueConst attribute
 }
 
 JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque, JSValueConst attributes) {
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     static const char http[] = "http://";
     static const char https[] = "https://";
 #endif
@@ -158,7 +158,7 @@ JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *op
 
     tbuf_init(ctx, &dbuf);
 
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     if (strncmp(http, module_name, strlen(http)) == 0 || strncmp(https, module_name, strlen(https)) == 0) {
         TJSRuntime *qrt = TJS_GetRuntime(ctx);
         r = tjs__lws_load_http(qrt, &dbuf, module_name);

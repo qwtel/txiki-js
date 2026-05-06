@@ -157,7 +157,7 @@ static JSValue tjs__set_cookie_jar_path(JSContext *ctx, JSValue this_val, int ar
     return JS_UNDEFINED;
 }
 
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
 static JSValue tjs__set_ca_bundle_path(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSRuntime *qrt = TJS_GetRuntime(ctx);
     CHECK_NOT_NULL(qrt);
@@ -234,7 +234,7 @@ static JSValue tjs__set_import_map_resolver(JSContext *ctx, JSValue this_val, in
 }
 
 static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     tjs__mod_dns_init(ctx, ns);
 #endif
     tjs__mod_engine_init(ctx, ns);
@@ -254,13 +254,13 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
 #endif
 #endif
     tjs__mod_streams_init(ctx, ns);
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     tjs__mod_tls_init(ctx, ns);
 #endif
     tjs__mod_sys_init(ctx, ns);
     tjs__mod_text_coding_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     tjs__mod_udp_init(ctx, ns);
 #endif
     tjs__mod_url_init(ctx, ns);
@@ -269,14 +269,14 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
 #endif
     tjs__mod_worker_init(ctx, ns);
     tjs__mod_hashing_init(ctx, ns);
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     tjs__mod_httpclient_init(ctx, ns);
 #endif
     tjs__mod_miniz_init(ctx, ns);
 #ifndef TJS__OMIT_CRYPTO
     tjs__webcrypto_init(ctx, ns);
 #endif
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     tjs__mod_ws_init(ctx, ns);
     tjs__mod_httpserver_init(ctx, ns);
 #endif
@@ -299,7 +299,7 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
                               "setCookieJarPath",
                               JS_NewCFunction(ctx, tjs__set_cookie_jar_path, "setCookieJarPath", 1),
                               JS_PROP_C_W_E);
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     JS_DefinePropertyValueStr(ctx,
                               ns,
                               "setCABundlePath",
@@ -543,7 +543,7 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
 
     /* Destroy lws context. Must happen before freeing the JS engine
      * so that any remaining WSI_DESTROY callbacks can release GC refs. */
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     if (qrt->lws.ctx) {
         lws_context_destroy(qrt->lws.ctx);
         qrt->lws.ctx = NULL;
@@ -566,7 +566,7 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     qrt->lws.ca_bundle_data = NULL;
 
     /* Destroy shared TLS context. */
-#ifdef TJS__HAS_NETWORK
+#ifndef TJS__OMIT_NETWORK
     tjs__mod_tls_cleanup(qrt);
 #endif
 

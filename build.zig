@@ -130,7 +130,8 @@ fn build2(
     if (opts.with_network) {
         const dep_lws = dep_libwebsockets.?;
         translate_c.addIncludePath(dep_lws.artifact("websockets").getEmittedIncludeTree());
-        translate_c.defineCMacro("TJS__HAS_NETWORK", "1");
+    } else {
+        translate_c.defineCMacro("TJS__OMIT_NETWORK", "1");
     }
     if (!opts.with_subprocess) {
         translate_c.defineCMacro("TJS__OMIT_SUBPROCESS", "1");
@@ -176,7 +177,9 @@ fn build2(
     lib.installLibraryHeaders(dep_mbedtls.artifact("mbedtls"));
 
     if (opts.with_ffi) {
-        lib.root_module.linkSystemLibrary("ffi", .{});
+        lib.root_module.linkSystemLibrary("libffi", .{
+            .use_pkg_config = .force,
+        });
     }
 
     if (opts.with_sqlite) {
@@ -297,8 +300,8 @@ fn build2(
     if (opts.with_mimalloc) {
         lib.root_module.addCMacro("TJS__HAS_MIMALLOC", "1");
     }
-    if (opts.with_network) {
-        lib.root_module.addCMacro("TJS__HAS_NETWORK", "1");
+    if (!opts.with_network) {
+        lib.root_module.addCMacro("TJS__OMIT_NETWORK", "1");
     }
     if (!opts.with_subprocess) {
         lib.root_module.addCMacro("TJS__OMIT_SUBPROCESS", "1");

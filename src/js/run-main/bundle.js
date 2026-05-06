@@ -124,6 +124,10 @@ async function runEsbuild(esbuildPath, infile, outfile, minify, extraArgs) {
         args.push(...extraArgs);
     }
 
+    if (typeof tjs.spawn !== 'function') {
+        throw new TypeError('bundle requires subprocess support (tjs.spawn); rebuild without -Dno-subprocess');
+    }
+
     const proc = tjs.spawn(args, {
         stdout: 'inherit',
         stderr: 'inherit',

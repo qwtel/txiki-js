@@ -137,13 +137,15 @@ if (!core.isWorker) {
     });
 }
 
-// Process.
-Object.defineProperty(tjs, 'spawn', {
-    enumerable: true,
-    configurable: false,
-    writable: false,
-    value: spawn
-});
+// Process (native uv_spawn / exec); omitted in sandbox builds (-Dno-subprocess / BUILD_NO_SUBPROCESS).
+if (typeof core.spawn === 'function') {
+    Object.defineProperty(tjs, 'spawn', {
+        enumerable: true,
+        configurable: false,
+        writable: false,
+        value: spawn
+    });
+}
 
 // Sockets.
 Object.defineProperty(tjs, 'connect', {
