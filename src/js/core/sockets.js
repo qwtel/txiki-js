@@ -4,6 +4,7 @@ import { TLSSocket, TLSServerSocket } from './direct-sockets/tls.js';
 import { UDPSocket } from './direct-sockets/udp.js';
 import { isIP, lookup } from './lookup.js';
 
+const core = globalThis[Symbol.for('tjs.internal.core')];
 
 async function resolveAddress(transport, host, port) {
     switch (transport) {
@@ -54,6 +55,10 @@ export async function connect(transport, host, port, options = {}) {
         }
 
         case 'tls': {
+            if (!('TLSTcp' in core)) {
+                throw new Error('TLS support is not enabled');
+            }
+
             const socket = new TLSSocket(host, port, {
                 noDelay: options.noDelay,
                 keepAliveDelay: options.keepAliveDelay,
@@ -128,6 +133,10 @@ export async function listen(transport, host, port, options = {}) {
         }
 
         case 'tls': {
+            if (!('TLSTcp' in core)) {
+                throw new Error('TLS support is not enabled');
+            }
+
             const addr = await resolveAddress(transport, host, port);
 
             const server = new TLSServerSocket(addr.ip, {

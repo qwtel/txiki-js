@@ -55,6 +55,8 @@ xoption(BUILD_WITH_MIMALLOC "If ON (default), build with mimalloc" ON)
 xoption(BUILD_WITH_WASM "If ON (default), build with WASM (WAMR)" ON)
 xoption(BUILD_WITH_SQLITE "If ON (default), build with sqlite3" ON)
 xoption(BUILD_WITH_NETWORK "If ON (default), build with HTTP/WebSocket support (libwebsockets)" ON)
+xoption(BUILD_WITH_CRYPTO "If ON (default), build with WebCrypto and global crypto" ON)
+xoption(BUILD_WITH_FFI "If ON (default), build with native FFI support" ON)
 xoption(BUILD_WITH_ASAN "Build with AddressSanitizer" OFF)
 xoption(BUILD_WITH_UBSAN "Build with UndefinedBehaviorSanitizer" OFF)
 
@@ -100,7 +102,6 @@ add_library(tjs STATIC
     src/vm.c
     src/worker.c
     src/mod_engine.c
-    src/mod_ffi.c
     src/mod_fs.c
     src/mod_fswatch.c
     src/mod_hashing.c
@@ -108,9 +109,6 @@ add_library(tjs STATIC
     src/mod_process.c
     src/mod_miniz.c
     src/mod_streams.c
-    src/mod_tls.c
-    src/ed25519.c
-    src/webcrypto.c
     src/mod_sys.c
     src/url.c
     src/bundles/c/core/core.c
@@ -136,6 +134,21 @@ else()
     target_compile_definitions(tjs PRIVATE TJS__OMIT_WASM)
 endif()
 
+if(BUILD_WITH_CRYPTO)
+    target_sources(tjs PRIVATE
+        src/ed25519.c
+        src/webcrypto.c
+    )
+else()
+    target_compile_definitions(tjs PRIVATE TJS__OMIT_CRYPTO)
+endif()
+
+if(BUILD_WITH_FFI)
+    target_sources(tjs PRIVATE src/mod_ffi.c)
+else()
+    target_compile_definitions(tjs PRIVATE TJS__OMIT_FFI)
+endif()
+
 if(BUILD_WITH_NETWORK)
     target_compile_definitions(tjs PRIVATE TJS__HAS_NETWORK)
     target_sources(tjs PRIVATE
@@ -144,6 +157,7 @@ if(BUILD_WITH_NETWORK)
         src/httpclient.c
         src/httpserver.c
         src/mod_dns.c
+        src/mod_tls.c
         src/mod_udp.c
     )
 endif()
@@ -216,35 +230,39 @@ if(BUILD_WITH_SQLITE)
     target_link_libraries(sqlite-test sqlite3)
 endif()
 
-if (WIN32)
-    find_package(unofficial-libffi CONFIG REQUIRED)
-    target_link_libraries(tjs PUBLIC unofficial::libffi::libffi)
-else()
-    find_library(FFI_LIB NAMES libffi ffi REQUIRED)
-    find_path(FFI_INCLUDE_DIR NAMES ffi.h PATH_SUFFIXES ffi REQUIRED)
-    target_include_directories(tjs PRIVATE ${FFI_INCLUDE_DIR})
-    target_link_libraries(tjs PUBLIC ${FFI_LIB})
+if(BUILD_WITH_FFI)
+    if (WIN32)
+        find_package(unofficial-libffi CONFIG REQUIRED)
+        target_link_libraries(tjs PUBLIC unofficial::libffi::libffi)
+    else()
+        find_library(FFI_LIB NAMES libffi ffi REQUIRED)
+        find_path(FFI_INCLUDE_DIR NAMES ffi.h PATH_SUFFIXES ffi REQUIRED)
+        target_include_directories(tjs PRIVATE ${FFI_INCLUDE_DIR})
+        target_link_libraries(tjs PUBLIC ${FFI_LIB})
+    endif()
 endif()
 
-add_library(ffi-test SHARED
-    tests/fixtures/ffi-test-lib.c
-)
+if(BUILD_WITH_FFI)
+    add_library(ffi-test SHARED
+        tests/fixtures/ffi-test-lib.c
+    )
 
-# Set consistent output for test libraries across all platforms (including MSVC multi-config)
-set_target_properties(ffi-test PROPERTIES
-    PREFIX "lib"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-    # For multi-config generators (Visual Studio, Xcode)
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
-    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
-    LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
-    LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
-    LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
-    LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
-)
+    # Set consistent output for test libraries across all platforms (including MSVC multi-config)
+    set_target_properties(ffi-test PROPERTIES
+        PREFIX "lib"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        # For multi-config generators (Visual Studio, Xcode)
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
+    )
+endif()
 if(BUILD_WITH_SQLITE)
     set_target_properties(sqlite-test PROPERTIES
         PREFIX "lib"
@@ -412,4 +430,3 @@ if(BUILD_WITH_NETWORK)
     target_link_libraries(tjs PUBLIC websockets)
     target_include_directories(tjs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/deps/libwebsockets/include)
 endif()
-

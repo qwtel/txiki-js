@@ -1,5 +1,7 @@
 // Order is important!
 
+const core = globalThis[Symbol.for('tjs.internal.core')];
+
 import './global.js';
 import './timers.js';
 import './event-target-polyfill.js';
@@ -19,7 +21,9 @@ import './form-data.js';
 import './abort-controller.js';
 
 import './console.js';
-import './crypto/crypto.js';
+if ('webcrypto' in core) {
+    await import('./crypto/crypto.js');
+}
 import './performance.js';
 import './worker.js';
 
@@ -28,7 +32,6 @@ import './compression-streams.js';
 
 // XXX: Could remove it form the build entirely by using --define in esbuild.
 // But since it's only a couples LoCs it's not really worth it.
-const core = globalThis[Symbol.for('tjs.internal.core')];
 if ('HttpClient' in core && 'WebSocket' in core && 'HttpServer' in core) {
     await import('./xhr.js');
     await import('./fetch/polyfill.js');

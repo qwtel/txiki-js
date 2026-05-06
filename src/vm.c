@@ -68,6 +68,7 @@ static void *tjs__mf_realloc(void *opaque, void *ptr, size_t size) {
 
 /* WAMR allocator wrappers — WAMR uses unsigned int, not size_t. */
 
+#ifndef TJS__OMIT_WASM
 static void *tjs__wamr_malloc(unsigned int size) {
     return tjs__malloc(size);
 }
@@ -75,6 +76,7 @@ static void *tjs__wamr_malloc(unsigned int size) {
 static void *tjs__wamr_realloc(void *ptr, unsigned int size) {
     return tjs__realloc(ptr, size);
 }
+#endif
 
 static const JSMallocFunctions tjs_mf = {
     .js_calloc = tjs__mf_calloc,
@@ -155,6 +157,7 @@ static JSValue tjs__set_cookie_jar_path(JSContext *ctx, JSValue this_val, int ar
     return JS_UNDEFINED;
 }
 
+#ifdef TJS__HAS_NETWORK
 static JSValue tjs__set_ca_bundle_path(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSRuntime *qrt = TJS_GetRuntime(ctx);
     CHECK_NOT_NULL(qrt);
@@ -171,6 +174,7 @@ static JSValue tjs__set_ca_bundle_path(JSContext *ctx, JSValue this_val, int arg
 
     return JS_UNDEFINED;
 }
+#endif
 
 static JSValue tjs__js_drain_microtasks(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSRuntime *qrt = TJS_GetRuntime(ctx);
@@ -235,7 +239,9 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
 #endif
     tjs__mod_engine_init(ctx, ns);
     tjs__mod_error_init(ctx, ns);
+#ifndef TJS__OMIT_FFI
     tjs__mod_ffi_init(ctx, ns);
+#endif
     tjs__mod_fs_init(ctx, ns);
     tjs__mod_fswatch_init(ctx, ns);
     tjs__mod_os_init(ctx, ns);
@@ -248,7 +254,9 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
 #endif
 #endif
     tjs__mod_streams_init(ctx, ns);
+#ifdef TJS__HAS_NETWORK
     tjs__mod_tls_init(ctx, ns);
+#endif
     tjs__mod_sys_init(ctx, ns);
     tjs__mod_text_coding_init(ctx, ns);
     tjs__mod_timers_init(ctx, ns);
@@ -265,7 +273,9 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_httpclient_init(ctx, ns);
 #endif
     tjs__mod_miniz_init(ctx, ns);
+#ifndef TJS__OMIT_CRYPTO
     tjs__webcrypto_init(ctx, ns);
+#endif
 #ifdef TJS__HAS_NETWORK
     tjs__mod_ws_init(ctx, ns);
     tjs__mod_httpserver_init(ctx, ns);
@@ -289,11 +299,13 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
                               "setCookieJarPath",
                               JS_NewCFunction(ctx, tjs__set_cookie_jar_path, "setCookieJarPath", 1),
                               JS_PROP_C_W_E);
+#ifdef TJS__HAS_NETWORK
     JS_DefinePropertyValueStr(ctx,
                               ns,
                               "setCABundlePath",
                               JS_NewCFunction(ctx, tjs__set_ca_bundle_path, "setCABundlePath", 1),
                               JS_PROP_C_W_E);
+#endif
     JS_DefinePropertyValueStr(ctx,
                               ns,
                               "syncReadFile",
@@ -554,7 +566,9 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     qrt->lws.ca_bundle_data = NULL;
 
     /* Destroy shared TLS context. */
+#ifdef TJS__HAS_NETWORK
     tjs__mod_tls_cleanup(qrt);
+#endif
 
     /* Destroy the JS engine. */
     JS_FreeValue(qrt->ctx, qrt->builtins.dispatch_event_func);

@@ -133,7 +133,9 @@ void tjs__mod_dns_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_engine_init(JSContext *ctx, JSValue ns);
 void tjs__mod_error_init(JSContext *ctx, JSValue ns);
+#ifndef TJS__OMIT_FFI
 void tjs__mod_ffi_init(JSContext *ctx, JSValue ns);
+#endif
 void tjs__mod_fs_init(JSContext *ctx, JSValue ns);
 void tjs__mod_fswatch_init(JSContext *ctx, JSValue ns);
 void tjs__mod_hashing_init(JSContext *ctx, JSValue ns);
@@ -150,8 +152,10 @@ void tjs__mod_signals_init(JSContext *ctx, JSValue ns);
 void tjs__mod_sqlite3_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_streams_init(JSContext *ctx, JSValue ns);
+#ifdef TJS__HAS_NETWORK
 void tjs__mod_tls_init(JSContext *ctx, JSValue ns);
 void tjs__mod_tls_cleanup(TJSRuntime *qrt);
+#endif
 void tjs__mod_sys_init(JSContext *ctx, JSValue ns);
 void tjs__mod_text_coding_init(JSContext *ctx, JSValue ns);
 void tjs__mod_timers_init(JSContext *ctx, JSValue ns);
@@ -162,7 +166,9 @@ void tjs__mod_udp_init(JSContext *ctx, JSValue ns);
 void tjs__mod_wasm_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_worker_init(JSContext *ctx, JSValue ns);
+#ifndef TJS__OMIT_CRYPTO
 void tjs__webcrypto_init(JSContext *ctx, JSValue ns);
+#endif
 #ifdef TJS__HAS_NETWORK
 void tjs__mod_ws_init(JSContext *ctx, JSValue ns);
 void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns);

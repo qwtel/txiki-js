@@ -3,6 +3,7 @@
 // @ts-check
 
 const pathModule = globalThis[Symbol.for('tjs.internal.modules.path')];
+const core = globalThis[Symbol.for('tjs.internal.core')];
 
 const verbose = Boolean(tjs.env.VERBOSE_TESTS);
 const TIMEOUT = Number(tjs.env.TJS_TEST_TIMEOUT) || 30 * 1000;
@@ -96,6 +97,50 @@ function printResult(result) {
     }
 }
 
+function shouldSkipTest(name) {
+    if (!('webcrypto' in core)) {
+        if (name.startsWith('test-webcrypto-') ||
+            name === 'test-app-compile.js' ||
+            name === 'test-random.js' ||
+            name === 'test-uuid.js' ||
+            name === 'test-v8.js' ||
+            name === 'test-worker-url.js') {
+            return true;
+        }
+    }
+
+    if (!('ffi_load_native' in core) && name.startsWith('test-ffi-')) {
+        return true;
+    }
+
+    if (!('sqlite3' in core) && (name === 'test-sqlite.js' || name === 'test-storage.js')) {
+        return true;
+    }
+
+    if (!('wasm' in core) && name.startsWith('test-wasm-')) {
+        return true;
+    }
+
+    if (!('HttpClient' in core)) {
+        return [
+            'test-fetch',
+            'test-httpserver',
+            'test-import-http',
+            'test-lookup',
+            'test-serve',
+            'test-tls',
+            'test-udp',
+            'test-version',
+            'test-wasm-streaming',
+            'test-websocketstream',
+            'test-ws',
+            'test-xhr',
+        ].some(prefix => name.startsWith(prefix));
+    }
+
+    return false;
+}
+
 export async function runTests(d) {
     const dir = await tjs.realPath(d || tjs.cwd);
     const dirIter = await tjs.readDir(dir);
@@ -104,7 +149,7 @@ export async function runTests(d) {
     for await (const item of dirIter) {
         const { name } = item;
 
-        if (name.startsWith('test-') && name.endsWith('.js')) {
+        if (name.startsWith('test-') && name.endsWith('.js') && !shouldSkipTest(name)) {
             tests.push(new Test(pathModule.join(dir, name)));
         }
     }

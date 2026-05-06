@@ -134,8 +134,10 @@ int tjs_module_attr_checker(JSContext *ctx, void *opaque, JSValueConst attribute
 }
 
 JSModuleDef *tjs_module_loader(JSContext *ctx, const char *module_name, void *opaque, JSValueConst attributes) {
+#ifdef TJS__HAS_NETWORK
     static const char http[] = "http://";
     static const char https[] = "https://";
+#endif
     static const char tjs_prefix[] = "tjs:";
 
     JSModuleDef *m;

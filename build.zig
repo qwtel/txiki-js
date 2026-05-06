@@ -31,6 +31,8 @@ const BuildOpts = struct {
     with_wasm: bool,
     with_sqlite: bool,
     with_network: bool,
+    with_crypto: bool,
+    with_ffi: bool,
     with_subprocess: bool,
     matrix: bool,
 };
@@ -109,6 +111,12 @@ fn build2(
     if (!opts.with_sqlite) {
         translate_c.defineCMacro("TJS__OMIT_SQLITE", "1");
     }
+    if (!opts.with_crypto) {
+        translate_c.defineCMacro("TJS__OMIT_CRYPTO", "1");
+    }
+    if (!opts.with_ffi) {
+        translate_c.defineCMacro("TJS__OMIT_FFI", "1");
+    }
     if (opts.with_wasm) {
         const wamr = dep_wamr.?;
         translate_c.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
@@ -166,7 +174,10 @@ fn build2(
     lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedx509"));
     lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedcrypto"));
     lib.installLibraryHeaders(dep_mbedtls.artifact("mbedtls"));
-    lib.root_module.linkSystemLibrary("ffi", .{});
+
+    if (opts.with_ffi) {
+        lib.root_module.linkSystemLibrary("ffi", .{});
+    }
 
     if (opts.with_sqlite) {
         lib.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
@@ -229,7 +240,6 @@ fn build2(
         "src/version.c",
         "src/vm.c",
         "src/worker.c",
-        "src/mod_ffi.c",
         "src/mod_engine.c",
         "src/mod_fs.c",
         "src/mod_fswatch.c",
@@ -238,21 +248,26 @@ fn build2(
         "src/mod_os.c",
         "src/mod_process.c",
         "src/mod_streams.c",
-        "src/mod_tls.c",
         "src/mod_sys.c",
-        "src/ed25519.c",
-        "src/webcrypto.c",
         "src/bundles/c/core/core.c",
         "src/bundles/c/core/polyfills.c",
         "src/bundles/c/core/run-main.c",
         "src/bundles/c/core/run-repl.c",
         "src/bundles/c/core/worker-bootstrap.c",
     });
+    if (opts.with_crypto) {
+        try c_sources.appendSlice(&.{
+            "src/ed25519.c",
+            "src/webcrypto.c",
+        });
+    }
+    if (opts.with_ffi) try c_sources.append("src/mod_ffi.c");
     if (opts.with_sqlite) try c_sources.append("src/mod_sqlite3.c");
     if (opts.with_network) {
         try c_sources.appendSlice(&.{
             "src/mod_dns.c",
             "src/mod_udp.c",
+            "src/mod_tls.c",
             "src/lws-utils.c",
             "src/httpclient.c",
             "src/httpserver.c",
@@ -280,6 +295,12 @@ fn build2(
     lib.root_module.addCMacro("TJS__HAS_ZIG_MODULES", "1");
     if (!opts.with_sqlite) {
         lib.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
+    }
+    if (!opts.with_crypto) {
+        lib.root_module.addCMacro("TJS__OMIT_CRYPTO", "1");
+    }
+    if (!opts.with_ffi) {
+        lib.root_module.addCMacro("TJS__OMIT_FFI", "1");
     }
     if (!opts.with_wasm) {
         lib.root_module.addCMacro("TJS__OMIT_WASM", "1");
@@ -497,6 +518,8 @@ pub fn build(b: *std.Build) !void {
     const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without WAMR (WASM)") orelse false;
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build with sqlite3") orelse false;
     const opt_no_network = b.option(bool, "no-network", "If set, build without HTTP/WebSocket support") orelse false;
+    const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto and global crypto") orelse false;
+    const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support") orelse false;
     const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable tjs.spawn and tjs.exec (for sandbox/secure builds)") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
@@ -537,6 +560,8 @@ pub fn build(b: *std.Build) !void {
                 .with_wasm = !opt_no_wasm,
                 .with_sqlite = !opt_no_sqlite,
                 .with_network = !opt_no_network,
+                .with_crypto = !opt_no_crypto,
+                .with_ffi = !opt_no_ffi,
                 .with_subprocess = !opt_no_subprocess,
                 .matrix = true,
             }, sanitize_tjs_c_import_exe);
@@ -568,6 +593,8 @@ pub fn build(b: *std.Build) !void {
         .with_wasm = !opt_no_wasm,
         .with_sqlite = !opt_no_sqlite,
         .with_network = !opt_no_network,
+        .with_crypto = !opt_no_crypto,
+        .with_ffi = !opt_no_ffi,
         .with_subprocess = !opt_no_subprocess,
         .matrix = false,
     }, sanitize_tjs_c_import_exe);

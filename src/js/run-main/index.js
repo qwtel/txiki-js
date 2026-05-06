@@ -240,7 +240,7 @@ if (!isBundled) {
 
         const caBundlePath = options['tls-ca'] || TJS_CA_BUNDLE;
 
-        if (caBundlePath) {
+        if (caBundlePath && 'setCABundlePath' in core) {
             core.setCABundlePath(path.resolve(caBundlePath));
         }
 
@@ -419,4 +419,3 @@ function parseNumberOption(num, option) {
 
     return n;
 }
-
