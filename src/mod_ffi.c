@@ -23,6 +23,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#ifndef TJS__OMIT_FFI
+
 #include "private.h"
 
 #include <ffi.h>
@@ -1556,3 +1558,5 @@ void tjs__mod_ffi_init(JSContext *ctx, JSValue ns) {
     JSValue func = JS_NewCFunction(ctx, tjs__mod_ffi_init_js, "ffi_load_native", 0);
     JS_SetPropertyStr(ctx, ns, "ffi_load_native", func);
 }
+
+#endif

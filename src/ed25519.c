@@ -21,6 +21,8 @@
  *  - crypto_hash() thin wrapper around mbedtls_sha512().
  */
 
+#ifndef TJS__OMIT_CRYPTO
+
 #include "ed25519.h"
 
 #include <mbedtls/sha512.h>
@@ -469,3 +471,5 @@ int crypto_scalarmult_curve25519(u8 *q, const u8 *n, const u8 *p) {
 int crypto_scalarmult_curve25519_base(u8 *q, const u8 *n) {
     return crypto_scalarmult_curve25519(q, n, _9);
 }
+
+#endif

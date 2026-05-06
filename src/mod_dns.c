@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_NETWORK
+
 #include "private.h"
 #include "utils.h"
 
@@ -120,3 +122,5 @@ static const JSCFunctionListEntry tjs_dns_funcs[] = {
 void tjs__mod_dns_init(JSContext *ctx, JSValue ns) {
     JS_SetPropertyFunctionList(ctx, ns, tjs_dns_funcs, countof(tjs_dns_funcs));
 }
+
+#endif

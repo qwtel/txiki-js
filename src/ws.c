@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_NETWORK
+
 #include "list.h"
 #include "private.h"
 
@@ -625,3 +627,5 @@ void tjs__mod_ws_init(JSContext *ctx, JSValue ns) {
     obj = JS_NewCFunction2(ctx, tjs_ws_constructor, "WebSocket", 4, JS_CFUNC_constructor, 0);
     JS_DefinePropertyValueStr(ctx, ns, "WebSocket", obj, JS_PROP_C_W_E);
 }
+
+#endif

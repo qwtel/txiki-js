@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_NETWORK
+
 #include "hash.h"
 #include "list.h"
 #include "private.h"
@@ -1866,3 +1868,5 @@ void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns) {
     obj = JS_NewCFunction2(ctx, tjs_httpserver_constructor, "HttpServer", 1, JS_CFUNC_constructor, 0);
     JS_DefinePropertyValueStr(ctx, ns, "HttpServer", obj, JS_PROP_C_W_E);
 }
+
+#endif

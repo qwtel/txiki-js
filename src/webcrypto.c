@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifndef TJS__OMIT_CRYPTO
+
 #include "ed25519.h"
 #include "mem.h"
 #include "private.h"
@@ -3820,3 +3822,5 @@ void tjs__webcrypto_init(JSContext *ctx, JSValue ns) {
     JS_DefinePropertyValueStr(ctx, obj, "aesKw", aes_kw_fn, JS_PROP_C_W_E);
     JS_DefinePropertyValueStr(ctx, ns, "webcrypto", obj, JS_PROP_C_W_E);
 }
+
+#endif

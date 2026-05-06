@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_NETWORK
+
 #include "private.h"
 #include "version.h"
 
@@ -932,3 +934,5 @@ void tjs__mod_httpclient_init(JSContext *ctx, JSValue ns) {
     obj = JS_NewCFunction2(ctx, tjs_httpclient_constructor, "HttpClient", 0, JS_CFUNC_constructor, 0);
     JS_DefinePropertyValueStr(ctx, ns, "HttpClient", obj, JS_PROP_C_W_E);
 }
+
+#endif

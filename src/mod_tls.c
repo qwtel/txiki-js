@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_NETWORK
+
 #include "cacert.h"
 #include "mem.h"
 #include "private.h"
@@ -1345,3 +1347,5 @@ void tjs__mod_tls_cleanup(TJSRuntime *qrt) {
     tjs__free(qrt->tls.ca_bundle_path);
     qrt->tls.ca_bundle_path = NULL;
 }
+
+#endif

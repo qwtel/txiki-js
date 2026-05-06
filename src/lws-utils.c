@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_NETWORK
+
 #include "cacert.h"
 #include "mem.h"
 #include "private.h"
@@ -680,3 +682,5 @@ int tjs__lws_load_http(TJSRuntime *qrt, TBuf *dbuf, const char *url) {
 
     return -1;
 }
+
+#endif

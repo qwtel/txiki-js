@@ -22,6 +22,8 @@
  * THE SOFTWARE.
  */
 
+#ifdef TJS__HAS_NETWORK
+
 #include "mem.h"
 #include "private.h"
 #include "utils.h"
@@ -594,3 +596,5 @@ void tjs__mod_udp_init(JSContext *ctx, JSValue ns) {
 
     JS_SetPropertyFunctionList(ctx, ns, tjs_udp_funcs, countof(tjs_udp_funcs));
 }
+
+#endif

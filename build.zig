@@ -241,49 +241,36 @@ fn build2(
         "src/vm.c",
         "src/worker.c",
         "src/mod_engine.c",
+        "src/ed25519.c",
         "src/mod_fs.c",
         "src/mod_fswatch.c",
         "src/mod_hashing.c",
+        "src/mod_ffi.c",
+        "src/mod_dns.c",
         "src/mod_miniz.c",
         "src/mod_os.c",
         "src/mod_process.c",
         "src/mod_streams.c",
         "src/mod_sys.c",
+        "src/mod_sqlite3.c",
+        "src/mod_tls.c",
+        "src/mod_udp.c",
+        "src/webcrypto.c",
+        "src/wasm.c",
+        "src/lws-utils.c",
+        "src/httpclient.c",
+        "src/httpserver.c",
+        "src/ws.c",
         "src/bundles/c/core/core.c",
         "src/bundles/c/core/polyfills.c",
         "src/bundles/c/core/run-main.c",
         "src/bundles/c/core/run-repl.c",
         "src/bundles/c/core/worker-bootstrap.c",
     });
-    if (opts.with_crypto) {
-        try c_sources.appendSlice(&.{
-            "src/ed25519.c",
-            "src/webcrypto.c",
-        });
-    }
-    if (opts.with_ffi) try c_sources.append("src/mod_ffi.c");
-    if (opts.with_sqlite) try c_sources.append("src/mod_sqlite3.c");
-    if (opts.with_network) {
-        try c_sources.appendSlice(&.{
-            "src/mod_dns.c",
-            "src/mod_udp.c",
-            "src/mod_tls.c",
-            "src/lws-utils.c",
-            "src/httpclient.c",
-            "src/httpserver.c",
-            "src/ws.c",
-        });
-    }
     lib.root_module.addCSourceFiles(.{
         .files = c_sources.items,
         .flags = cflags.items,
     });
-    if (opts.with_wasm) {
-        lib.root_module.addCSourceFile(.{
-            .file = b.path("src/wasm.c"),
-            .flags = cflags.items,
-        });
-    }
     if (target.result.os.tag == .linux or target.result.os.tag.isBSD()) {
         lib.root_module.addCSourceFiles(.{
             .files = &.{"src/mod_posix-socket.c"},

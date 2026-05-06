@@ -117,8 +117,12 @@ function shouldSkipTest(name) {
         return true;
     }
 
-    if (!('wasm' in core) && name.startsWith('test-wasm-')) {
-        return true;
+    if (!('wasm' in core)) {
+        if (name.startsWith('test-wasm-') ||
+            name === 'test-app-compile.js' ||
+            name === 'test-version.js') {
+            return true;
+        }
     }
 
     if (!('HttpClient' in core)) {

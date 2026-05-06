@@ -102,14 +102,26 @@ add_library(tjs STATIC
     src/vm.c
     src/worker.c
     src/mod_engine.c
+    src/ed25519.c
     src/mod_fs.c
     src/mod_fswatch.c
     src/mod_hashing.c
+    src/mod_ffi.c
+    src/mod_dns.c
+    src/mod_tls.c
+    src/mod_udp.c
     src/mod_os.c
     src/mod_process.c
     src/mod_miniz.c
     src/mod_streams.c
     src/mod_sys.c
+    src/mod_sqlite3.c
+    src/webcrypto.c
+    src/wasm.c
+    src/lws-utils.c
+    src/ws.c
+    src/httpclient.c
+    src/httpserver.c
     src/url.c
     src/bundles/c/core/core.c
     src/bundles/c/core/polyfills.c
@@ -122,44 +134,24 @@ if(UNIX)
     target_sources(tjs PRIVATE src/mod_posix-socket.c)
 endif()
 
-if(BUILD_WITH_SQLITE)
-    target_sources(tjs PRIVATE src/mod_sqlite3.c)
-else()
+if(NOT BUILD_WITH_SQLITE)
     target_compile_definitions(tjs PRIVATE TJS__OMIT_SQLITE)
 endif()
 
-if(BUILD_WITH_WASM)
-    target_sources(tjs PRIVATE src/wasm.c)
-else()
+if(NOT BUILD_WITH_WASM)
     target_compile_definitions(tjs PRIVATE TJS__OMIT_WASM)
 endif()
 
-if(BUILD_WITH_CRYPTO)
-    target_sources(tjs PRIVATE
-        src/ed25519.c
-        src/webcrypto.c
-    )
-else()
+if(NOT BUILD_WITH_CRYPTO)
     target_compile_definitions(tjs PRIVATE TJS__OMIT_CRYPTO)
 endif()
 
-if(BUILD_WITH_FFI)
-    target_sources(tjs PRIVATE src/mod_ffi.c)
-else()
+if(NOT BUILD_WITH_FFI)
     target_compile_definitions(tjs PRIVATE TJS__OMIT_FFI)
 endif()
 
 if(BUILD_WITH_NETWORK)
     target_compile_definitions(tjs PRIVATE TJS__HAS_NETWORK)
-    target_sources(tjs PRIVATE
-        src/lws-utils.c
-        src/ws.c
-        src/httpclient.c
-        src/httpserver.c
-        src/mod_dns.c
-        src/mod_tls.c
-        src/mod_udp.c
-    )
 endif()
 
 set_target_properties(tjs PROPERTIES
