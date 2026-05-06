@@ -1,5 +1,8 @@
 name: Compile
 
+env:
+  ZIG_VERSION: 0.16.0
+
 on:
   push:
     branches:
@@ -15,10 +18,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - run: sudo snap install zig --classic --beta
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - uses: actions/cache@v4
         with:
-          path: .zig-cache
+          path: |
+            .zig-cache
+            ~/.cache/zig
           key: ${{ runner.os }}-zig-cache-v2-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-zig-cache-v2-
@@ -32,10 +39,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - run: sudo snap install zig --classic --beta
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - uses: actions/cache@v4
         with:
-          path: .zig-cache
+          path: |
+            .zig-cache
+            ~/.cache/zig
           key: ${{ runner.os }}-zig-cache-v2-build-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-zig-cache-v2-build-
@@ -43,7 +54,7 @@ jobs:
           openssl enc -aes-256-cbc -d -in _include.tar.gz.enc -out _include.tar.gz -pass pass:"${{ secrets.PASS }}"
           tar -xzf _include.tar.gz
           cp -r _include/* deps/mimalloc/include
-      - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
+      - run: zig build -Dmatrix -Dno-ffi -Doptimize=ReleaseSmall --summary all
       - uses: actions/upload-artifact@v4
         with:
           name: zig-out

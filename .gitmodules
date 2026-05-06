@@ -10,11 +10,10 @@
 	url = git@github.com:qwtel/zig-build-mimalloc.git
 [submodule "deps/wamr"]
 	path = deps/wamr
-	url = https://github.com/bytecodealliance/wasm-micro-runtime.git
+	url = git@github.com:qwtel/zig-build-wamr.git
 [submodule "deps/mbedtls"]
 	path = deps/mbedtls
-	url = https://github.com/Mbed-TLS/mbedtls
+	url = git@github.com:qwtel/zig-build-mbedtls.git
 [submodule "deps/libwebsockets"]
 	path = deps/libwebsockets
-	url = https://github.com/warmcat/libwebsockets
-	ignore = dirty
+	url = git@github.com:qwtel/zig-build-libwebsockets.git
