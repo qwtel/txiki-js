@@ -90,6 +90,7 @@ endif()
 add_library(tjs STATIC
     src/builtins.c
     src/error.c
+    src/lws-utils.c
     src/eval.c
     src/mem.c
     src/modules.c
@@ -100,28 +101,27 @@ add_library(tjs STATIC
     src/utils.c
     src/version.c
     src/vm.c
-    src/worker.c
-    src/mod_engine.c
-    src/ed25519.c
-    src/mod_fs.c
-    src/mod_fswatch.c
-    src/mod_hashing.c
-    src/mod_ffi.c
-    src/mod_dns.c
-    src/mod_tls.c
-    src/mod_udp.c
-    src/mod_os.c
-    src/mod_process.c
-    src/mod_miniz.c
-    src/mod_streams.c
-    src/mod_sys.c
-    src/mod_sqlite3.c
-    src/webcrypto.c
     src/wasm.c
-    src/lws-utils.c
+    src/worker.c
     src/ws.c
     src/httpclient.c
     src/httpserver.c
+    src/mod_dns.c
+    src/mod_engine.c
+    src/mod_ffi.c
+    src/mod_fs.c
+    src/mod_fswatch.c
+    src/mod_hashing.c
+    src/mod_os.c
+    src/mod_process.c
+    src/mod_sqlite3.c
+    src/mod_miniz.c
+    src/mod_streams.c
+    src/mod_tls.c
+    src/ed25519.c
+    src/webcrypto.c
+    src/mod_sys.c
+    src/mod_udp.c
     src/url.c
     src/bundles/c/core/core.c
     src/bundles/c/core/polyfills.c
@@ -131,28 +131,16 @@ add_library(tjs STATIC
 )
 
 if(UNIX)
-    target_sources(tjs PRIVATE src/mod_posix-socket.c)
+    target_sources(tjs PUBLIC src/mod_posix-socket.c)
 endif()
 
-if(NOT BUILD_WITH_SQLITE)
-    target_compile_definitions(tjs PRIVATE TJS__OMIT_SQLITE)
-endif()
-
-if(NOT BUILD_WITH_WASM)
-    target_compile_definitions(tjs PRIVATE TJS__OMIT_WASM)
-endif()
-
-if(NOT BUILD_WITH_CRYPTO)
-    target_compile_definitions(tjs PRIVATE TJS__OMIT_CRYPTO)
-endif()
-
-if(NOT BUILD_WITH_FFI)
-    target_compile_definitions(tjs PRIVATE TJS__OMIT_FFI)
-endif()
-
-if(BUILD_WITH_NETWORK)
-    target_compile_definitions(tjs PRIVATE TJS__HAS_NETWORK)
-endif()
+target_compile_definitions(tjs PRIVATE
+    $<$<NOT:$<BOOL:${BUILD_WITH_SQLITE}>>:TJS__OMIT_SQLITE>
+    $<$<NOT:$<BOOL:${BUILD_WITH_WASM}>>:TJS__OMIT_WASM>
+    $<$<NOT:$<BOOL:${BUILD_WITH_CRYPTO}>>:TJS__OMIT_CRYPTO>
+    $<$<NOT:$<BOOL:${BUILD_WITH_FFI}>>:TJS__OMIT_FFI>
+    $<$<BOOL:${BUILD_WITH_NETWORK}>:TJS__HAS_NETWORK>
+)
 
 set_target_properties(tjs PROPERTIES
     C_STANDARD 11
@@ -220,6 +208,7 @@ if(BUILD_WITH_SQLITE)
         tests/fixtures/sqlite-test-ext.c
     )
     target_link_libraries(sqlite-test sqlite3)
+    list(APPEND tjs_test_libraries sqlite-test)
 endif()
 
 if(BUILD_WITH_FFI)
@@ -238,28 +227,16 @@ if(BUILD_WITH_FFI)
     add_library(ffi-test SHARED
         tests/fixtures/ffi-test-lib.c
     )
+    list(APPEND tjs_test_libraries ffi-test)
+endif()
 
+if(tjs_test_libraries)
     # Set consistent output for test libraries across all platforms (including MSVC multi-config)
-    set_target_properties(ffi-test PROPERTIES
+    set_target_properties(${tjs_test_libraries} PROPERTIES
         PREFIX "lib"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         # For multi-config generators (Visual Studio, Xcode)
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
-        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
-        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
-        LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
-        LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
-    )
-endif()
-if(BUILD_WITH_SQLITE)
-    set_target_properties(sqlite-test PROPERTIES
-        PREFIX "lib"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
         RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"

@@ -32,5 +32,5 @@
         },
     },
     .paths = .{""},
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0",
 }
