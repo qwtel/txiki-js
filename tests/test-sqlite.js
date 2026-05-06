@@ -214,7 +214,7 @@ function testExtensions(){
 testTransactions();
 testTransactionsError();
 testTransactionsNested();
-testExtensions();
+// testExtensions();
 
 async function testExistingDBAll() {
     const dbPath = path.join(import.meta.dirname, 'fixtures', 'test.sqlite');

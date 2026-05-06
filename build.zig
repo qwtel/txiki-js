@@ -221,6 +221,10 @@ fn build2(
             "-fno-sanitize=undefined",
         });
     }
+    if (target.result.os.tag == .windows) {
+        // Zig may pass link-only flags (e.g. -fno-rtlib-defaultlib) to the C driver; accept them quietly.
+        try cflags.append("-Qunused-arguments");
+    }
 
     lib.root_module.addIncludePath(b.path("src"));
 

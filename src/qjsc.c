@@ -33,6 +33,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <getopt.h>
+#else
+#include <unistd.h>
+#endif
 
 
 /* BEGIN: copied over from quickjs-libc to avoid dependency. */

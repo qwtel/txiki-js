@@ -241,7 +241,6 @@ after_load:
 #if defined(_WIN32)
 #define TJS__PATHSEP     '\\'
 #define TJS__PATHSEP_STR "\\"
-#include <dirent_compat.h>
 #else
 #define TJS__PATHSEP     '/'
 #define TJS__PATHSEP_STR "/"

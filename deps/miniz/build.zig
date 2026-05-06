@@ -15,9 +15,15 @@ pub fn build(b: *std.Build) void {
     });
 
     lib.root_module.addIncludePath(b.path("."));
+
+    const miniz_cflags: []const []const u8 = if (target.result.os.tag == .windows)
+        &.{ "-std=c11" }
+    else
+        &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L" };
+
     lib.root_module.addCSourceFile(.{
         .file = b.path("miniz.c"),
-        .flags = &.{ "-std=c11" },
+        .flags = miniz_cflags,
     });
     lib.installHeadersDirectory(b.path("."), "", .{});
 

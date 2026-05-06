@@ -249,7 +249,7 @@ pub const DefaultDelegate = struct {
 const JSObjectHashContext = struct {
     const Self = @This();
     pub fn hash(_: Self, s: *c.JSObject) u64 {
-        return @intFromPtr(s) * 3163; // Taken from QuickJS's hash function
+        return @as(u64, @intFromPtr(s)) * 3163; // factor from QuickJS's hash
     }
     pub fn eql(_: Self, a: *c.JSObject, b: *c.JSObject) bool {
         return a == b;
