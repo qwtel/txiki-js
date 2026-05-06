@@ -90,8 +90,11 @@ Subcommands:
   bundle [options] infile [outfile]
         Bundle a JavaScript/TypeScript file using esbuild
 
-  compile infile [outfile]
+  compile [options] infile [outfile]
         Compile the given file into a standalone executable
+
+        Options:
+          -x PATH   Use this tjs executable as the template (cross-compilation)
 
   app <subcommand>
         Manage tpk app packages`;
@@ -356,16 +359,21 @@ if (!isBundled) {
 
             runTests(dir);
         } else if (command === 'compile') {
-            const [ infile, outfile ] = subargv;
+            const compileOpts = getopts(subargv, {
+                string: ['x'],
+                stopEarly: true,
+            });
+            const [ infile, outfile ] = compileOpts._;
 
             if (!infile) {
                 throw help;
             }
 
+            const templateExe = compileOpts.x ? path.resolve(compileOpts.x) : tjs.exePath;
             const infilePath = path.parse(infile);
             const data = await tjs.readFile(infile);
             const bytecode = tjs.engine.serialize(tjs.engine.compile(data, infilePath.base));
-            const exe = await tjs.readFile(tjs.exePath);
+            const exe = await tjs.readFile(templateExe);
             const exeSize = exe.length;
             const newBuffer = exe.buffer.transfer(exeSize + bytecode.length + Trailer.Size);
             const newExe = new Uint8Array(newBuffer);
