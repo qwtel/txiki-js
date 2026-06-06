@@ -137,6 +137,23 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
     try testing.expect(c.JS_VALUE_GET_BOOL(res) == 1);
 }
 
+test "tjs_structs layouts match QuickJS" {
+    const js_value_size = @sizeOf(c.JSValue);
+
+    try testing.expectEqual(@as(usize, 4), @sizeOf(z.JSRefCountHeader));
+    try testing.expectEqual(@as(usize, 8), @sizeOf(z.JSBigInt));
+    try testing.expectEqual(@as(usize, 16), @sizeOf(z.JSRegExp));
+    try testing.expectEqual(@as(usize, 48 + 2 * js_value_size), @sizeOf(z.JSMapRecord));
+    try testing.expectEqual(@as(usize, 48), @sizeOf(z.JSMapState));
+
+    try testing.expectEqual(@as(usize, 16), @offsetOf(z.JSMapRecord, "link"));
+    try testing.expectEqual(@as(usize, 48), @offsetOf(z.JSMapRecord, "key"));
+    try testing.expectEqual(@as(usize, 8), @offsetOf(z.JSMapState, "records"));
+    try testing.expectEqual(@as(usize, 24), @offsetOf(z.JSMapState, "record_count"));
+
+    try testing.expectEqual(@as(u16, 67), @intFromEnum(z.JSClassId.init_count));
+}
+
 test "QuickJS class IDs match tjs_structs.JSClassId I" {
     const rt = c.JS_NewRuntime();
     defer c.JS_FreeRuntime(rt);

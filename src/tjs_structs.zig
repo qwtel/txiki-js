@@ -43,6 +43,7 @@ pub const JSMapState = extern struct {
 };
 
 /// These are the values of the `class_id` field in `JSObject`. In qjs they are named `JS_CLASS_*`.
+/// IMPORTANT: This must match the anonymous enum in quickjs.c (not exported in quickjs.h).
 pub const JSClassId = enum(u16) {
     object = 1,        // must be first
     array,             // u.array       | length
@@ -93,6 +94,7 @@ pub const JSClassId = enum(u16) {
     string_iterator,   // u.array_iterator_data
     regexp_string_iterator,   // u.regexp_string_iterator_data
     generator,         // u.generator_data
+    disposable_stack,
     proxy,             // u.proxy_data
     promise,           // u.promise_data
     promise_resolve_function,  // u.promise_function_data
@@ -103,15 +105,18 @@ pub const JSClassId = enum(u16) {
     async_from_sync_iterator,  // u.async_from_sync_iterator_data
     async_generator_function,  // u.func
     async_generator,   // u.async_generator_data
+    async_disposable_stack,
     weak_ref,
     finalization_registry,
     dom_exception,
     call_site,
+    rawjson,
 
     init_count, // last entry for predefined classes
     _,
 };
 
+/// IMPORTANT: This must match the JSErrorEnum enum in quickjs.h
 pub const JSErrorEnum = enum(c_int) {
     eval_error,
     range_error,
@@ -121,6 +126,7 @@ pub const JSErrorEnum = enum(c_int) {
     uri_error,
     internal_error,
     aggregate_error,
+    suppressed_error,
     plain_error,
     _,
 };
