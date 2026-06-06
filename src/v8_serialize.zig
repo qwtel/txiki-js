@@ -96,16 +96,16 @@ fn bytesNeededForVarint(comptime T: type, value: T) usize {
 //     }
 // }
 
-fn ShiftTypeOf(comptime T: type) type {
-    const type_info = @typeInfo(T);
-    return switch (type_info.int.bits) {
-        0...8 => u3,
-        9...16 => u4,
-        17...32 => u5,
-        33...64 => u6,
-        else => @compileError("Unsupported integer type"),
-    };
-}
+// fn ShiftTypeOf(comptime T: type) type {
+//     const type_info = @typeInfo(T);
+//     return switch (type_info.int.bits) {
+//         0...8 => u3,
+//         9...16 => u4,
+//         17...32 => u5,
+//         33...64 => u6,
+//         else => @compileError("Unsupported integer type"),
+//     };
+// }
 
 // fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) void {
 //     c.js_free_rt(rt, ptr);
@@ -1124,8 +1124,7 @@ pub fn Deserializer(comptime Delegate: type) type {
                 }
             }
             var value: T = 0;
-            const ShiftT = ShiftTypeOf(T);
-            var shift: ShiftT = 0;
+            var shift: usize = 0;
             var has_another_byte: bool = true;
             while (has_another_byte) {
                 if (self.position >= self.data.len) {
@@ -1134,14 +1133,17 @@ pub fn Deserializer(comptime Delegate: type) type {
                 }
                 const byte = self.data[self.position];
                 has_another_byte = (byte & 0x80) != 0;
-                if (shift < @sizeOf(T) * 8) {
-                    const x: T = @intCast(byte & 0x7F);
-                    value |= x << shift;
-                    shift +%= 7; // allow wraparound since result isn't used anyway
+                const payload = byte & 0x7F;
+                if (shift >= @bitSizeOf(T)) {
+                    if (payload != 0 or has_another_byte) try self.throwDataCloneDeserializationError();
                 } else {
-                    if (has_another_byte) try self.throwDataCloneDeserializationError();
-                    return value;
+                    if (shift > @bitSizeOf(T) - 7 and (payload >> @intCast(@bitSizeOf(T) - shift)) != 0) {
+                        try self.throwDataCloneDeserializationError();
+                    }
+                    const x: T = @intCast(payload);
+                    value |= x << @intCast(shift);
                 }
+                shift += 7;
                 self.position += 1;
             }
             return value;
@@ -1162,7 +1164,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         pub fn readDouble(self: *Self) !f64 {
-            if (self.position + @sizeOf(f64) > self.data.len) try self.throwDataCloneDeserializationError();
+            if (self.position > self.data.len or @sizeOf(f64) > self.data.len - self.position) try self.throwDataCloneDeserializationError();
             const f64_bytes = self.data[self.position .. self.position + @sizeOf(f64)];
             const value = std.mem.bytesAsValue(f64, f64_bytes).*;
             self.position += @sizeOf(f64);
@@ -1170,7 +1172,7 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         pub fn readRawBytes(self: *Self, length: usize) ![]const u8 {
-            if (self.position + length > self.data.len) try self.throwDataCloneDeserializationError();
+            if (self.position > self.data.len or length > self.data.len - self.position) try self.throwDataCloneDeserializationError();
             const slice = self.data[self.position .. self.position + length];
             self.position += length;
             return slice;
@@ -1376,6 +1378,7 @@ pub fn Deserializer(comptime Delegate: type) type {
 
         fn readTwoByteString(self: *Self) !c.JSValue {
             const byte_length = try self.readVarint(u32);
+            if (byte_length % @sizeOf(u16) != 0) try self.throwDataCloneDeserializationError();
             const bytes = try self.readRawBytes(byte_length);
             const c_length: c_int = @intCast(byte_length / @sizeOf(u16));
             const ret = if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) ret: {

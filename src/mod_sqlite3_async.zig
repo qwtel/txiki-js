@@ -291,8 +291,9 @@ fn allCallbackImpl(w: *AllWork) !void {
                 c.SQLITE_BLOB => {
                     const bp = c.sqlite3_column_blob(stmt, col_idx);
                     const bl = c.sqlite3_column_bytes(stmt, col_idx);
-                    if (bp == null or bl < 0) return error.OutOfMemory;
-                    const src = @as([*]const u8, @ptrCast(bp))[0..@intCast(bl)];
+                    if (bl < 0) return error.OutOfMemory;
+                    if (bp == null and bl != 0) return error.OutOfMemory;
+                    const src: []const u8 = if (bl == 0) &.{} else @as([*]const u8, @ptrCast(bp))[0..@intCast(bl)];
                     const dst = try ac.alloc(u8, src.len);
                     @memcpy(dst, src);
                     row_values[@intCast(col_idx)] = ColValue{ .blob = dst };
