@@ -23,7 +23,7 @@ const targets: []const std.Target.Query = &.{
     .{ .cpu_arch = .x86_64, .os_tag = .windows },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
     .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
-    .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .gnueabihf }, // XXX: only works when wasm is disabled
+    .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .gnueabihf },
 };
 
 const BuildOpts = struct {
@@ -511,7 +511,7 @@ pub fn build(b: *std.Build) !void {
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build with sqlite3") orelse false;
     const opt_no_network = b.option(bool, "no-network", "If set, build without HTTP/WebSocket support") orelse false;
     const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto and global crypto") orelse false;
-    const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support") orelse false;
+    const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support (FFI is always off for -Dmatrix and when -Dtarget is not the host)") orelse false;
     const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable tjs.spawn and tjs.exec (for sandbox/secure builds)") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
@@ -553,7 +553,7 @@ pub fn build(b: *std.Build) !void {
                 .with_sqlite = !opt_no_sqlite,
                 .with_network = !opt_no_network,
                 .with_crypto = !opt_no_crypto,
-                .with_ffi = !opt_no_ffi,
+                .with_ffi = false,
                 .with_subprocess = !opt_no_subprocess,
                 .matrix = true,
             }, sanitize_tjs_c_import_exe);
@@ -580,13 +580,21 @@ pub fn build(b: *std.Build) !void {
         return;
     }
 
+    const host_triple = try b.graph.host.result.zigTriple(b.allocator);
+    defer b.allocator.free(host_triple);
+
+    const chosen_triple = try b.resolveTargetQuery(std_query).result.zigTriple(b.allocator);
+    defer b.allocator.free(chosen_triple);
+
+    const with_ffi = std.mem.eql(u8, host_triple, chosen_triple) and !opt_no_ffi;
+
     const tjs, const tjsc = try build2(b, std_query, std_optimize, .{
         .with_mimalloc = !opt_no_mimalloc,
         .with_wasm = !opt_no_wasm,
         .with_sqlite = !opt_no_sqlite,
         .with_network = !opt_no_network,
         .with_crypto = !opt_no_crypto,
-        .with_ffi = !opt_no_ffi,
+        .with_ffi = with_ffi,
         .with_subprocess = !opt_no_subprocess,
         .matrix = false,
     }, sanitize_tjs_c_import_exe);
