@@ -441,6 +441,10 @@ test "deserialzier 6" {
     const data = [12]u8{ 255, 15, 90, 16, 255, 255, 255, 255, 0, 0, 0, 0 };
     try testDeserialize(&data, "BigInt(0xffffffff)");
 }
+test "deserialzier 6-0 negative one" {
+    const data = [12]u8{ 255, 15, 90, 17, 1, 0, 0, 0, 0, 0, 0, 0 };
+    try testDeserialize(&data, "-1n");
+}
 test "deserializer 6-1" {
     const data = [20]u8{ 255, 15, 90, 32, 163, 223, 90, 11, 96, 218, 142, 234, 157, 231, 21, 43, 55, 218, 163, 113 };
     try testDeserialize(&data, "0x71a3da372b15e79dea8eda600b5adfa3n");
@@ -448,6 +452,14 @@ test "deserializer 6-1" {
 test "deserializer 6-2" {
     const data = [20]u8{ 255, 15, 90, 33, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
     try testDeserialize(&data, "-(2n ** 128n - 1n)");
+}
+test "deserializer 6-3 positive sign-extension limb" {
+    const data = [12]u8{ 255, 15, 90, 16, 0, 0, 0, 128, 0, 0, 0, 0 };
+    try testDeserialize(&data, "0x80000000n");
+}
+test "deserializer 6-4 negative multi-limb" {
+    const data = [12]u8{ 255, 15, 90, 17, 0, 0, 0, 0, 1, 0, 0, 0 };
+    try testDeserialize(&data, "-0x100000000n");
 }
 test "deserialize 7" {
     const data = [11]u8{ 255, 15, 39, 73, 2, 73, 4, 73, 6, 44, 3 };

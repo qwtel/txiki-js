@@ -9,9 +9,9 @@ const QJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 extern fn JS_MakeError2(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, add_backtrace: bool, message: [*c]const u8) c.JSValue;
 
 // A bunch of qjs internal functions that we've re-exported with a different prefix.
-extern fn _js_compact_bigint(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
 extern fn _js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
-extern fn _js_bigint_from_string(ctx: ?*c.JSContext, str: [*c]const u8, radix: c_int) ?*z.JSBigInt;
+extern fn _js_bigint_new(ctx: ?*c.JSContext, len: u32) ?*z.JSBigInt;
+extern fn _js_bigint_normalize_and_compact(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
 extern fn _js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn _js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
 extern fn _js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSRegExp;
@@ -1326,41 +1326,36 @@ pub fn Deserializer(comptime Delegate: type) type {
         }
 
         fn bigIntFromSerializedDigits(self: *Self, sign_bit: u1, digits_store: []const u8) !c.JSValue {
-            if (digits_store.len == 0) {
-                if (_js_bigint_from_string(self.ctx, "0", 16)) |r| {
-                    const ret = _js_compact_bigint(self.ctx, r);
-                    try exceptionCheck(ret);
-                    return ret;
-                } else {
-                    try self.throwDataCloneDeserializationError();
+            const limb_size = @sizeOf(z.js_limb_t);
+            const magnitude_len = (digits_store.len + limb_size - 1) / limb_size;
+            const limb_count = magnitude_len + 1;
+            if (limb_count > std.math.maxInt(u32)) {
+                return error.JSException;
+            }
+
+            const bi = _js_bigint_new(self.ctx, @intCast(limb_count)) orelse return error.JSException;
+            const limbs_ptr: [*]z.js_limb_t = @ptrCast(&bi.tab);
+            const limbs = limbs_ptr[0..limb_count];
+            @memset(limbs, 0);
+
+            for (digits_store, 0..) |digit, i| {
+                const shift: std.math.Log2Int(z.js_limb_t) = @intCast((i % limb_size) * 8);
+                limbs[i / limb_size] |= @as(z.js_limb_t, digit) << shift;
+            }
+
+            if (sign_bit == 1) {
+                var carry: z.js_limb_t = 1;
+                for (limbs) |*limb| {
+                    const inverted = ~limb.*;
+                    const result, const carry_out = @addWithOverflow(inverted, carry);
+                    limb.* = result;
+                    carry = @intCast(carry_out);
                 }
             }
 
-            var hex = try std.ArrayListUnmanaged(u8).initCapacity(self.ac, 2 + digits_store.len * 2);
-            defer hex.deinit(self.ac);
-
-            if (sign_bit == 1) try hex.append(self.ac, @as(u8, '-'));
-
-            var i = digits_store.len;
-            while (i > 0) {
-                i -= 1;
-                const byte = digits_store[i];
-                try hex.append(self.ac, @as(u8, "0123456789abcdef"[byte >> 4]));
-                try hex.append(self.ac, @as(u8, "0123456789abcdef"[byte & 0xf]));
-            }
-            try hex.append(self.ac, 0);
-
-            const slice = try hex.toOwnedSlice(self.ac);
-            defer self.ac.free(slice);
-            // std.debug.print("\nstr: {s}\n", .{slice});
-
-            if (_js_bigint_from_string(self.ctx, slice.ptr, 16)) |r| {
-                const bigint = _js_compact_bigint(self.ctx, r);
-                try exceptionCheck(bigint);
-                return bigint;
-            } else {
-                try self.throwDataCloneDeserializationError();
-            }
+            const bigint = _js_bigint_normalize_and_compact(self.ctx, bi);
+            try exceptionCheck(bigint);
+            return bigint;
         }
 
         fn readBigInt(self: *Self) !c.JSValue {
