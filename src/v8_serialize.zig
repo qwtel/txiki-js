@@ -11,10 +11,7 @@ extern fn JS_MakeError2(ctx: ?*c.JSContext, error_num: z.JSErrorEnum, add_backtr
 // A bunch of qjs internal functions that we've re-exported with a different prefix.
 extern fn _js_compact_bigint(ctx: ?*c.JSContext, p: *z.JSBigInt) c.JSValue;
 extern fn _js_new_string8_len(ctx: ?*c.JSContext, buf: [*c]const u8, len: c_int) c.JSValue;
-extern fn _js_new_string16_len(ctx: ?*c.JSContext, buf: [*c]const u16, len: c_int) c.JSValue;
 extern fn _js_bigint_from_string(ctx: ?*c.JSContext, str: [*c]const u8, radix: c_int) ?*z.JSBigInt;
-extern fn _js_bigint_to_string1(ctx: ?*c.JSContext, val: c.JSValueConst, radix: c_int) c.JSValue;
-extern fn _js_typed_array_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValueConst) c.JSValue;
 extern fn _js_dataview_get_buffer(ctx: ?*c.JSContext, this_val: c.JSValue) c.JSValue;
 extern fn _js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, argc: c_int, argv: [*c]c.JSValue) c.JSValue;
 extern fn _js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSRegExp;
@@ -24,7 +21,7 @@ extern fn _js_get_non_index_enumerable_string_keys_excluding(ctx: ?*c.JSContext,
 
 // A few non-standard qjs functions that we've added.
 extern fn _js_check_stack_overflow(ctx: ?*c.JSContext, alloca_size: usize) bool;
-extern fn _js_atom_is_string(ctx: ?*c.JSContext, v: c.JSAtom) bool;
+// extern fn _js_atom_is_string(ctx: ?*c.JSContext, v: c.JSAtom) bool;
 extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSMapState;
 extern fn _js_string_is_wide_char(p: *const z.JSString) bool;
 extern fn _js_string_get_len(p: *const z.JSString) u32;
@@ -495,7 +492,13 @@ pub fn Serializer(comptime Delegate: type) type {
                         @intFromEnum(z.JSClassId.uint8c_array)...@intFromEnum(z.JSClassId.dataview) => {
                             if (!self.id_map.contains(p) and !self.treat_array_buffer_views_as_host_objects) {
                                 const is_dataview = class_id == @intFromEnum(z.JSClassId.dataview);
-                                const ab_val = if (is_dataview) _js_dataview_get_buffer(self.ctx, object) else _js_typed_array_get_buffer(self.ctx, object);
+                                var byte_offset: usize = 0;
+                                var byte_length: usize = 0;
+                                var bytes_per_element: usize = 0;
+                                const ab_val = if (is_dataview)
+                                    _js_dataview_get_buffer(self.ctx, object)
+                                else
+                                    c.JS_GetTypedArrayBuffer(self.ctx, object, &byte_offset, &byte_length, &bytes_per_element);
                                 try exceptionCheck(ab_val);
                                 defer c.JS_FreeValue(self.ctx, ab_val);
                                 try self.writeJSReceiver(ab_val, @ptrCast(c.JS_VALUE_GET_PTR(ab_val)));
@@ -870,13 +873,21 @@ pub fn Serializer(comptime Delegate: type) type {
             try self.writeTag(.array_buffer_view);
 
             const is_dataview = class_id == .dataview;
-            const ab_val = if (is_dataview) _js_dataview_get_buffer(self.ctx, val) else _js_typed_array_get_buffer(self.ctx, val);
+            var byte_offset: usize = 0;
+            var byte_length: usize = 0;
+            var bytes_per_element: usize = 0;
+            const ab_val = if (is_dataview)
+                _js_dataview_get_buffer(self.ctx, val)
+            else
+                c.JS_GetTypedArrayBuffer(self.ctx, val, &byte_offset, &byte_length, &bytes_per_element);
             try exceptionCheck(ab_val);
             defer c.JS_FreeValue(self.ctx, ab_val);
 
             const p: *c.JSObject = @ptrCast(c.JS_VALUE_GET_PTR(val));
-            const byte_offset = _js_typed_array_get_byte_offset(p);
-            const byte_length = _js_typed_array_get_byte_length(p);
+            if (is_dataview) {
+                byte_offset = _js_typed_array_get_byte_offset(p);
+                byte_length = _js_typed_array_get_byte_length(p);
+            }
 
             // XXX: out of bounds check?
 
@@ -898,8 +909,8 @@ pub fn Serializer(comptime Delegate: type) type {
             };
 
             try self.writeVarint(u32, @intFromEnum(tag));
-            try self.writeVarint(u32, byte_offset);
-            try self.writeVarint(u32, byte_length);
+            try self.writeVarint(u32, @intCast(byte_offset));
+            try self.writeVarint(u32, @intCast(byte_length));
             // V8 has special flags for length tracking and resizable array buffer backing,
             // but QuickJS doesn't have equivalent features. In V8 these flags would be:
             // uint32_t flags =
@@ -1380,16 +1391,16 @@ pub fn Deserializer(comptime Delegate: type) type {
             const byte_length = try self.readVarint(u32);
             if (byte_length % @sizeOf(u16) != 0) try self.throwDataCloneDeserializationError();
             const bytes = try self.readRawBytes(byte_length);
-            const c_length: c_int = @intCast(byte_length / @sizeOf(u16));
+            const c_length: usize = @intCast(byte_length / @sizeOf(u16));
             const ret = if (!std.mem.isAligned(@intFromPtr(bytes.ptr), 2)) ret: {
                 const aligned_bytes = try self.ac.alignedAlloc(u8, std.mem.Alignment.@"2", byte_length);
                 defer self.ac.free(aligned_bytes);
                 @memcpy(aligned_bytes, bytes);
                 const bytes_u16: []const u16 = @ptrCast(aligned_bytes);
-                break :ret _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
+                break :ret c.JS_NewStringUTF16(self.ctx, bytes_u16.ptr, c_length);
             } else ret: {
                 const bytes_u16: []const u16 = @alignCast(@ptrCast(bytes));
-                break :ret _js_new_string16_len(self.ctx, bytes_u16.ptr, c_length);
+                break :ret c.JS_NewStringUTF16(self.ctx, bytes_u16.ptr, c_length);
             };
             try exceptionCheck(ret);
             return ret;
