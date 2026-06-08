@@ -35,6 +35,7 @@ const BuildOpts = struct {
     with_ffi: bool,
     with_subprocess: bool,
     matrix: bool,
+    test_filter: ?[]const u8 = null,
 };
 
 fn build2(
@@ -393,7 +394,9 @@ fn build2(
         run_step.dependOn(&art_run.step);
 
         const test_step = b.step("test", "Run unit tests for zig modules");
+        const test_filters: []const []const u8 = if (opts.test_filter) |filter| &.{filter} else &.{};
         const unit_tests = b.addTest(.{
+            .filters = test_filters,
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/v8_serialize_test.zig"),
                 .target = target,
@@ -587,6 +590,7 @@ pub fn build(b: *std.Build) !void {
     defer b.allocator.free(chosen_triple);
 
     const with_ffi = std.mem.eql(u8, host_triple, chosen_triple) and !opt_no_ffi;
+    const test_filter = b.option([]const u8, "test-filter", "Filter unit tests by name substring");
 
     const tjs, const tjsc = try build2(b, std_query, std_optimize, .{
         .with_mimalloc = !opt_no_mimalloc,
@@ -597,6 +601,7 @@ pub fn build(b: *std.Build) !void {
         .with_ffi = with_ffi,
         .with_subprocess = !opt_no_subprocess,
         .matrix = false,
+        .test_filter = test_filter,
     }, sanitize_tjs_c_import_exe);
 
     b.installArtifact(tjs.?);
