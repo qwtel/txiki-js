@@ -1,4 +1,4 @@
-import { CryptoKey, kKeyData } from './crypto-key.js';
+import { CryptoKey, getKeyData } from './crypto-key.js';
 import {
     nativeX25519GenerateKey,
     nativeX25519DeriveBits,
@@ -74,8 +74,12 @@ export function x25519DeriveBits(algorithm, baseKey, length, requiredUsage = 'de
         return Promise.reject(new DOMException('Public key algorithm mismatch', 'InvalidAccessError'));
     }
 
-    if (length !== null && (length === 0 || length % 8 !== 0)) {
-        return Promise.reject(new DOMException('length must be null or a non-zero multiple of 8', 'OperationError'));
+    if (length !== null && length % 8 !== 0) {
+        return Promise.reject(new DOMException('length must be null or a multiple of 8', 'OperationError'));
+    }
+
+    if (length === 0) {
+        return Promise.resolve(new ArrayBuffer(0));
     }
 
     if (length !== null && length > 256) {
@@ -84,7 +88,7 @@ export function x25519DeriveBits(algorithm, baseKey, length, requiredUsage = 'de
 
     const { promise, resolve, reject } = Promise.withResolvers();
 
-    nativeX25519DeriveBits(baseKey[kKeyData], pubKey[kKeyData], (err, result) => {
+    nativeX25519DeriveBits(getKeyData(baseKey), getKeyData(pubKey), (err, result) => {
         if (err) {
             reject(new DOMException(err, 'OperationError'));
         } else {
@@ -133,10 +137,8 @@ export function x25519ImportKey(format, keyData, algorithm, extractable, keyUsag
             return new CryptoKey('private', extractable, { name: 'X25519' }, keyUsages, d);
         }
 
-        for (const usage of keyUsages) {
-            if (usage !== undefined) {
-                throw new DOMException('X25519 public keys must have empty usages', 'SyntaxError');
-            }
+        if (keyUsages.length > 0) {
+            throw new DOMException('X25519 public keys must have empty usages', 'SyntaxError');
         }
 
         return new CryptoKey('public', extractable, { name: 'X25519' }, keyUsages, x);
@@ -220,7 +222,7 @@ export function x25519ExportKey(format, key) {
             throw new DOMException('Cannot export private key in raw format', 'InvalidAccessError');
         }
 
-        return key[kKeyData].buffer.slice(0);
+        return getKeyData(key).slice().buffer;
     }
 
     if (format === 'spki') {
@@ -231,7 +233,7 @@ export function x25519ExportKey(format, key) {
         const result = new Uint8Array(44);
 
         result.set(SPKI_HEADER, 0);
-        result.set(key[kKeyData], SPKI_HEADER.length);
+        result.set(getKeyData(key), SPKI_HEADER.length);
 
         return result.buffer;
     }
@@ -244,7 +246,7 @@ export function x25519ExportKey(format, key) {
         const result = new Uint8Array(48);
 
         result.set(PKCS8_HEADER, 0);
-        result.set(key[kKeyData], PKCS8_HEADER.length);
+        result.set(getKeyData(key), PKCS8_HEADER.length);
 
         return result.buffer;
     }
@@ -253,9 +255,9 @@ export function x25519ExportKey(format, key) {
         let pubBytes;
 
         if (key.type === 'private') {
-            pubBytes = nativeX25519GetPublicKey(key[kKeyData]);
+            pubBytes = nativeX25519GetPublicKey(getKeyData(key));
         } else {
-            pubBytes = key[kKeyData];
+            pubBytes = getKeyData(key);
         }
 
         const jwk = {
@@ -267,7 +269,7 @@ export function x25519ExportKey(format, key) {
         };
 
         if (key.type === 'private') {
-            jwk.d = base64urlEncode(key[kKeyData]);
+            jwk.d = base64urlEncode(getKeyData(key));
         }
 
         return jwk;

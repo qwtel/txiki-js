@@ -2,8 +2,8 @@
 /* global tjs */
 // @ts-check
 
-const pathModule = globalThis[Symbol.for('tjs.internal.modules.path')];
-const core = globalThis[Symbol.for('tjs.internal.core')];
+import core from 'tjs:internal/core';
+import pathModule from 'tjs:internal/path';
 
 const verbose = Boolean(tjs.env.VERBOSE_TESTS);
 const TIMEOUT = Number(tjs.env.TJS_TEST_TIMEOUT) || 30 * 1000;
@@ -117,7 +117,12 @@ function shouldSkipTest(name) {
         return true;
     }
 
-    if (!('sqlite3' in core) && (name === 'test-sqlite.js' || name === 'test-storage.js')) {
+    if (!('sqlite3' in core) &&
+        (name === 'test-sqlite.js' ||
+            name === 'test-storage.js' ||
+            name === 'test-dispose-database.js' ||
+            name === 'test-dispose-statement.js' ||
+            name === 'test-dispose-async-database.js')) {
         return true;
     }
 
@@ -131,6 +136,9 @@ function shouldSkipTest(name) {
 
     if (!('HttpClient' in core)) {
         return [
+            'test-dispose-http-server',
+            'test-dispose-tls',
+            'test-dispose-udp',
             'test-fetch',
             'test-httpserver',
             'test-import-http',

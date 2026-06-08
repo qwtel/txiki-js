@@ -2,15 +2,13 @@ import { PipeSocket, PipeServerSocket } from './pipe.js';
 import { TCPSocket, TCPServerSocket } from './tcp.js';
 import { TLSSocket, TLSServerSocket } from './tls.js';
 import { UDPSocket } from './udp.js';
-
-const core = globalThis[Symbol.for('tjs.internal.core')];
+import { core } from './utils.js';
 
 export { TCPSocket, TCPServerSocket, TLSSocket, TLSServerSocket, UDPSocket, PipeSocket, PipeServerSocket };
 
 const globals = {
     TCPSocket,
     TCPServerSocket,
-    UDPSocket,
     PipeSocket,
     PipeServerSocket
 };
@@ -18,6 +16,10 @@ const globals = {
 if ('TLSTcp' in core) {
     globals.TLSSocket = TLSSocket;
     globals.TLSServerSocket = TLSServerSocket;
+}
+
+if ('UDP' in core) {
+    globals.UDPSocket = UDPSocket;
 }
 
 for (const [ name, value ] of Object.entries(globals)) {

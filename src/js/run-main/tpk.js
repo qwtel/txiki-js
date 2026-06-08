@@ -1,8 +1,8 @@
 /* global tjs */
 
+import core from 'tjs:internal/core';
 import path from 'tjs:path';
 
-const core = globalThis[Symbol.for('tjs.internal.core')];
 const APP_DIR = 'app';
 const APP_MANIFEST = 'app.json';
 
@@ -97,7 +97,7 @@ export async function runTpk(exef, exeSize) {
                 // Ignore cleanup error.
             }
 
-            throw new Error(`TPK extraction failed: ${e.message}`);
+            throw new Error(`TPK extraction failed: ${e.message}`, { cause: e });
         }
 
         // Atomic rename.
@@ -133,7 +133,7 @@ export async function runTpk(exef, exeSize) {
     tjs.env.TJS_HOME = cacheDir;
 
     if (manifest.imports || manifest.scopes) {
-        core.setImportMap({
+        tjs.setImportMap({
             imports: manifest.imports ?? {},
             scopes: manifest.scopes ?? {},
         }, cacheDir);
@@ -178,8 +178,8 @@ async function readAppDir() {
 
     try {
         manifestData = await tjs.readFile(manifestPath);
-    } catch (_) {
-        throw new Error(`'${manifestPath}' not found. Run 'tjs app init' first.`);
+    } catch (e) {
+        throw new Error(`'${manifestPath}' not found. Run 'tjs app init' first.`, { cause: e });
     }
 
     const manifest = JSON.parse(new TextDecoder().decode(manifestData));

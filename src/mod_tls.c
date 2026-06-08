@@ -30,8 +30,6 @@
 #include "quickjs.h"
 #include "utils.h"
 
-#include <mbedtls/ctr_drbg.h>
-#include <mbedtls/entropy.h>
 #include <mbedtls/error.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
@@ -134,7 +132,7 @@ typedef struct TJSTlsStream {
     int finalized;
     uv_tcp_t tcp;
 
-    /* mbedtls — entropy/DRBG/default CA shared via TJSRuntime.tls */
+    /* mbedtls — default CA shared via TJSRuntime.tls */
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
     mbedtls_x509_crt cacert;    /* per-socket CA override (if user provides 'ca') */
@@ -185,20 +183,6 @@ static int tjs_tls_ctx_init(JSContext *ctx) {
     TJSRuntime *qrt = TJS_GetRuntime(ctx);
     if (qrt->tls.initialized) {
         return 0;
-    }
-
-    mbedtls_entropy_init(&qrt->tls.entropy);
-    mbedtls_ctr_drbg_init(&qrt->tls.ctr_drbg);
-
-    int ret = mbedtls_ctr_drbg_seed(&qrt->tls.ctr_drbg,
-                                    mbedtls_entropy_func,
-                                    &qrt->tls.entropy,
-                                    (const unsigned char *) "txiki.js",
-                                    8);
-    if (ret != 0) {
-        mbedtls_ctr_drbg_free(&qrt->tls.ctr_drbg);
-        mbedtls_entropy_free(&qrt->tls.entropy);
-        return ret;
     }
 
     mbedtls_x509_crt_init(&qrt->tls.cacert);
@@ -1028,7 +1012,7 @@ static int tjs_tls_configure(JSContext *ctx, TJSTlsStream *s, JSValue options) {
         return ret;
     }
 
-    mbedtls_ssl_conf_rng(&s->conf, mbedtls_ctr_drbg_random, &qrt->tls.ctr_drbg);
+    mbedtls_ssl_conf_rng(&s->conf, tjs__entropy_uv, NULL);
 
     /* CA certificate */
     JSValue ca_val = JS_GetPropertyStr(ctx, options, "ca");
@@ -1062,8 +1046,8 @@ static int tjs_tls_configure(JSContext *ctx, TJSTlsStream *s, JSValue options) {
                                  key_len + 1,
                                  NULL,
                                  0,
-                                 mbedtls_ctr_drbg_random,
-                                 &qrt->tls.ctr_drbg);
+                                 tjs__entropy_uv,
+                                 NULL);
             mbedtls_ssl_conf_own_cert(&s->conf, &s->own_cert, &s->own_key);
 
             /* Cache PEM for server so accepted connections can re-parse directly. */
@@ -1191,8 +1175,6 @@ static JSValue tjs_new_tls_from_server(JSContext *ctx, TJSTlsStream *server) {
     TJSTlsStream *client = tjs_tls_get(ctx, obj);
     client->is_server = true;
 
-    TJSRuntime *qrt = TJS_GetRuntime(ctx);
-
     mbedtls_ssl_init(&client->ssl);
     mbedtls_ssl_config_init(&client->conf);
     mbedtls_x509_crt_init(&client->own_cert);
@@ -1208,7 +1190,7 @@ static JSValue tjs_new_tls_from_server(JSContext *ctx, TJSTlsStream *server) {
         return JS_ThrowInternalError(ctx, "TLS config failed: %s", errbuf);
     }
 
-    mbedtls_ssl_conf_rng(&client->conf, mbedtls_ctr_drbg_random, &qrt->tls.ctr_drbg);
+    mbedtls_ssl_conf_rng(&client->conf, tjs__entropy_uv, NULL);
 
     /* Re-parse cert and key from the server's cached PEM strings. */
     if (server->cert_pem && server->key_pem) {
@@ -1226,8 +1208,8 @@ static JSValue tjs_new_tls_from_server(JSContext *ctx, TJSTlsStream *server) {
                                    strlen(server->key_pem) + 1,
                                    NULL,
                                    0,
-                                   mbedtls_ctr_drbg_random,
-                                   &qrt->tls.ctr_drbg);
+                                   tjs__entropy_uv,
+                                   NULL);
         if (ret != 0) {
             mbedtls_strerror(ret, errbuf, sizeof(errbuf));
             JS_FreeValue(ctx, obj);
@@ -1340,8 +1322,6 @@ void tjs__mod_tls_init(JSContext *ctx, JSValue ns) {
 void tjs__mod_tls_cleanup(TJSRuntime *qrt) {
     if (qrt->tls.initialized) {
         mbedtls_x509_crt_free(&qrt->tls.cacert);
-        mbedtls_ctr_drbg_free(&qrt->tls.ctr_drbg);
-        mbedtls_entropy_free(&qrt->tls.entropy);
         qrt->tls.initialized = false;
     }
     tjs__free(qrt->tls.ca_bundle_path);

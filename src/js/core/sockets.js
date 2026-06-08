@@ -2,9 +2,15 @@ import { PipeSocket, PipeServerSocket } from './direct-sockets/pipe.js';
 import { TCPSocket, TCPServerSocket } from './direct-sockets/tcp.js';
 import { TLSSocket, TLSServerSocket } from './direct-sockets/tls.js';
 import { UDPSocket } from './direct-sockets/udp.js';
+import { core } from './direct-sockets/utils.js';
 import { isIP, lookup } from './lookup.js';
 
-const core = globalThis[Symbol.for('tjs.internal.core')];
+
+function assertAvailable(key, feature) {
+    if (!(key in core)) {
+        throw new Error(`${feature} support is not enabled`);
+    }
+}
 
 async function resolveAddress(transport, host, port) {
     switch (transport) {
@@ -43,6 +49,8 @@ async function resolveAddress(transport, host, port) {
 export async function connect(transport, host, port, options = {}) {
     switch (transport) {
         case 'tcp': {
+            assertAvailable('TCP', 'TCP');
+
             const socket = new TCPSocket(host, port, {
                 noDelay: options.noDelay,
                 keepAliveDelay: options.keepAliveDelay,
@@ -55,9 +63,7 @@ export async function connect(transport, host, port, options = {}) {
         }
 
         case 'tls': {
-            if (!('TLSTcp' in core)) {
-                throw new Error('TLS support is not enabled');
-            }
+            assertAvailable('TLSTcp', 'TLS');
 
             const socket = new TLSSocket(host, port, {
                 noDelay: options.noDelay,
@@ -89,6 +95,8 @@ export async function connect(transport, host, port, options = {}) {
         }
 
         case 'udp': {
+            assertAvailable('UDP', 'UDP');
+
             const addr = await resolveAddress(transport, host, port);
             const udpOptions = {
                 remoteAddress: addr.ip,
@@ -119,6 +127,8 @@ export async function connect(transport, host, port, options = {}) {
 export async function listen(transport, host, port, options = {}) {
     switch (transport) {
         case 'tcp': {
+            assertAvailable('TCP', 'TCP');
+
             const addr = await resolveAddress(transport, host, port);
 
             const server = new TCPServerSocket(addr.ip, {
@@ -133,9 +143,7 @@ export async function listen(transport, host, port, options = {}) {
         }
 
         case 'tls': {
-            if (!('TLSTcp' in core)) {
-                throw new Error('TLS support is not enabled');
-            }
+            assertAvailable('TLSTcp', 'TLS');
 
             const addr = await resolveAddress(transport, host, port);
 
@@ -170,6 +178,8 @@ export async function listen(transport, host, port, options = {}) {
         }
 
         case 'udp': {
+            assertAvailable('UDP', 'UDP');
+
             const addr = await resolveAddress(transport, host, port);
             const udpOptions = {
                 localAddress: addr.ip,

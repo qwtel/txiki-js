@@ -1,34 +1,32 @@
 /* global tjs */
-const core = globalThis[Symbol.for('tjs.internal.core')];
+import core from 'tjs:internal/core';
+import path from 'tjs:internal/path';
+
 const sqlite3 = core.sqlite3;
 
-const kStorageMap = Symbol('kStorageMap');
-
 class Storage {
-    constructor() {
-        this[kStorageMap] = new Map();
-    }
+    #map = new Map();
 
     getItem(key) {
         const stringKey = String(key);
 
-        if (this[kStorageMap].has(key)) {
-            return this[kStorageMap].get(stringKey);
+        if (this.#map.has(key)) {
+            return this.#map.get(stringKey);
         }
 
         return null;
     }
 
     setItem(key, val) {
-        this[kStorageMap].set(String(key), String(val));
+        this.#map.set(String(key), String(val));
     }
 
     removeItem(key) {
-        this[kStorageMap].delete(String(key));
+        this.#map.delete(String(key));
     }
 
     clear() {
-        this[kStorageMap].clear();
+        this.#map.clear();
     }
 
     key(i) {
@@ -36,13 +34,13 @@ class Storage {
             throw new TypeError('Failed to execute \'key\' on \'Storage\': 1 argument required, but only 0 present.');
         }
 
-        const keys = Array.from(this[kStorageMap].keys());
+        const keys = Array.from(this.#map.keys());
 
         return keys[i];
     }
 
     get length() {
-        return this[kStorageMap].size;
+        return this.#map.size;
     }
 
     get [Symbol.toStringTag]() {
@@ -83,11 +81,8 @@ Object.defineProperty(globalThis, 'sessionStorage', {
     }
 });
 
-const kStorageDb = Symbol('kStorageDb');
-
 
 function initDb() {
-    const path = globalThis[Symbol.for('tjs.internal.modules.path')];
     const TJS_HOME = tjs.env.TJS_HOME ?? path.join(tjs.homeDir, '.tjs');
     const localStorageDb = path.join(TJS_HOME, 'localStorage.db');
     const flags = sqlite3.SQLITE_OPEN_CREATE | sqlite3.SQLITE_OPEN_READWRITE;
@@ -117,10 +112,12 @@ function initDb() {
 }
 
 class PersistentStorage extends Storage {
+    #db;
+
     constructor() {
         super();
 
-        const db = this[kStorageDb] = initDb();
+        const db = this.#db = initDb();
 
         /* Load existing values. */
         const stmt = sqlite3.prepare(db, 'SELECT * from kv');
@@ -135,14 +132,14 @@ class PersistentStorage extends Storage {
         sqlite3.stmt_finalize(stmt);
 
         for (const item of r) {
-            this[kStorageMap].set(item.key, item.value);
+            super.setItem(item.key, item.value);
         }
     }
 
     setItem(key, val) {
         super.setItem(key, val);
 
-        const db = this[kStorageDb];
+        const db = this.#db;
 
         if (db) {
             const stmt = sqlite3.prepare(db, 'INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)');
@@ -160,7 +157,7 @@ class PersistentStorage extends Storage {
     removeItem(key) {
         super.removeItem(key);
 
-        const db = this[kStorageDb];
+        const db = this.#db;
 
         if (db) {
             const stmt = sqlite3.prepare(db, 'DELETE FROM kv WHERE key = ?');
@@ -178,7 +175,7 @@ class PersistentStorage extends Storage {
     clear() {
         super.clear();
 
-        const db = this[kStorageDb];
+        const db = this.#db;
 
         if (db) {
             const stmt = sqlite3.prepare(db, 'DELETE FROM kv');

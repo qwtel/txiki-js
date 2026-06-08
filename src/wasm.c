@@ -121,11 +121,19 @@ typedef struct {
     JSValue *externrefs;
     uint32_t externref_count;
     uint32_t externref_capacity;
+    /* Cached ArrayBuffer aliasing WAMR linear memory. Detached and replaced
+     * whenever WAMR moves or resizes the underlying memory. */
+    JSValue memory_buffer;
+    void *memory_buffer_data;
+    size_t memory_buffer_size;
 } TJSWasmInstance;
 
 static void tjs_wasm_instance_finalizer(JSRuntime *rt, JSValue val) {
     TJSWasmInstance *i = JS_GetOpaque(val, tjs_wasm_instance_class_id);
     if (i) {
+        if (!JS_IsUndefined(i->memory_buffer)) {
+            JS_FreeValueRT(rt, i->memory_buffer);
+        }
         if (i->exec_env) {
             wasm_runtime_destroy_exec_env(i->exec_env);
         }
@@ -172,6 +180,9 @@ static void tjs_wasm_instance_mark(JSRuntime *rt, JSValue val, JS_MarkFunc *mark
         }
         for (uint32_t j = 0; j < i->externref_count; j++) {
             JS_MarkValue(rt, i->externrefs[j], mark_func);
+        }
+        if (!JS_IsUndefined(i->memory_buffer)) {
+            JS_MarkValue(rt, i->memory_buffer, mark_func);
         }
     }
 }
@@ -220,6 +231,8 @@ static JSValue tjs_new_wasm_instance(JSContext *ctx) {
         return JS_EXCEPTION;
     }
 
+    i->memory_buffer = JS_UNDEFINED;
+
     JS_SetOpaque(obj, i);
     return obj;
 }
@@ -255,6 +268,44 @@ static JSValue tjs__wasm_val_to_js(JSContext *ctx, const wasm_val_t *val) {
             return JS_NewFloat64(ctx, val->of.f64);
         default:
             return JS_UNDEFINED;
+    }
+}
+
+/* Detach the cached memory.buffer ArrayBuffer (if any) and clear the cache. */
+static void tjs__wasm_drop_memory_buffer(JSContext *ctx, TJSWasmInstance *i) {
+    if (JS_IsUndefined(i->memory_buffer)) {
+        return;
+    }
+
+    JS_DetachArrayBuffer(ctx, i->memory_buffer);
+    JS_FreeValue(ctx, i->memory_buffer);
+    i->memory_buffer = JS_UNDEFINED;
+    i->memory_buffer_data = NULL;
+    i->memory_buffer_size = 0;
+}
+
+/* Drop the cached ArrayBuffer if WAMR linear memory has moved or resized
+ * since we handed it out. Must be called after any operation that could
+ * trigger growth — both the JS-side grow API and the WASM `memory.grow`
+ * instruction executed inside a wasm_runtime_call_wasm_a call. */
+static void tjs__wasm_drop_memory_buffer_if_changed(JSContext *ctx, TJSWasmInstance *i) {
+    if (JS_IsUndefined(i->memory_buffer)) {
+        return;
+    }
+
+    wasm_memory_inst_t mem = wasm_runtime_get_default_memory(i->module_inst);
+    if (!mem) {
+        tjs__wasm_drop_memory_buffer(ctx, i);
+        return;
+    }
+
+    void *base = wasm_memory_get_base_address(mem);
+    uint64_t page_count = wasm_memory_get_cur_page_count(mem);
+    uint64_t bytes_per_page = wasm_memory_get_bytes_per_page(mem);
+    size_t byte_length = (size_t) (page_count * bytes_per_page);
+
+    if (base != i->memory_buffer_data || byte_length != i->memory_buffer_size) {
+        tjs__wasm_drop_memory_buffer(ctx, i);
     }
 }
 
@@ -499,6 +550,42 @@ static void tjs__wasm_import_trampoline(wasm_exec_env_t exec_env, uint64_t *args
     JS_FreeValue(ctx, ret);
 }
 
+/* Convert a non-negative integer fd from JS into a raw host handle for WAMR.
+ * Returns true on success; *handle is set to -1 to mean "use the embedder's
+ * default stdio" when js_fd is undefined (WAMR reads that as STDIN_FILENO/etc.
+ * on POSIX and INVALID_HANDLE_VALUE on Windows). */
+static bool tjs__wasi_fd_to_handle(JSContext *ctx, JSValue js_fd, int64_t *handle) {
+    if (JS_IsUndefined(js_fd)) {
+        *handle = -1;
+        return true;
+    }
+
+    int32_t fd;
+    if (JS_ToInt32(ctx, &fd, js_fd)) {
+        return false;
+    }
+    if (fd < 0) {
+        JS_ThrowTypeError(ctx, "WASI stdio fd must be a non-negative integer");
+        return false;
+    }
+
+    /* Our fds are libuv uv_file descriptors. uv_get_osfhandle is the documented
+     * inverse of how libuv mints them and yields exactly WAMR's
+     * os_raw_file_handle type: the int fd on POSIX, the OS HANDLE on Windows. */
+    uv_os_fd_t os_handle = uv_get_osfhandle(fd);
+
+    /* INVALID_HANDLE_VALUE is (HANDLE)-1 on Windows; on POSIX uv_get_osfhandle
+     * returns the fd unchanged (always >= 0 here), so this only trips on a bad
+     * Windows handle. */
+    if ((intptr_t) os_handle == -1) {
+        JS_ThrowTypeError(ctx, "WASI stdio fd does not map to a valid OS handle");
+        return false;
+    }
+
+    *handle = (int64_t) (intptr_t) os_handle;
+    return true;
+}
+
 static JSValue tjs_wasm_setwasioptions(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSWasmModule *m = tjs_wasm_module_get(ctx, argv[0]);
     if (!m) {
@@ -508,6 +595,12 @@ static JSValue tjs_wasm_setwasioptions(JSContext *ctx, JSValue this_val, int arg
     JSValue js_args = argv[1];
     JSValue js_env = argv[2];
     JSValue js_preopens = argv[3];
+
+    int64_t stdin_handle, stdout_handle, stderr_handle;
+    if (!tjs__wasi_fd_to_handle(ctx, argv[4], &stdin_handle) || !tjs__wasi_fd_to_handle(ctx, argv[5], &stdout_handle) ||
+        !tjs__wasi_fd_to_handle(ctx, argv[6], &stderr_handle)) {
+        return JS_EXCEPTION;
+    }
 
     char **wasi_argv = NULL;
     uint32_t wasi_argc = 0;
@@ -642,15 +735,18 @@ static JSValue tjs_wasm_setwasioptions(JSContext *ctx, JSValue this_val, int arg
     }
 
     /* Call WAMR to set WASI args - must happen before instantiate */
-    wasm_runtime_set_wasi_args(m->module,
-                               NULL,
-                               0, /* dir_list - not used, we use map_dir_list */
-                               (const char **) wasi_map_dir_list,
-                               wasi_map_dir_count,
-                               (const char **) wasi_env,
-                               wasi_env_count,
-                               wasi_argv,
-                               (int) wasi_argc);
+    wasm_runtime_set_wasi_args_ex(m->module,
+                                  NULL,
+                                  0, /* dir_list - not used, we use map_dir_list */
+                                  (const char **) wasi_map_dir_list,
+                                  wasi_map_dir_count,
+                                  (const char **) wasi_env,
+                                  wasi_env_count,
+                                  wasi_argv,
+                                  (int) wasi_argc,
+                                  stdin_handle,
+                                  stdout_handle,
+                                  stderr_handle);
 
     /* Store allocations in module struct for cleanup */
     m->wasi.argv = wasi_argv;
@@ -729,7 +825,13 @@ static JSValue tjs__call_wasm_func_inst(JSContext *ctx,
 
     wasm_val_t results[TJS__WASM_MAX_ARGS];
 
-    if (!wasm_runtime_call_wasm_a(inst->exec_env, func, result_count, results, param_count, params)) {
+    bool ok = wasm_runtime_call_wasm_a(inst->exec_env, func, result_count, results, param_count, params);
+    /* WASM code may have run `memory.grow` while we were inside the call,
+     * invalidating any ArrayBuffer we previously handed out. Detach now so
+     * stale views can no longer dereference moved-or-freed storage. */
+    tjs__wasm_drop_memory_buffer_if_changed(ctx, inst);
+
+    if (!ok) {
         /* If an imported JS function threw, re-throw the original JS exception */
         if (inst->has_pending_exception) {
             JSValue exc = inst->pending_exception;
@@ -1377,7 +1479,26 @@ static JSValue tjs_wasm_getmemorybuffer(JSContext *ctx, JSValue this_val, int ar
     uint64_t bytes_per_page = wasm_memory_get_bytes_per_page(mem);
     size_t byte_length = (size_t) (page_count * bytes_per_page);
 
-    return JS_NewArrayBuffer(ctx, (uint8_t *) base, byte_length, tjs__wasm_memory_free, NULL, false);
+    /* Reuse the cached ArrayBuffer while the underlying storage has not moved
+     * or resized — WebAssembly.Memory.prototype.buffer must return the same
+     * object across calls until a successful grow. */
+    if (!JS_IsUndefined(i->memory_buffer)) {
+        if (base == i->memory_buffer_data && byte_length == i->memory_buffer_size) {
+            return JS_DupValue(ctx, i->memory_buffer);
+        }
+        tjs__wasm_drop_memory_buffer(ctx, i);
+    }
+
+    JSValue buffer = JS_NewArrayBuffer(ctx, (uint8_t *) base, byte_length, tjs__wasm_memory_free, NULL, false);
+    if (JS_IsException(buffer)) {
+        return buffer;
+    }
+
+    i->memory_buffer = JS_DupValue(ctx, buffer);
+    i->memory_buffer_data = base;
+    i->memory_buffer_size = byte_length;
+
+    return buffer;
 }
 
 static JSValue tjs_wasm_growmemory(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
@@ -1399,12 +1520,17 @@ static JSValue tjs_wasm_growmemory(JSContext *ctx, JSValue this_val, int argc, J
     uint64_t old_pages = wasm_memory_get_cur_page_count(mem);
 
     if (delta == 0) {
+        /* Per the JS API spec, a successful grow (including delta == 0)
+         * detaches the existing buffer. */
+        tjs__wasm_drop_memory_buffer(ctx, i);
         return JS_NewUint32(ctx, (uint32_t) old_pages);
     }
 
     if (!wasm_memory_enlarge(mem, delta)) {
         return JS_ThrowRangeError(ctx, "failed to grow memory");
     }
+
+    tjs__wasm_drop_memory_buffer(ctx, i);
 
     return JS_NewUint32(ctx, (uint32_t) old_pages);
 }
@@ -1865,6 +1991,44 @@ static JSValue tjs_wasm_callfuncbyindex(JSContext *ctx, JSValue this_val, int ar
     return tjs__call_wasm_func_inst(ctx, i, func, argc - 2, argv + 2);
 }
 
+static JSValue tjs_wasm_runwasistart(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSWasmInstance *i = tjs_wasm_instance_get(ctx, argv[0]);
+    if (!i) {
+        return JS_EXCEPTION;
+    }
+
+    wasm_function_inst_t start = wasm_runtime_lookup_wasi_start_function(i->module_inst);
+    if (!start) {
+        return tjs_throw_wasm_error(ctx, "RuntimeError", "WASI entrypoint not found");
+    }
+
+    bool ok = wasm_runtime_call_wasm_a(i->exec_env, start, 0, NULL, 0, NULL);
+    tjs__wasm_drop_memory_buffer_if_changed(ctx, i);
+
+    if (ok) {
+        return JS_NewUint32(ctx, 0);
+    }
+
+    /* An imported JS function may have thrown — surface its exception verbatim. */
+    if (i->has_pending_exception) {
+        JSValue exc = i->pending_exception;
+        i->has_pending_exception = false;
+        wasm_runtime_clear_exception(i->module_inst);
+        return JS_Throw(ctx, exc);
+    }
+
+    const char *exception = wasm_runtime_get_exception(i->module_inst);
+    if (exception && strstr(exception, "wasi proc exit")) {
+        uint32_t code = wasm_runtime_get_wasi_exit_code(i->module_inst);
+        wasm_runtime_clear_exception(i->module_inst);
+        return JS_NewUint32(ctx, code);
+    }
+
+    JSValue err = tjs_throw_wasm_error(ctx, "RuntimeError", exception ? exception : "_start failed");
+    wasm_runtime_clear_exception(i->module_inst);
+    return err;
+}
+
 static JSValue tjs_wasm_validate(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     size_t buf_len;
     uint8_t *buf = JS_GetUint8Array(ctx, &buf_len, argv[0]);
@@ -1910,8 +2074,9 @@ static const JSCFunctionListEntry tjs_wasm_funcs[] = {
     TJS_CFUNC_DEF("parseModule", 1, tjs_wasm_parsemodule),
     TJS_CFUNC_DEF("resolveGlobalImports", 2, tjs_wasm_resolveglobalimports),
     TJS_CFUNC_DEF("resolveImports", 2, tjs_wasm_resolveimports),
+    TJS_CFUNC_DEF("runWasiStart", 1, tjs_wasm_runwasistart),
     TJS_CFUNC_DEF("setGlobal", 3, tjs_wasm_setglobal),
-    TJS_CFUNC_DEF("setWasiOptions", 4, tjs_wasm_setwasioptions),
+    TJS_CFUNC_DEF("setWasiOptions", 7, tjs_wasm_setwasioptions),
     TJS_CFUNC_DEF("tableGet", 3, tjs_wasm_tableget),
     TJS_CFUNC_DEF("tableGrow", 3, tjs_wasm_tablegrow),
     TJS_CFUNC_DEF("tableSet", 4, tjs_wasm_tableset),

@@ -1,18 +1,27 @@
-const core = globalThis[Symbol.for('tjs.internal.core')];
+import core from 'tjs:internal/core';
 const HttpServer = core.HttpServer;
 
 // Hop-by-hop headers managed by lws; must not be passed through for streaming responses.
 const kHopByHopHeaders = new Set([ 'transfer-encoding', 'connection', 'content-length', 'keep-alive' ]);
 
-const kWsUpgrade = Symbol('kWsUpgrade');
+// Pending WebSocket upgrade IDs are attached to the Request handed to the user.
+// Request is a foreign class we don't own, so a WeakMap is used rather than a
+// `#private` field on a wrapper.
+const wsUpgrades = new WeakMap();
 
 class Server {
     #handle;
     #handler;
     #isTLS;
+    #closed = false;
+    #closedPromise;
     #streamControllers = new Map();
 
     constructor(options) {
+        if (typeof HttpServer !== 'function') {
+            throw new Error('HTTP server support is not enabled');
+        }
+
         if (typeof options === 'function') {
             options = { fetch: options };
         }
@@ -24,6 +33,10 @@ class Server {
         }
 
         this.#handler = handler;
+
+        const { promise, resolve } = Promise.withResolvers();
+
+        this.#closedPromise = promise;
 
         let certPem = null;
         let keyPem = null;
@@ -73,6 +86,7 @@ class Server {
             listenIp,
             onRequest,
             onBodyChunk,
+            onClose: resolve,
             wsOpen: websocket?.open ?? null,
             wsMessage: websocket?.message ?? null,
             wsClose: websocket?.close ?? null,
@@ -89,12 +103,21 @@ class Server {
         return this.#handle.port;
     }
 
-    close() {
-        this.#handle.close();
+    async close() {
+        if (!this.#closed) {
+            this.#closed = true;
+            this.#handle.close();
+        }
+
+        await this.#closedPromise;
+    }
+
+    [Symbol.asyncDispose]() {
+        return this.close();
     }
 
     upgrade(request, options) {
-        const upgradeId = request[kWsUpgrade];
+        const upgradeId = wsUpgrades.get(request);
 
         // eslint-disable-next-line eqeqeq
         if (upgradeId == null) {
@@ -134,7 +157,7 @@ class Server {
         const fullUrl = `${scheme}://${host}${url}`;
         const request = new Request(fullUrl, { method, headers });
 
-        request[kWsUpgrade] = upgradeId;
+        wsUpgrades.set(request, upgradeId);
         this.#handler(request, { server: this, remoteAddress: remoteAddr });
         // server.upgrade(req) must have been called synchronously
     }

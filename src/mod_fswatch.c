@@ -207,7 +207,10 @@ static JSValue tjs_fs_watch(JSContext *ctx, JSValue this_val, int argc, JSValue 
     if (r != 0) {
         JS_FreeCString(ctx, path);
         JS_FreeValue(ctx, obj);
-        tjs__free(fw);
+        /* The handle is already in the loop. Close it and let the close callback free fw. */
+        fw->handle.data = fw;
+        fw->finalized = 1;
+        uv_close((uv_handle_t *) &fw->handle, uv__fsevent_close_cb);
         return tjs_throw_errno(ctx, r);
     }
 
@@ -229,6 +232,7 @@ static const JSCFunctionListEntry tjs_fswatch_proto_funcs[] = {
     TJS_CFUNC_DEF("close", 0, tjs_fswatch_close),
     JS_CGETSET_DEF("path", tjs_fswatch_path_get, NULL),
     JS_PROP_STRING_DEF("[Symbol.toStringTag]", "FsWatcher", JS_PROP_CONFIGURABLE),
+    JS_CFUNC_DEF("[Symbol.dispose]", 0, tjs_fswatch_close),
 };
 
 static const JSCFunctionListEntry tjs_fswatch_funcs[] = {

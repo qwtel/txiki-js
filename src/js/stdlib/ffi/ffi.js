@@ -1,4 +1,4 @@
-const core = globalThis[Symbol.for('tjs.internal.core')];
+import core from 'tjs:internal/core';
 const ffiInt = core.ffi_load_native();
 
 import buildCParser from './ffiutils.js';
@@ -94,6 +94,10 @@ export class Lib {
 
     close() {
         this._uvlib.close();
+    }
+
+    [Symbol.dispose]() {
+        this.close();
     }
 
     parseCProto(header) {

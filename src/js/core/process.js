@@ -1,10 +1,4 @@
-const core = globalThis[Symbol.for('tjs.internal.core')];
-
-const kProcess = Symbol('kProcess');
-const kStdin = Symbol('kStdin');
-const kStdout = Symbol('kStdout');
-const kStderr = Symbol('kStderr');
-const kWaitPromise = Symbol('kWaitPromise');
+import core from 'tjs:internal/core';
 
 function silentClose(handle) {
     try {
@@ -147,36 +141,52 @@ class ProcessWritableStream extends WritableStream {
 }
 
 class Subprocess {
+    #proc;
+    #stdin;
+    #stdout;
+    #stderr;
+    #waitPromise;
+
     constructor(proc, waitPromise, stdin, stdout, stderr) {
-        this[kProcess] = proc;
-        this[kWaitPromise] = waitPromise;
-        this[kStdin] = stdin ?? null;
-        this[kStdout] = stdout ?? null;
-        this[kStderr] = stderr ?? null;
+        this.#proc = proc;
+        this.#waitPromise = waitPromise;
+        this.#stdin = stdin ?? null;
+        this.#stdout = stdout ?? null;
+        this.#stderr = stderr ?? null;
     }
 
     get pid() {
-        return this[kProcess].pid;
+        return this.#proc.pid;
     }
 
     get stdin() {
-        return this[kStdin];
+        return this.#stdin;
     }
 
     get stdout() {
-        return this[kStdout];
+        return this.#stdout;
     }
 
     get stderr() {
-        return this[kStderr];
+        return this.#stderr;
     }
 
     kill(sig) {
-        return this[kProcess].kill(sig);
+        return this.#proc.kill(sig);
     }
 
     wait() {
-        return this[kWaitPromise];
+        return this.#waitPromise;
+    }
+
+    async [Symbol.asyncDispose]() {
+        try {
+            this.#proc.kill('SIGTERM');
+        } catch {
+            // Already exited or no longer killable.
+        }
+
+        await this.#waitPromise;
     }
 }
 

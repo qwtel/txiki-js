@@ -1,13 +1,12 @@
 // Order is important!
 
-const core = globalThis[Symbol.for('tjs.internal.core')];
+import core from 'tjs:internal/core';
 
-import './global.js';
+import './self.js';
 import './timers.js';
 import './event-target-polyfill.js';
 import './structured-clone.js';
 
-import './abba.js';
 import './text-encoding.js';
 import './text-encode-transform.js';
 import './url.js';

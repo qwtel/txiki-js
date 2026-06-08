@@ -1,11 +1,10 @@
-const core = globalThis[Symbol.for('tjs.internal.core')];
-const urlGetObjectURL = Symbol.for('tjs.internal.url.getObjectURL');
-const blobGetParts = Symbol.for('tjs.internal.blob.getParts');
-const _Worker = core.Worker;
+import core from 'tjs:internal/core';
 
+import { getBlobParts } from './blob.js';
 import { defineEventAttribute } from './event-target';
+import { getObjectURL } from './url.js';
 
-const kWorker = Symbol('kWorker');
+const _Worker = core.Worker;
 
 function blobTextSync(blob) {
     if (!(blob instanceof Blob)) {
@@ -15,7 +14,7 @@ function blobTextSync(blob) {
     const decoder = new TextDecoder();
     const partsStr = [];
 
-    for (const part of blob[blobGetParts]) {
+    for (const part of getBlobParts(blob)) {
         if (part instanceof Blob) {
             partsStr.push(blobTextSync(part));
         } else {
@@ -29,6 +28,8 @@ function blobTextSync(blob) {
 }
 
 class Worker extends EventTarget {
+    #worker;
+
     constructor(specifier) {
         super();
 
@@ -42,7 +43,7 @@ class Worker extends EventTarget {
         }
 
         if (url && url.protocol === 'blob:') {
-            const blob = URL[urlGetObjectURL](specifier);
+            const blob = getObjectURL(specifier);
 
             source = blobTextSync(blob);
         }
@@ -58,7 +59,7 @@ class Worker extends EventTarget {
             this.dispatchEvent(new MessageEvent('messageerror', msgerror));
         };
 
-        this[kWorker] = worker;
+        this.#worker = worker;
     }
 
     postMessage(message, transferOrOptions) {
@@ -81,7 +82,7 @@ class Worker extends EventTarget {
             }
         }
 
-        this[kWorker].messagePipe.postMessage(message);
+        this.#worker.messagePipe.postMessage(message);
 
         for (const t of transfers) {
             core.detachArrayBuffer(t);
@@ -89,7 +90,11 @@ class Worker extends EventTarget {
     }
 
     terminate() {
-        this[kWorker].terminate();
+        this.#worker.terminate();
+    }
+
+    [Symbol.dispose]() {
+        this.#worker.terminate();
     }
 
     get [Symbol.toStringTag]() {
@@ -103,7 +108,7 @@ defineEventAttribute(workerProto, 'message');
 defineEventAttribute(workerProto, 'messageerror');
 defineEventAttribute(workerProto, 'error');
 
-Object.defineProperty(window, 'Worker', {
+Object.defineProperty(globalThis, 'Worker', {
     enumerable: true,
     configurable: true,
     writable: true,

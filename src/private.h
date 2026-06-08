@@ -115,8 +115,6 @@ struct TJSRuntime {
     } timers;
     struct {
         bool initialized;
-        mbedtls_entropy_context entropy;
-        mbedtls_ctr_drbg_context ctr_drbg;
         mbedtls_x509_crt cacert;
         char *ca_bundle_path;
     } tls;
@@ -124,6 +122,8 @@ struct TJSRuntime {
         JSValue promise_event_ctor;
         JSValue dispatch_event_func;
         JSValue import_map_resolver;
+        JSValue internal_core;
+        JSValue internal_message_pipe;
     } builtins;
     struct list_head pending_rejections;
 };

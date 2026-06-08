@@ -1,6 +1,10 @@
-const core = globalThis[Symbol.for('tjs.internal.core')];
+import core from 'tjs:internal/core';
 
 export async function lookup(hostname, options = { family: 0, all: false }) {
+    if (typeof core.getaddrinfo !== 'function') {
+        throw new Error('DNS lookup support is not enabled');
+    }
+
     const gaiOpts = {};
 
     switch (options?.family) {

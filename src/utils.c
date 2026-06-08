@@ -27,9 +27,16 @@
 #include "private.h"
 #include "tjs.h"
 
+#include <mbedtls/entropy.h>
 #include <stdlib.h>
 #include <string.h>
 
+
+int tjs__entropy_uv(void *ctx, unsigned char *output, size_t len) {
+    (void) ctx;
+    int r = uv_random(NULL, NULL, output, len, 0, NULL);
+    return r == 0 ? 0 : MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+}
 
 void tjs_assert(const struct AssertionInfo info) {
     fprintf(stderr,
@@ -144,16 +151,33 @@ void tjs_dump_error(JSContext *ctx) {
     JS_FreeValue(ctx, exception_val);
 }
 
-void tjs_dump_error1(JSContext *ctx, JSValue exception_val) {
+static void tjs_dump_error_chain(JSContext *ctx, JSValue exception_val, int depth) {
+    if (depth > 10) {
+        fprintf(stderr, "Caused by: <error chain too deep>\n");
+        return;
+    }
+    if (depth > 0) {
+        fprintf(stderr, "Caused by: ");
+    }
     int is_error = JS_IsError(exception_val);
     tjs_dump_obj(ctx, stderr, exception_val);
     if (is_error) {
-        JSValue val = JS_GetPropertyStr(ctx, exception_val, "stack");
-        if (!JS_IsUndefined(val)) {
-            tjs_dump_obj(ctx, stderr, val);
+        JSValue stack = JS_GetPropertyStr(ctx, exception_val, "stack");
+        if (!JS_IsUndefined(stack)) {
+            tjs_dump_obj(ctx, stderr, stack);
         }
-        JS_FreeValue(ctx, val);
+        JS_FreeValue(ctx, stack);
+
+        JSValue cause = JS_GetPropertyStr(ctx, exception_val, "cause");
+        if (!JS_IsUndefined(cause)) {
+            tjs_dump_error_chain(ctx, cause, depth + 1);
+        }
+        JS_FreeValue(ctx, cause);
     }
+}
+
+void tjs_dump_error1(JSContext *ctx, JSValue exception_val) {
+    tjs_dump_error_chain(ctx, exception_val, 0);
     fflush(stderr);
 }
 

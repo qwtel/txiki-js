@@ -29,6 +29,7 @@
  * THE SOFTWARE.
  */
 
+import core from 'tjs:internal/core';
 import { c, createInterface } from 'tjs:readline';
 import { inspect } from 'tjs:utils';
 
@@ -36,7 +37,7 @@ import { colorizeJs, isWord } from './colorize.js';
 import { clearHistory, loadHistory, saveHistory } from './history.js';
 
 
-const { evalScript, loadScript } = globalThis[Symbol.for('tjs.internal.core')];
+const { evalScript, loadScript } = core;
 
 const RESET = '\x1b[0m';
 
@@ -571,7 +572,7 @@ function getPrompt() {
 // --- Main loop ---
 
 // Avoid aborting in unhandled promises on the REPL.
-window.addEventListener('unhandledrejection', event => {
+globalThis.addEventListener('unhandledrejection', event => {
     event.preventDefault();
 });
 

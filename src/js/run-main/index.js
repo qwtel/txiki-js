@@ -1,6 +1,7 @@
 /* global tjs */
 
 import getopts from 'tjs:getopts';
+import core from 'tjs:internal/core';
 import path from 'tjs:path';
 
 import { bundle } from './bundle.js';
@@ -9,7 +10,6 @@ import { mkdirSync } from './mkdirSync.js';
 import { runTests } from './run-tests.js';
 import { TpkTrailer, runTpk, appInit, appPack, appCompile } from './tpk.js';
 
-const core = globalThis[Symbol.for('tjs.internal.core')];
 
 /**
  * Before we do anything else, create our "home" directory,
@@ -290,7 +290,10 @@ if (!isBundled) {
                     preopens: {
                         '.': tjs.cwd,
                         '/': '/'
-                    }
+                    },
+                    // As a WASI runner, mirror the guest's exit code onto our
+                    // own process instead of returning it.
+                    returnOnExit: false
                 });
                 const instance = new WebAssembly.Instance(module, wasi.getImportObject());
 
@@ -303,7 +306,7 @@ if (!isBundled) {
                     const mapData = await tjs.readFile(resolvedMapPath);
                     const mapObj = JSON.parse(new TextDecoder().decode(mapData));
 
-                    core.setImportMap(mapObj, path.dirname(resolvedMapPath));
+                    tjs.setImportMap(mapObj, path.dirname(resolvedMapPath));
                 }
 
                 await core.evalFile(filename);
