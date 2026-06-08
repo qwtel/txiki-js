@@ -279,7 +279,7 @@ if (!isBundled) {
 
             if (ext === '.wasm') {
                 if (!('wasm' in core)) {
-                    throw 'WASM support is not enabled';
+                    throw new Error('WASM support is not enabled');
                 }
                 const { WASI } = await import('tjs:wasi');
                 const bytes = await tjs.readFile(filename);
@@ -328,7 +328,7 @@ if (!isBundled) {
             const tlsKeyPath = serveOpts['tls-key'];
 
             if ((tlsCertPath && !tlsKeyPath) || (!tlsCertPath && tlsKeyPath)) {
-                throw 'Both --tls-cert and --tls-key must be specified';
+                throw new Error('Both --tls-cert and --tls-key must be specified');
             }
 
             let tls;
@@ -344,7 +344,7 @@ if (!isBundled) {
             const handler = mod.default?.fetch;
 
             if (typeof handler !== 'function') {
-                throw 'Module must default export an object with a fetch method';
+                throw new Error('Module must default export an object with a fetch method');
             }
 
             const server = tjs.serve({ fetch: handler, port, tls, websocket: mod.default.websocket });

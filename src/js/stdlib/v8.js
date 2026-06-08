@@ -2,6 +2,10 @@ import core from 'tjs:internal/core';
 const Serializer = core.Serializer;
 const Deserializer = core.Deserializer;
 
+if (typeof Serializer !== 'function' || typeof Deserializer !== 'function') {
+  throw new Error('V8 compatibility support is not enabled');
+}
+
 //#region lib
 /**
  * @param {unknown} obj

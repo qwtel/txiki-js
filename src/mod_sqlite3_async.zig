@@ -25,7 +25,7 @@ const ErrCtx = struct {
 fn jsSqliteHandleFinalizer(_: ?*c.JSRuntime, val: c.JSValue) callconv(.c) void {
     const oh: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque(val, handle_class_id)));
     if (oh) |h| {
-        if (h.db) |db| _ = c.sqlite3_close(db);
+        if (h.db) |db| _ = c.sqlite3_close_v2(db);
         QuickJSAllocator.allocator(h.ctx).destroy(h);
     }
 }
@@ -116,7 +116,7 @@ fn jsClose(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JSVal
     const h: ?*SqliteHandle = @ptrCast(@alignCast(c.JS_GetOpaque2(ctx, argv[0], handle_class_id)));
     if (h == null) return c.JS_ThrowTypeError(ctx, "Illegal invocation");
     if (h.?.db) |db| {
-        const rc = c.sqlite3_close(db);
+        const rc = c.sqlite3_close_v2(db);
         if (rc != c.SQLITE_OK) return throwSqliteErr(ctx, rc, db);
         h.?.db = null;
     }

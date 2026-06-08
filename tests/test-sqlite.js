@@ -362,8 +362,20 @@ async function testConcurrentExec() {
     db.close();
 }
 
-// Async tests disabled temporarily to isolate GC assertion in JS_FreeRuntime
-const runAsyncSqliteTests = true;
+function hasAsyncSqlite() {
+    try {
+        const db = new AsyncDatabase();
+        db.close();
+        return true;
+    } catch (e) {
+        if (e?.message === 'Async SQLite support is not enabled') {
+            return false;
+        }
+        throw e;
+    }
+}
+
+const runAsyncSqliteTests = hasAsyncSqlite();
 if (runAsyncSqliteTests) {
     await testExistingDBAll();
     await testAllOnNewDb();
@@ -374,4 +386,3 @@ if (runAsyncSqliteTests) {
     await testAbortAll(100);
     await testConcurrentExec();
 }
-

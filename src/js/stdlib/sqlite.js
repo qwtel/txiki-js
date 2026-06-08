@@ -5,6 +5,12 @@ const sqlite3_async = core.sqlite3_async;
 const kSqlite3AsyncHandle = Symbol('kSqlite3AsyncHandle');
 let controllers;
 
+function assertAsyncSqliteAvailable() {
+    if (!sqlite3_async) {
+        throw new Error('Async SQLite support is not enabled');
+    }
+}
+
 class Database {
     #handle;
 
@@ -207,6 +213,8 @@ class AsyncDatabase {
     #queue = Promise.resolve();
 
     constructor(dbName = ':memory:', options = { create: true, readOnly: false }) {
+        assertAsyncSqliteAvailable();
+
         let flags = 0;
 
         if (options.create) {

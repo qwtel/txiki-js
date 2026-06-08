@@ -41,7 +41,9 @@
 #ifndef TJS__OMIT_WASM
 #include "bundles/c/stdlib/wasi.c"
 #endif
+#ifdef TJS__HAS_ZIG_MODULES
 #include "bundles/c/stdlib/v8.c"
+#endif
 #include "private.h"
 
 
@@ -71,7 +73,9 @@ static tjs_builtin_t builtins[] = {
 #ifndef TJS__OMIT_WASM
     { "tjs:wasi", tjs__wasi, sizeof(tjs__wasi) },
 #endif
+#ifdef TJS__HAS_ZIG_MODULES
     { "tjs:v8", tjs__v8, sizeof(tjs__v8) },
+#endif
     { NULL, NULL, 0 },
 };
 

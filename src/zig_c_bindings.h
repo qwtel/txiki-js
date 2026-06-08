@@ -1,5 +1,5 @@
-#ifndef MY_ZIG_LIB_H
-#define MY_ZIG_LIB_H
+#ifndef TJS_ZIG_C_BINDINGS_H
+#define TJS_ZIG_C_BINDINGS_H
 
 #include <quickjs.h>
 
@@ -11,4 +11,4 @@ static inline void zig__mod_v8_compat_init(JSContext *ctx, JSValue ns) {}
 static inline void zig__mod_sqlite3_async_init(JSContext *ctx, JSValue ns) {}
 #endif
 
-#endif // MY_ZIG_LIB_H
+#endif // TJS_ZIG_C_BINDINGS_H

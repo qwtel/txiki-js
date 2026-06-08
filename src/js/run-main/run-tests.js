@@ -107,8 +107,13 @@ function shouldSkipTest(name) {
             name === 'test-app-compile.js' ||
             name === 'test-random.js' ||
             name === 'test-uuid.js' ||
-            name === 'test-v8.js' ||
             name === 'test-worker-url.js') {
+            return true;
+        }
+    }
+
+    if (!('Serializer' in core) || !('Deserializer' in core)) {
+        if (name === 'test-v8.js') {
             return true;
         }
     }
@@ -123,6 +128,10 @@ function shouldSkipTest(name) {
             name === 'test-dispose-database.js' ||
             name === 'test-dispose-statement.js' ||
             name === 'test-dispose-async-database.js')) {
+        return true;
+    }
+
+    if (!('sqlite3_async' in core) && name === 'test-dispose-async-database.js') {
         return true;
     }
 

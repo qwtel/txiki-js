@@ -511,7 +511,7 @@ pub fn build(b: *std.Build) !void {
     const opt_matrix = b.option(bool, "matrix", "Cross-compile to all targets that are known to work") orelse false;
     const opt_no_mimalloc = b.option(bool, "no-mimalloc", "If set, build without mimalloc") orelse false;
     const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without WAMR (WASM)") orelse false;
-    const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build with sqlite3") orelse false;
+    const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build without sqlite3") orelse false;
     const opt_no_network = b.option(bool, "no-network", "If set, build without HTTP/WebSocket support") orelse false;
     const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto and global crypto") orelse false;
     const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support (FFI is always off for -Dmatrix and when -Dtarget is not the host)") orelse false;
