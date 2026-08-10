@@ -91,9 +91,15 @@ export class BaseStreamSocket {
         return promise;
     }
 
-    _connect(addr) {
+    _connect(addr, signal) {
         const handle = this.#handle;
         const { promise, resolve, reject } = Promise.withResolvers();
+
+        if (signal) {
+            if (signal.aborted) {
+                return Promise.reject(signal.reason);
+            }
+        }
 
         handle.onconnect = error => {
             handle.onconnect = null;
@@ -106,6 +112,21 @@ export class BaseStreamSocket {
         };
 
         handle.connect(addr);
+
+        if (signal) {
+            const onAbort = () => {
+                handle.onconnect = null;
+                silentClose(handle);
+                reject(signal.reason);
+            };
+
+            signal.addEventListener('abort', onAbort, { once: true });
+
+            // Return the cleanup chain itself so the caller observes the
+            // connect rejection through it — a detached `.finally()` would
+            // otherwise surface as an unhandled rejection.
+            return promise.finally(() => signal.removeEventListener('abort', onAbort));
+        }
 
         return promise;
     }
@@ -301,8 +322,13 @@ export class BaseStreamServerSocket {
             start: controller => {
                 handle.onconnection = (error, clientHandle) => {
                     if (typeof error === 'undefined' && typeof clientHandle === 'undefined') {
-                        // Server handle closed.
-                        controller.close();
+                        // Server handle closed. The stream may already be
+                        // closed if the consumer cancelled its reader (cancel
+                        // calls close(), which closes the handle and re-enters
+                        // here), so closing again must not throw.
+                        try {
+                            controller.close();
+                        } catch (_e) { /* already closed */ }
 
                         return;
                     }
@@ -320,10 +346,20 @@ export class BaseStreamServerSocket {
                     }
 
                     if (error) {
-                        controller.error(error);
-                    } else {
-                        controller.enqueue(createSocket(clientHandle));
+                        // A failed connection is scoped to that one client —
+                        // e.g. a TLS handshake the peer rejected or abandoned,
+                        // which any internet-facing server sees routinely.
+                        // Erroring the stream here would permanently kill the
+                        // accept loop (and make a later enqueue/close throw),
+                        // so drop the connection and keep accepting.
+                        if (clientHandle) {
+                            silentClose(clientHandle);
+                        }
+
+                        return;
                     }
+
+                    controller.enqueue(createSocket(clientHandle));
                 };
             },
             cancel: () => {

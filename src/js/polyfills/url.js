@@ -7,6 +7,7 @@ const NativeURLSearchParams = core.URLSearchParams;
 
 // Blob URL registry (must remain in JS).
 const objectURLs = new Map();
+let nextObjectURLId = 0;
 
 // Add createObjectURL / revokeObjectURL.
 NativeURL.createObjectURL = object => {
@@ -14,7 +15,8 @@ NativeURL.createObjectURL = object => {
         throw new TypeError('URL.createObjectURL: Argument 1 is not valid for any of the 1-argument overloads.');
     }
 
-    const url = `blob:${crypto.randomUUID()}`;
+    const id = globalThis.crypto?.randomUUID?.() ?? `tjs-${nextObjectURLId++}`;
+    const url = `blob:${id}`;
 
     objectURLs.set(url, object);
 

@@ -53,10 +53,10 @@ fn build2(
         return .{ null, null };
     }
 
-    const dep_sqlite3 = b.dependency("sqlite3", .{
+    const dep_sqlite3 = if (opts.with_sqlite) b.dependency("sqlite3", .{
         .target = target,
         .optimize = optimize,
-    });
+    }) else null;
     const dep_quickjs = b.dependency("quickjs", .{
         .target = target,
         .optimize = optimize,
@@ -105,25 +105,26 @@ fn build2(
     });
     translate_c.addIncludePath(b.path("src"));
     translate_c.addIncludePath(dep_quickjs.artifact("qjs").getEmittedIncludeTree());
-    translate_c.addIncludePath(dep_sqlite3.artifact("sqlite3").getEmittedIncludeTree());
+    if (opts.with_sqlite) {
+        translate_c.addIncludePath(dep_sqlite3.?.artifact("sqlite3").getEmittedIncludeTree());
+    }
     translate_c.addIncludePath(dep_libuv.artifact("uv_a").getEmittedIncludeTree());
     translate_c.addIncludePath(dep_mbedtls.artifact("mbedcrypto").getEmittedIncludeTree());
     translate_c.defineCMacro("TJS__PLATFORM", tjs_platform);
-    if (!opts.with_sqlite) {
-        translate_c.defineCMacro("TJS__OMIT_SQLITE", "1");
+    if (opts.with_sqlite) {
+        translate_c.defineCMacro("TJS_HAVE_SQLITE", "1");
     }
     if (!opts.with_crypto) {
         translate_c.defineCMacro("TJS__OMIT_CRYPTO", "1");
     }
-    if (!opts.with_ffi) {
-        translate_c.defineCMacro("TJS__OMIT_FFI", "1");
+    if (opts.with_ffi) {
+        translate_c.defineCMacro("TJS_HAVE_FFI", "1");
     }
     if (opts.with_wasm) {
         const wamr = dep_wamr.?;
+        translate_c.defineCMacro("TJS_HAVE_WASM", "1");
         translate_c.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
         translate_c.addIncludePath(wamr.artifact("vmlib").getEmittedIncludeTree());
-    } else {
-        translate_c.defineCMacro("TJS__OMIT_WASM", "1");
     }
     if (opts.with_mimalloc) {
         translate_c.defineCMacro("TJS__HAS_MIMALLOC", "1");
@@ -184,8 +185,8 @@ fn build2(
     }
 
     if (opts.with_sqlite) {
-        lib.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
-        lib.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
+        lib.root_module.linkLibrary(dep_sqlite3.?.artifact("sqlite3"));
+        lib.installLibraryHeaders(dep_sqlite3.?.artifact("sqlite3"));
     }
 
     if (opts.with_wasm) {
@@ -235,7 +236,9 @@ fn build2(
     lib.root_module.addCSourceFiles(.{
         .files = &.{
             "src/builtins.c",
+            "src/cacert.c",
             "src/error.c",
+            "src/lws-evlib.c",
             "src/lws-utils.c",
             "src/eval.c",
             "src/mem.c",
@@ -247,20 +250,17 @@ fn build2(
             "src/utils.c",
             "src/version.c",
             "src/vm.c",
-            "src/wasm.c",
             "src/worker.c",
             "src/ws.c",
             "src/httpclient.c",
             "src/httpserver.c",
             "src/mod_dns.c",
             "src/mod_engine.c",
-            "src/mod_ffi.c",
             "src/mod_fs.c",
             "src/mod_fswatch.c",
             "src/mod_hashing.c",
             "src/mod_os.c",
             "src/mod_process.c",
-            "src/mod_sqlite3.c",
             "src/mod_miniz.c",
             "src/mod_streams.c",
             "src/mod_tls.c",
@@ -277,6 +277,15 @@ fn build2(
         },
         .flags = cflags.items,
     });
+    if (opts.with_wasm) {
+        lib.root_module.addCSourceFile(.{ .file = b.path("src/wasm.c"), .flags = cflags.items });
+    }
+    if (opts.with_sqlite) {
+        lib.root_module.addCSourceFile(.{ .file = b.path("src/mod_sqlite3.c"), .flags = cflags.items });
+    }
+    if (opts.with_ffi) {
+        lib.root_module.addCSourceFile(.{ .file = b.path("src/mod_ffi.c"), .flags = cflags.items });
+    }
     if (target.result.os.tag == .linux or target.result.os.tag.isBSD()) {
         lib.root_module.addCSourceFiles(.{
             .files = &.{"src/mod_posix-socket.c"},
@@ -286,17 +295,17 @@ fn build2(
 
     lib.root_module.addCMacro("TJS__PLATFORM", tjs_platform);
     lib.root_module.addCMacro("TJS__HAS_ZIG_MODULES", "1");
-    if (!opts.with_sqlite) {
-        lib.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
+    if (opts.with_sqlite) {
+        lib.root_module.addCMacro("TJS_HAVE_SQLITE", "1");
     }
     if (!opts.with_crypto) {
         lib.root_module.addCMacro("TJS__OMIT_CRYPTO", "1");
     }
-    if (!opts.with_ffi) {
-        lib.root_module.addCMacro("TJS__OMIT_FFI", "1");
+    if (opts.with_ffi) {
+        lib.root_module.addCMacro("TJS_HAVE_FFI", "1");
     }
-    if (!opts.with_wasm) {
-        lib.root_module.addCMacro("TJS__OMIT_WASM", "1");
+    if (opts.with_wasm) {
+        lib.root_module.addCMacro("TJS_HAVE_WASM", "1");
     }
     if (opts.with_mimalloc) {
         lib.root_module.addCMacro("TJS__HAS_MIMALLOC", "1");
@@ -347,8 +356,27 @@ fn build2(
             }),
         });
         sqlite_ext_test.root_module.addCSourceFile(.{ .file = b.path("tests/fixtures/sqlite-test-ext.c") });
-        sqlite_ext_test.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
+        sqlite_ext_test.root_module.linkLibrary(dep_sqlite3.?.artifact("sqlite3"));
         const art = b.addInstallArtifact(sqlite_ext_test, .{
+            .dest_dir = .{
+                .override = .{ .custom = "../build/" },
+            },
+        });
+        tjs.step.dependOn(&art.step);
+    }
+
+    if (opts.with_ffi and !opts.matrix) {
+        const ffi_test = b.addLibrary(.{
+            .linkage = .dynamic,
+            .name = "ffi-test",
+            .root_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+        });
+        ffi_test.root_module.addCSourceFile(.{ .file = b.path("tests/fixtures/ffi-test-lib.c") });
+        const art = b.addInstallArtifact(ffi_test, .{
             .dest_dir = .{
                 .override = .{ .custom = "../build/" },
             },
@@ -371,21 +399,21 @@ fn build2(
             }),
         });
         exe.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
-        exe.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
         exe.root_module.linkLibrary(dep_libuv.artifact("uv_a"));
         exe.root_module.linkLibrary(dep_miniz.artifact("miniz"));
         exe.root_module.linkLibrary(dep_ada.artifact("ada"));
         exe.installLibraryHeaders(dep_libuv.artifact("uv_a"));
-        exe.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
         exe.installLibraryHeaders(dep_miniz.artifact("miniz"));
         exe.installLibraryHeaders(dep_ada.artifact("ada"));
         exe.root_module.addIncludePath(b.path("src"));
+        if (opts.with_sqlite) {
+            exe.root_module.linkLibrary(dep_sqlite3.?.artifact("sqlite3"));
+            exe.installLibraryHeaders(dep_sqlite3.?.artifact("sqlite3"));
+        }
         if (opts.with_wasm) {
             const wamr = dep_wamr.?;
             exe.root_module.linkLibrary(wamr.artifact("vmlib"));
             exe.installLibraryHeaders(wamr.artifact("vmlib"));
-        } else {
-            exe.root_module.addCMacro("TJS__OMIT_WASM", "1");
         }
         b.installArtifact(exe);
 
@@ -417,17 +445,13 @@ fn build2(
         unit_tests.installLibraryHeaders(dep_miniz.artifact("miniz"));
         unit_tests.installLibraryHeaders(dep_ada.artifact("ada"));
         if (opts.with_sqlite) {
-            unit_tests.root_module.linkLibrary(dep_sqlite3.artifact("sqlite3"));
-            unit_tests.installLibraryHeaders(dep_sqlite3.artifact("sqlite3"));
-        } else {
-            unit_tests.root_module.addCMacro("TJS__OMIT_SQLITE", "1");
+            unit_tests.root_module.linkLibrary(dep_sqlite3.?.artifact("sqlite3"));
+            unit_tests.installLibraryHeaders(dep_sqlite3.?.artifact("sqlite3"));
         }
         if (opts.with_wasm) {
             const wamr = dep_wamr.?;
             unit_tests.root_module.linkLibrary(wamr.artifact("vmlib"));
             unit_tests.installLibraryHeaders(wamr.artifact("vmlib"));
-        } else {
-            unit_tests.root_module.addCMacro("TJS__OMIT_WASM", "1");
         }
         unit_tests.root_module.addIncludePath(b.path("src"));
 

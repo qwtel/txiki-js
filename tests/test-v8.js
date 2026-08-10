@@ -3,6 +3,20 @@ import { serialize, deserialize, Serializer, Deserializer } from 'tjs:v8';
 
 const structuredClone = (x) => deserialize(serialize(x));
 
+let randomState = 0x9e3779b9;
+
+function randomUint32() {
+  randomState ^= randomState << 13;
+  randomState ^= randomState >>> 17;
+  randomState ^= randomState << 5;
+  return randomState >>> 0;
+}
+
+function randomValues(view) {
+  for (let i = 0; i < view.length; i++) view[i] = randomUint32();
+  return view;
+}
+
 for (let i = -1000; i < 1000; i++) {
   assert.equal(structuredClone(i), i);
 }
@@ -16,11 +30,11 @@ for (let i = -100n; i < 100n; i++) {
   assert.equal(structuredClone(j), j);
 }
 
-for (const expected of crypto.getRandomValues(new Int32Array(100))) {
+for (const expected of randomValues(new Int32Array(100))) {
   assert.deepEqual(structuredClone(expected), expected);
 }
 
-for (const expected of crypto.getRandomValues(new Uint32Array(100))) {
+for (const expected of randomValues(new Uint32Array(100))) {
   assert.deepEqual(structuredClone(expected), expected);
 }
 
@@ -30,7 +44,7 @@ for (let i = 0; i < 100; i++) {
 }
 
 for (let i = 0; i < 100; i++) {
-  const expected = crypto.getRandomValues(new Uint8Array(100));
+  const expected = randomValues(new Uint8Array(100));
   assert.deepEqual(structuredClone(expected), expected);
 }
 
@@ -53,7 +67,7 @@ function generateRandomValue(primitive = true) {
       case 'string':
           return generateRandomString(randomInt(0, 100));
       case 'wtf-16':
-          return String.fromCharCode.apply(undefined, crypto.getRandomValues(new Uint16Array(randomInt(0, 1000))));
+          return String.fromCharCode.apply(undefined, randomValues(new Uint16Array(randomInt(0, 1000))));
       case 'integer':
           return randomInt(Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
       case 'number':
@@ -63,7 +77,7 @@ function generateRandomValue(primitive = true) {
       case 'array':
           return Array.from({ length: randomInt(0, 10) }, () => generateRandomValue(false));
       case 'bytes':
-        return crypto.getRandomValues(new Uint8Array(randomInt(0, 100)));
+        return randomValues(new Uint8Array(randomInt(0, 100)));
       case 'undefined':
           return undefined;
       case 'null':

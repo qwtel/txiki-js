@@ -742,11 +742,29 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
 
             uint64_t upgrade_id = uctx->id;
 
+            /* Reconstruct full URL including query string (lws strips it from uri_ptr). */
+            int query_len = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_URI_ARGS);
+            int needs_sep = query_len > 0 ? 1 : 0;
+            char *full_url = tjs__malloc((size_t) uri_len + needs_sep + query_len + 1);
+            if (!full_url) {
+                return -1;
+            }
+            memcpy(full_url, uri_ptr, (size_t) uri_len);
+
+            if (query_len > 0 &&
+                lws_hdr_copy(wsi, full_url + uri_len + 1, query_len + 1, WSI_TOKEN_HTTP_URI_ARGS) > 0) {
+                full_url[uri_len] = '?';
+            } else {
+                full_url[uri_len] = '\0';
+            }
+
             /* Call JS onRequest synchronously with upgrade ID and WS marker. */
             JSValue args[7];
             args[0] = JS_NewInt64(ctx, (int64_t) upgrade_id);
             args[1] = JS_NewString(ctx, method);
-            args[2] = JS_NewStringLen(ctx, uri_ptr, uri_len);
+            args[2] = JS_NewStringLen(ctx, full_url, strlen(full_url));
+            tjs__free(full_url);
+
             args[3] = headers_arr;
             args[4] = JS_NULL;
             args[5] = JS_NewString(ctx, uctx->remote_addr);
@@ -1635,9 +1653,11 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
         /* No body, complete the transaction now and release the request so
          * a subsequent keep-alive transaction on this wsi doesn't accumulate
          * the previous request's state.  The return value indicates whether
-         * lws will close the connection; either way we drop our state here
+         * lws will close the connection; we can't propagate that from here (we
+         * are not in the protocol callback), so we drop our state either way
          * and let lws handle the wsi lifecycle. */
-        (void) lws_http_transaction_completed(req->wsi);
+        int must_close = lws_http_transaction_completed(req->wsi);
+        (void) must_close;
         tjs_http_req_complete(s, req);
     }
 

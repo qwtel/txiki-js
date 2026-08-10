@@ -24,7 +24,7 @@
 
 #include "bundles/c/internal/path.c"
 #include "bundles/c/stdlib/assert.c"
-#ifndef TJS__OMIT_FFI
+#ifdef TJS_HAVE_FFI
 #include "bundles/c/stdlib/ffi.c"
 #endif
 #include "bundles/c/stdlib/getopts.c"
@@ -33,12 +33,12 @@
 #include "bundles/c/stdlib/path.c"
 #include "bundles/c/stdlib/posix-socket.c"
 #include "bundles/c/stdlib/readline.c"
-#ifndef TJS__OMIT_SQLITE
+#ifdef TJS_HAVE_SQLITE
 #include "bundles/c/stdlib/sqlite.c"
 #endif
 #include "bundles/c/stdlib/utils.c"
 #include "bundles/c/stdlib/uuid.c"
-#ifndef TJS__OMIT_WASM
+#ifdef TJS_HAVE_WASM
 #include "bundles/c/stdlib/wasi.c"
 #endif
 #ifdef TJS__HAS_ZIG_MODULES
@@ -55,7 +55,7 @@ typedef struct {
 
 static tjs_builtin_t builtins[] = {
     { "tjs:assert", tjs__assert, sizeof(tjs__assert) },
-#ifndef TJS__OMIT_FFI
+#ifdef TJS_HAVE_FFI
     { "tjs:ffi", tjs__ffi, sizeof(tjs__ffi) },
 #endif
     { "tjs:getopts", tjs__getopts, sizeof(tjs__getopts) },
@@ -65,12 +65,12 @@ static tjs_builtin_t builtins[] = {
     { "tjs:path", tjs__path, sizeof(tjs__path) },
     { "tjs:posix-socket", tjs__posix_socket, sizeof(tjs__posix_socket) },
     { "tjs:readline", tjs__readline, sizeof(tjs__readline) },
-#ifndef TJS__OMIT_SQLITE
+#ifdef TJS_HAVE_SQLITE
     { "tjs:sqlite", tjs__sqlite, sizeof(tjs__sqlite) },
 #endif
     { "tjs:utils", tjs__utils, sizeof(tjs__utils) },
     { "tjs:uuid", tjs__uuid, sizeof(tjs__uuid) },
-#ifndef TJS__OMIT_WASM
+#ifdef TJS_HAVE_WASM
     { "tjs:wasi", tjs__wasi, sizeof(tjs__wasi) },
 #endif
 #ifdef TJS__HAS_ZIG_MODULES

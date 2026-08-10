@@ -31,11 +31,13 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #endif
 
 #ifdef NDEBUG
@@ -66,9 +68,9 @@ static void *tjs__mf_realloc(void *opaque, void *ptr, size_t size) {
     return tjs__realloc(ptr, size);
 }
 
+#ifdef TJS_HAVE_WASM
 /* WAMR allocator wrappers — WAMR uses unsigned int, not size_t. */
 
-#ifndef TJS__OMIT_WASM
 static void *tjs__wamr_malloc(unsigned int size) {
     return tjs__malloc(size);
 }
@@ -239,7 +241,7 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
 #endif
     tjs__mod_engine_init(ctx, ns);
     tjs__mod_error_init(ctx, ns);
-#ifndef TJS__OMIT_FFI
+#ifdef TJS_HAVE_FFI
     tjs__mod_ffi_init(ctx, ns);
 #endif
     tjs__mod_fs_init(ctx, ns);
@@ -247,7 +249,7 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_os_init(ctx, ns);
     tjs__mod_process_init(ctx, ns);
     tjs__mod_signals_init(ctx, ns);
-#ifndef TJS__OMIT_SQLITE
+#ifdef TJS_HAVE_SQLITE
     tjs__mod_sqlite3_init(ctx, ns);
 #ifdef TJS__HAS_ZIG_MODULES
     zig__mod_sqlite3_async_init(ctx, ns);
@@ -264,7 +266,7 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_udp_init(ctx, ns);
 #endif
     tjs__mod_url_init(ctx, ns);
-#ifndef TJS__OMIT_WASM
+#ifdef TJS_HAVE_WASM
     tjs__mod_wasm_init(ctx, ns);
 #endif
     tjs__mod_worker_init(ctx, ns);
@@ -510,7 +512,7 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     /* end bootstrap */
     JS_FreeValue(ctx, global_obj);
 
-#ifndef TJS__OMIT_WASM
+#ifdef TJS_HAVE_WASM
     /* WASM */
     RuntimeInitArgs wasm_init_args;
     memset(&wasm_init_args, 0, sizeof(wasm_init_args));
@@ -529,6 +531,11 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
 
     /* Pending rejection tracking */
     init_list_head(&qrt->pending_rejections);
+
+    /* libwebsockets initializtion */
+#ifndef TJS__OMIT_NETWORK
+    tjs__lws_setup();
+#endif
 
     return qrt;
 }
@@ -598,8 +605,8 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     JS_FreeContext(qrt->ctx);
     JS_FreeRuntime(qrt->rt);
 
+#ifdef TJS_HAVE_WASM
     /* Destroy WASM runtime. */
-#ifndef TJS__OMIT_WASM
     if (qrt->wasm_ctx.initialized) {
         wasm_runtime_destroy();
         qrt->wasm_ctx.initialized = false;
@@ -627,6 +634,32 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     tjs__free(qrt);
 }
 
+#ifdef _WIN32
+static void tjs__invalid_parameter_handler(const wchar_t *expression,
+                                           const wchar_t *function,
+                                           const wchar_t *file,
+                                           unsigned int line,
+                                           uintptr_t reserved) {
+    /* The default UCRT handler terminates the process (and may pop a Windows
+     * Error Reporting dialog) when a CRT function receives an invalid
+     * parameter. Override it with a no-op so the CRT function returns an error
+     * instead, matching what other CLI runtimes (e.g. Node.js) do. */
+    (void) expression;
+    (void) function;
+    (void) file;
+    (void) line;
+    (void) reserved;
+}
+
+static UINT tjs__prev_console_output_cp = 0;
+
+static void tjs__restore_console_output_cp(void) {
+    if (tjs__prev_console_output_cp != 0) {
+        SetConsoleOutputCP(tjs__prev_console_output_cp);
+    }
+}
+#endif
+
 void TJS_Initialize(int argc, char **argv) {
     CHECK_EQ(0, uv_replace_allocator(tjs__malloc, tjs__realloc, tjs__calloc, tjs__free));
 
@@ -639,6 +672,18 @@ void TJS_Initialize(int argc, char **argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
+
+    /* Make sure conmsole is set to UTF-8 so our output doesn't get garbled. */
+    tjs__prev_console_output_cp = GetConsoleOutputCP();
+    if (tjs__prev_console_output_cp != 0 && tjs__prev_console_output_cp != CP_UTF8) {
+        SetConsoleOutputCP(CP_UTF8);
+        atexit(tjs__restore_console_output_cp);
+    }
+
+    /* CLI tool: never block on GUI error dialogs. Suppress the WER crash dialog
+     * and the OS critical-error message box (e.g. device-not-ready). */
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    _set_invalid_parameter_handler(tjs__invalid_parameter_handler);
 #endif
 
 #ifdef SIGPIPE

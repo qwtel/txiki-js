@@ -27,11 +27,64 @@ declare module 'tjs:ffi'{
         offset(n: number): NativePointer;
         /** Returns `true` if both pointers refer to the same address. */
         equals(other: NativePointer | null): boolean;
+        /**
+         * Returns a **zero-copy** `Uint8Array` of `byteLength` bytes that aliases
+         * the native memory starting at this pointer (plus an optional
+         * `byteOffset`). No data is copied: reads and writes go straight to the
+         * underlying memory. Its `.buffer` is an {@link ExternalArrayBuffer}, so
+         * the view can be invalidated with `view.buffer.detach()`.
+         *
+         * The view does **not** keep the memory alive and the runtime never
+         * frees it. The caller is responsible for ensuring the memory outlives
+         * every view over it; accessing a view after the memory has been freed,
+         * moved or reallocated is undefined behaviour and can crash the process.
+         */
+        toUint8Array(byteLength: number, byteOffset?: number): Uint8Array;
+        /**
+         * Like {@link NativePointer.toUint8Array}, but returns a zero-copy
+         * {@link ExternalArrayBuffer}. The same lifetime caveats apply.
+         */
+        toArrayBuffer(byteLength: number, byteOffset?: number): ExternalArrayBuffer;
     }
+
+    /**
+     * A **zero-copy** `ArrayBuffer` that aliases native memory, returned by
+     * {@link NativePointer.toArrayBuffer} (and backing the `Uint8Array` from
+     * {@link NativePointer.toUint8Array}). It is a real `ArrayBuffer` — accepted
+     * anywhere one is — with one extra method.
+     */
+    export interface ExternalArrayBuffer extends ArrayBuffer {
+        /**
+         * Detach the buffer, invalidating it and every view over it: afterwards
+         * its `byteLength` is `0`, `detached` is `true`, and any `TypedArray`
+         * backed by it reads as empty.
+         *
+         * Use this to make a view safe to keep after you free the native memory
+         * it aliased — it turns a potential use-after-free into a harmless empty
+         * buffer. Unlike `ArrayBuffer.prototype.transfer()`, it does **not** read
+         * or copy the underlying bytes, so it is safe to call once the memory is
+         * gone.
+         */
+        detach(): void;
+    }
+
+    /**
+     * The {@link ExternalArrayBuffer} constructor, exposed for `instanceof`
+     * checks. Not constructible — instances come from {@link NativePointer}
+     * views.
+     */
+    export const ExternalArrayBuffer: Function & { readonly prototype: ExternalArrayBuffer };
 
     /**
      * Direct memory reads from a pointer at a given byte offset.
      * Faster than creating an intermediate buffer for one-off reads.
+     *
+     * Note: `u64`/`i64` return a JavaScript `number`, which cannot represent
+     * every 64-bit value. Magnitudes above `Number.MAX_SAFE_INTEGER` (2**53 - 1)
+     * lose precision, and `u64` values with the high bit set read back as a
+     * negative number (the bytes are interpreted as a signed `int64`). Use the
+     * low 53 bits only, or read the raw bytes via `toUint8Array` if you need the
+     * exact value.
      */
     export const read: {
         u8(ptr: NativePointer, offset?: number): number;
@@ -40,7 +93,9 @@ declare module 'tjs:ffi'{
         i16(ptr: NativePointer, offset?: number): number;
         u32(ptr: NativePointer, offset?: number): number;
         i32(ptr: NativePointer, offset?: number): number;
+        /** Lossy above 2**53 - 1; high-bit-set values read back negative. */
         u64(ptr: NativePointer, offset?: number): number;
+        /** Lossy above 2**53 - 1. */
         i64(ptr: NativePointer, offset?: number): number;
         f32(ptr: NativePointer, offset?: number): number;
         f64(ptr: NativePointer, offset?: number): number;
@@ -48,10 +103,12 @@ declare module 'tjs:ffi'{
     };
 
     export class DlSymbol{
+        /** Instances come only from {@link Lib.symbol}; not user-constructible. */
+        private constructor();
         readonly addr: NativePointer;
     }
 
-    interface SimpleType<T = any>{
+    export interface SimpleType<T = any>{
         toBuffer(data: T, ctx?: {}): Uint8Array;
         fromBuffer(buffer: Uint8Array, ctx?: {}): T;
         readonly size: number;
@@ -62,7 +119,8 @@ declare module 'tjs:ffi'{
         constructor(type: ST, conf: {
             toBuffer?: (data: T, ctx?: {}) => Uint8Array,
             fromBuffer?: (buf: Uint8Array, ctx?: {}) => T,
-            getFfiTypeStruct?: () => SimpleType<T>
+            getFfiTypeStruct?: () => SimpleType<T>,
+            name?: string
         });
         readonly ffiType: ST;
         readonly ffiTypeStruct: SimpleType<T>
@@ -96,8 +154,8 @@ declare module 'tjs:ffi'{
     }
     export interface Lib extends Disposable {}
 
-    export class CFunction<JRT = any, JAT extends Array<any> = any[]>{ //TODO: better typing mechanism for Arg types
-        constructor(symbol: DlSymbol, rtype: SimpleType<JRT>, argtypes: SimpleType[], fixed?: number);
+    export class CFunction<JRT = unknown, JAT extends unknown[] = unknown[]>{
+        constructor(symbol: DlSymbol, rtype: SimpleType<JRT>, argtypes: { [key in keyof JAT]: SimpleType<JAT[key]> }, fixed?: number);
         call(...argsJs: JAT): JRT;
     }
 
@@ -129,11 +187,11 @@ declare module 'tjs:ffi'{
         size: SimpleType<number>,
         ssize: SimpleType<number>,
 
-        string: SimpleType<string>
+        string: SimpleType<string>,
         
-        buffer: SimpleType<Uint8Array>
+        buffer: SimpleType<Uint8Array>,
         
-        jscallback: SimpleType<(...args: any)=>any>
+        jscallback: <T extends JSCallback>() => SimpleType<T>,
     }
 
     /**
@@ -150,7 +208,7 @@ declare module 'tjs:ffi'{
         constructor(addr: NativePointer, level: N, type: SimpleType<T>);
         readonly addr: NativePointer;
         readonly level: N;
-        readonly type: T;
+        readonly type: SimpleType<T>;
         readonly isNull: boolean;
 
         deref(): N extends 1 ? T : Pointer<T, any>;
@@ -183,7 +241,7 @@ declare module 'tjs:ffi'{
         readonly size: number;
     }
 
-    export class StaticStringType extends AdvancedType<string, StaticStringType>{
+    export class StaticStringType extends ArrayType<number>{
         constructor(length: number, name: string);
         toBuffer(str: string, ctx?: {}): Uint8Array;
         fromBuffer(buf: Uint8Array, ctx?: {}): string;
@@ -191,10 +249,61 @@ declare module 'tjs:ffi'{
 
     export function errno(): number;
     export function strerror(err?: number): string;
-    export class JSCallback<RT, AT extends []>{ //TODO: better typing mechanism for Arg types
-        constructor(rtype: SimpleType<RT>, argtypes: Array<SimpleType<AT[0]>>, func: (...args: AT)=>RT);
+    export class JSCallback<RT = unknown, AT extends unknown[] = unknown[]>{
+        constructor(rtype: SimpleType<RT>, argtypes: { [key in keyof AT]: SimpleType<AT[key]> }, func: (...args: AT) => RT);
         readonly addr: NativePointer;
     }
+
+    /** Type conversion map (FFI type alias -> JS type) */
+    export type TypeAliasMap = {
+        readonly 'void': void;
+        readonly 'u8': number;
+        readonly 'uint8': number;
+        readonly 'uint8_t': number;
+        readonly 'i8': number;
+        readonly 'sint8': number;
+        readonly 'int8_t': number;
+        readonly 'u16': number;
+        readonly 'uint16': number;
+        readonly 'uint16_t': number;
+        readonly 'i16': number;
+        readonly 'sint16': number;
+        readonly 'int16_t': number;
+        readonly 'u32': number;
+        readonly 'uint32': number;
+        readonly 'uint32_t': number;
+        readonly 'int': number;
+        readonly 'i32': number;
+        readonly 'sint32': number;
+        readonly 'int32_t': number;
+        readonly 'u64': number;
+        readonly 'uint64': number;
+        readonly 'uint64_t': number;
+        readonly 'i64': number;
+        readonly 'sint64': number;
+        readonly 'int64_t': number;
+        readonly 'f32': number;
+        readonly 'float': number;
+        readonly 'f64': number;
+        readonly 'double': number;
+        readonly 'pointer': NativePointer | null;
+        readonly 'ptr': NativePointer | null;
+        readonly 'string': string;
+        readonly 'cstring': string;
+        readonly 'buffer': Uint8Array;
+        readonly 'uchar': string;
+        readonly 'schar': string;
+        readonly 'char': string;
+        readonly 'ushort': number;
+        readonly 'sshort': number;
+        readonly 'uint': number;
+        readonly 'sint': number;
+        readonly 'ulong': number;
+        readonly 'slong': number;
+        readonly 'long': number;
+        readonly 'size_t': number;
+        readonly 'ssize_t': number;
+    };
 
     /**
      * String aliases for FFI types. Can be used in {@link dlopen} symbol definitions
@@ -203,27 +312,7 @@ declare module 'tjs:ffi'{
      * Supports short (`i32`, `u8`, `f64`, `ptr`), C-style (`int`, `char`, `double`),
      * and stdint-style (`uint32_t`, `int64_t`) names.
      */
-    export type TypeAlias =
-        | 'void'
-        | 'u8' | 'uint8' | 'uint8_t'
-        | 'i8' | 'sint8' | 'int8_t'
-        | 'u16' | 'uint16' | 'uint16_t'
-        | 'i16' | 'sint16' | 'int16_t'
-        | 'u32' | 'uint32' | 'uint32_t' | 'int'
-        | 'i32' | 'sint32' | 'int32_t'
-        | 'u64' | 'uint64' | 'uint64_t'
-        | 'i64' | 'sint64' | 'int64_t'
-        | 'f32' | 'float'
-        | 'f64' | 'double'
-        | 'pointer' | 'ptr'
-        | 'string' | 'cstring'
-        | 'buffer'
-        | 'uchar' | 'schar' | 'char'
-        | 'ushort' | 'sshort'
-        | 'uint' | 'sint'
-        | 'ulong' | 'slong' | 'long'
-        | 'size_t' | 'ssize_t';
-
+    export type TypeAlias = keyof TypeAliasMap;
     export type TypeOrAlias = SimpleType | TypeAlias;
 
     /**
@@ -238,9 +327,23 @@ declare module 'tjs:ffi'{
         fixed?: number;
     }
 
+    export type MapToJsType<T extends TypeOrAlias | undefined> = T extends TypeAlias
+        ? TypeAliasMap[T]
+        : T extends SimpleType
+            ? ReturnType<T["fromBuffer"]>
+            : void;
+
+    export type MapArrayToJsType<T extends TypeOrAlias[]> = {
+        [key in keyof T]: MapToJsType<T[key]>;
+    };
+
     export interface DlopenResult<T extends Record<string, DlopenSymbol>> {
         /** Object containing callable functions for each declared symbol. */
-        symbols: { [K in keyof T]: (...args: any[]) => any };
+        symbols: {
+            [K in keyof T]: T[K]["args"] extends TypeOrAlias[]
+                ? (...args: MapArrayToJsType<T[K]["args"]>) => MapToJsType<T[K]["returns"]>
+                : () => MapToJsType<T[K]["returns"]>;
+        };
         /** Close the shared library handle. */
         close(): void;
     }
@@ -268,4 +371,33 @@ declare module 'tjs:ffi'{
      * @param symbols - Object mapping symbol names to their type signatures.
      */
     export function dlopen<T extends Record<string, DlopenSymbol>>(path: string, symbols: T): DlopenResult<T>;
+
+    /**
+     * Default export: the module namespace object, with every named export as a
+     * property. Both `import ffi from 'tjs:ffi'` (then `ffi.dlopen(...)`) and
+     * `import { dlopen } from 'tjs:ffi'` are supported.
+     */
+    const _default: {
+        DlSymbol: typeof DlSymbol;
+        Lib: typeof Lib;
+        AdvancedType: typeof AdvancedType;
+        CFunction: typeof CFunction;
+        Pointer: typeof Pointer;
+        PointerType: typeof PointerType;
+        StructType: typeof StructType;
+        ArrayType: typeof ArrayType;
+        StaticStringType: typeof StaticStringType;
+        JSCallback: typeof JSCallback;
+        ExternalArrayBuffer: typeof ExternalArrayBuffer;
+        types: typeof types;
+        read: typeof read;
+        suffix: typeof suffix;
+        errno: typeof errno;
+        strerror: typeof strerror;
+        bufferToString: typeof bufferToString;
+        stringToBuffer: typeof stringToBuffer;
+        bufferToPointer: typeof bufferToPointer;
+        dlopen: typeof dlopen;
+    };
+    export default _default;
 }

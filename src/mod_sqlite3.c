@@ -22,7 +22,6 @@
  * THE SOFTWARE.
  */
 
-#ifndef TJS__OMIT_SQLITE
 #include "private.h"
 
 #include <sqlite3.h>
@@ -647,4 +646,3 @@ void tjs__mod_sqlite3_init(JSContext *ctx, JSValue ns) {
 
     JS_DefinePropertyValueStr(ctx, ns, "sqlite3", obj, JS_PROP_C_W_E);
 }
-#endif

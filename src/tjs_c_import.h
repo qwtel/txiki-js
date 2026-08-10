@@ -3,7 +3,7 @@
 #include "list.h"
 #include "libregexp.h"
 #include "quickjs.h"
-#ifndef TJS__OMIT_SQLITE
+#ifdef TJS_HAVE_SQLITE
 #include "sqlite3.h"
 #endif
 #include "uv.h"

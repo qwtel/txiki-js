@@ -329,6 +329,25 @@ const struct lws_protocols tjs_ws_protocol = {
 };
 
 
+static JSValue emit_abnormal_close(JSContext *ctx, int argc, JSValue *argv) {
+    CHECK_EQ(argc, 1);
+
+    TJSWs *w = JS_GetOpaque(argv[0], tjs_ws_class_id);
+    if (w) {
+        JSContext *ctx = w->ctx;
+
+        JSValue err_reason = JS_NewString(ctx, "");
+        maybe_call_callback(w, WS_CALLBACK_ERROR, 1, &err_reason);
+
+        JSValue args[2] = {
+            JS_NewInt32(ctx, 1006),
+            JS_NewString(ctx, ""),
+        };
+        maybe_call_callback(w, WS_CALLBACK_CLOSE, 2, args);
+    }
+    return JS_UNDEFINED;
+}
+
 static JSValue tjs_ws_constructor(JSContext *ctx, JSValue new_target, int argc, JSValue *argv) {
     JSValue obj = JS_NewObjectClass(ctx, tjs_ws_class_id);
     if (JS_IsException(obj)) {
@@ -369,46 +388,35 @@ static JSValue tjs_ws_constructor(JSContext *ctx, JSValue new_target, int argc, 
         w->header_values = JS_DupValue(ctx, argv[3]);
     }
 
-    /* Parse the URL. lws_parse_uri modifies the string in-place. */
-    char *url_copy = js_strdup(ctx, url);
-    if (!url_copy) {
-        JS_FreeCString(ctx, url);
-        JS_FreeCString(ctx, protocols);
-        js_free(ctx, w);
-        JS_FreeValue(ctx, obj);
-        return JS_EXCEPTION;
-    }
+    /* Parse the URL. */
+    lws_parse_uri_t *uri = lws_parse_uri_create(url);
     JS_FreeCString(ctx, url);
-
-    const char *prot_str, *ads, *path;
-    int port;
-    if (lws_parse_uri(url_copy, &prot_str, &ads, &port, &path)) {
+    if (!uri) {
         JS_FreeCString(ctx, protocols);
-        js_free(ctx, url_copy);
         js_free(ctx, w);
         JS_FreeValue(ctx, obj);
         return JS_ThrowTypeError(ctx, "invalid WebSocket URL");
     }
 
-    bool use_ssl = !strcmp(prot_str, "wss") || !strcmp(prot_str, "https");
+    bool use_ssl = !strcmp(uri->scheme, "wss") || !strcmp(uri->scheme, "https");
 
-    /* Build the path with leading slash (lws_parse_uri strips it). */
-    size_t path_len = strlen(path);
+    /* Build the path with leading slash (the parsed path has it stripped). */
+    size_t path_len = strlen(uri->path);
     char *full_path = js_malloc(ctx, path_len + 2);
     if (!full_path) {
         JS_FreeCString(ctx, protocols);
-        js_free(ctx, url_copy);
+        lws_parse_uri_destroy(&uri);
         js_free(ctx, w);
         JS_FreeValue(ctx, obj);
         return JS_EXCEPTION;
     }
     full_path[0] = '/';
-    memcpy(full_path + 1, path, path_len + 1);
+    memcpy(full_path + 1, uri->path, path_len + 1);
 
     struct lws_context *lws_ctx = tjs__lws_get_context(ctx);
     if (!lws_ctx) {
         JS_FreeCString(ctx, protocols);
-        js_free(ctx, url_copy);
+        lws_parse_uri_destroy(&uri);
         js_free(ctx, full_path);
         js_free(ctx, w);
         JS_FreeValue(ctx, obj);
@@ -419,32 +427,37 @@ static JSValue tjs_ws_constructor(JSContext *ctx, JSValue new_target, int argc, 
     memset(&cci, 0, sizeof(cci));
 
     cci.context = lws_ctx;
-    cci.address = ads;
-    cci.port = port;
+    cci.address = uri->host;
+    cci.port = uri->port;
     cci.path = full_path;
-    cci.host = ads;
-    cci.origin = ads;
+    cci.host = uri->host;
+    cci.origin = uri->host;
     cci.ssl_connection = use_ssl ? LCCSCF_USE_SSL : 0;
     cci.protocol = protocols;
     cci.local_protocol_name = TJS_LWS_PROTOCOL_NAME;
     cci.userdata = w;
     cci.pwsi = &w->wsi;
-    cci.vhost = tjs__lws_select_vhost(ctx, prot_str, ads, port);
+    cci.vhost = tjs__lws_select_vhost(ctx, uri->scheme, uri->host, uri->port);
 
     struct lws *wsi = lws_client_connect_via_info(&cci);
 
     JS_FreeCString(ctx, protocols);
-    js_free(ctx, url_copy);
+    lws_parse_uri_destroy(&uri);
     js_free(ctx, full_path);
 
-    if (!wsi) {
-        /* Connection failed immediately. */
-        js_free(ctx, w);
-        JS_FreeValue(ctx, obj);
-        return JS_ThrowInternalError(ctx, "WebSocket connection failed");
-    }
-
     JS_SetOpaque(obj, w);
+
+    /* lws_client_connect_via_info can return NULL if no route to IP address is found,
+     * or even assert if no DNS server is found.
+     * In the future lws should be patched, but for now we work around the bug */
+    if (!wsi) {
+        /* Connection failed immediately — fire error and close events asynchronously. */
+        JSValue argv[1];
+        argv[0] = JS_DupValue(ctx, obj);
+        CHECK_EQ(JS_EnqueueJob(ctx, emit_abnormal_close, 1, argv), 0);
+        JS_FreeValue(ctx, argv[0]);
+        return obj;
+    }
 
     /* Prevent GC while connected. */
     w->this_val = JS_DupValue(ctx, obj);

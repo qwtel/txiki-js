@@ -546,9 +546,9 @@ static const JSCFunctionListEntry tjs_process_funcs[] = {
 #endif
 
 void tjs__mod_process_init(JSContext *ctx, JSValue ns) {
+#ifndef TJS__OMIT_SUBPROCESS
     JSRuntime *rt = JS_GetRuntime(ctx);
 
-#ifndef TJS__OMIT_SUBPROCESS
     JS_NewClassID(rt, &tjs_process_class_id);
     JS_NewClass(rt, tjs_process_class_id, &tjs_process_class);
     JSValue proto = JS_NewObject(ctx);

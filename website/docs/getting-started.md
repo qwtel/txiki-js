@@ -13,6 +13,26 @@ It's built on the shoulders of giants: it uses [QuickJS-ng](https://github.com/q
 
 ## Installation
 
+### [Homebrew](https://brew.sh/) (macOS and Linux)
+
+```bash
+brew install saghul/tap/txikijs
+```
+
+### [WinGet](https://learn.microsoft.com/windows/package-manager/) (Windows)
+
+```powershell
+winget install Saghul.TxikiJS
+```
+
+### [Scoop](https://scoop.sh/) (Windows)
+
+```powershell
+scoop install txikijs
+```
+
+### Prebuilt binaries
+
 Prebuilt binaries are available for macOS and Windows from the [GitHub Releases](https://github.com/saghul/txiki.js/releases) page:
 
 | Platform | Architecture |
@@ -22,27 +42,40 @@ Prebuilt binaries are available for macOS and Windows from the [GitHub Releases]
 
 Download the zip for your platform, extract it, and add the `tjs` binary to your `PATH`.
 
+### Build from source
+
 On Linux (and other Unixes), you'll need to [build from source](building.md).
 
 ## Quick start
 
-Try it out:
+Once `tjs` is on your `PATH`, try evaluating an expression:
 
 ```bash
-./build/tjs eval "console.log('hello world')"
+tjs eval "console.log('hello world')"
 ```
 
 Run a script with `tjs run`:
 
 ```bash
-./build/tjs run examples/hello_world.js
+echo "console.log('hello from a file')" > hello.js
+tjs run hello.js
 ```
 
-Explore all the options:
+Or start the interactive REPL by running `tjs` with no arguments:
 
 ```bash
-./build/tjs --help
+tjs
 ```
+
+Explore all the subcommands and options:
+
+```bash
+tjs --help
+```
+
+See the [CLI Reference](cli.md) for the full list of subcommands, options, and environment variables.
+
+> If you [built from source](building.md) instead of installing a package, invoke the binary as `./build/tjs` and try the bundled scripts, e.g. `./build/tjs run examples/hello_world.js`.
 
 ## Supported platforms
 

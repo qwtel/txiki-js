@@ -87,6 +87,73 @@ The executable will be at `build\Release\tjs.exe`.
 .\build\Release\tjs.exe test tests/
 ```
 
+## Optional features
+
+Some subsystems are built in by default but can be disabled at build time to produce a
+smaller binary.
+
+| CMake option            | Default | Effect                         | Approx savings |
+|-------------------------|---------|--------------------------------|----------------|
+| `BUILD_WITH_WASM=OFF`   | ON      | Remove WebAssembly / WASI      | ~0.4 MB        |
+| `BUILD_WITH_SQLITE=OFF` | ON      | Remove the `tjs:sqlite` module | ~1.5 MB        |
+
+When WebAssembly is disabled, the `WebAssembly` global is not installed and the `tjs:wasi`
+module is not available. When SQLite is disabled, the `tjs:sqlite` module is not available
+and `localStorage` falls back to a non-persistent, in-memory store (`sessionStorage` is
+unaffected). The active set of feature flags is exposed to JS via `tjs.engine.features`
+(e.g. `tjs.engine.features.wasm`, `tjs.engine.features.sqlite`).
+
+Unix/macOS example:
+
+```bash
+BUILD_WITH_WASM=OFF make
+BUILD_WITH_SQLITE=OFF make
+```
+
+Direct CMake example (the flags can be combined):
+
+```bash
+cmake -B build-slim -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_WASM=OFF -DBUILD_WITH_SQLITE=OFF
+cmake --build build-slim
+```
+
+## Size-optimized builds
+
+These flags shrink the binary **without removing any feature** — they only change how the
+code is compiled and linked. They are independent of one another and can be combined.
+
+| CMake option                | Default | Effect                                                           |
+|-----------------------------|---------|------------------------------------------------------------------|
+| `BUILD_WITH_STRIP=ON`       | OFF     | Strip the symbol table from the binary after linking             |
+| `BUILD_WITH_LTO=ON`         | OFF     | Enable link-time optimization (smaller/faster code, slower link) |
+| `BUILD_WITH_GC_SECTIONS=ON` | OFF     | Per-function/data sections plus linker dead-code stripping       |
+| `BUILDTYPE=MinSizeRel`      | —       | Standard CMake build type that optimizes for size                |
+
+Notes:
+
+- `BUILD_WITH_STRIP` runs the toolchain's `strip` as a post-build step. It is skipped where
+  `CMAKE_STRIP` is unset (e.g. MSVC).
+- `BUILD_WITH_LTO` falls back to a warning (not an error) if the toolchain cannot do
+  interprocedural optimization.
+- `BUILD_WITH_GC_SECTIONS` maps to `-Wl,--gc-sections` (GNU/lld), `-Wl,-dead_strip` (Apple), or
+  `/OPT:REF /OPT:ICF` (MSVC).
+- `BUILDTYPE=MinSizeRel` needs no extra flag; it is a standard CMake build type. It compiles with
+  `-Os` on GCC/Clang and `/O1` on MSVC.
+
+:::warning[Performance trade-off]
+`BUILDTYPE=MinSizeRel` optimizes for size (`-Os` on GCC/Clang), which favors small code over fast 
+code. Compared to the default `Release` build (`-O2`), compute-heavy JavaScript can run measurably 
+slower, so prefer it only when binary size matters more than throughput.
+:::
+
+Direct CMake example:
+
+```bash
+cmake -B build-min -DCMAKE_BUILD_TYPE=MinSizeRel \
+  -DBUILD_WITH_STRIP=ON -DBUILD_WITH_LTO=ON -DBUILD_WITH_GC_SECTIONS=ON
+cmake --build build-min
+```
+
 ## Customizing the build
 
 If you are making a custom build and are modifying any of the JS files that are part of the runtime, you'll need to regenerate the C code for them, so your changes become part of the build.
