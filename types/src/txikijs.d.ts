@@ -149,22 +149,24 @@ declare global {
                 readonly quickjs: string;
                 readonly tjs: string;
                 readonly uv: string;
-                readonly lws: string;
-                readonly wamr: string;
-                readonly sqlite3: string;
+                readonly lws?: string;
+                readonly wamr?: string;
+                readonly sqlite3?: string;
                 readonly mimalloc?: number;
             };
 
             /**
-            * Build-time feature flags reflecting the CMake options the binary
-            * was compiled with. `wasm` corresponds to `BUILD_WITH_WASM` (the
-            * `WebAssembly` global and `tjs:wasi`) and `sqlite` to
-            * `BUILD_WITH_SQLITE` (the `tjs:sqlite` module and persistent
-            * `localStorage`).
+            * Build-time feature flags for optional runtime capabilities.
             */
             readonly features: {
+                readonly crypto: boolean;
+                readonly ffi: boolean;
+                readonly network: boolean;
                 readonly wasm: boolean;
                 readonly sqlite: boolean;
+                readonly sqliteAsync: boolean;
+                readonly subprocess: boolean;
+                readonly v8: boolean;
             };
         }
 

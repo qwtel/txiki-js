@@ -1,6 +1,15 @@
 import core from 'tjs:internal/core';
 
 const engine = Object.create(null);
+const features = Object.freeze({
+    ...core.features,
+    crypto: 'webcrypto' in core,
+    ffi: 'ffi_load_native' in core,
+    network: 'TCP' in core,
+    sqliteAsync: 'sqlite3_async' in core,
+    subprocess: 'spawn' in core,
+    v8: 'Serializer' in core && 'Deserializer' in core
+});
 
 Object.defineProperty(engine, 'compile', {
     enumerable: true,
@@ -79,7 +88,7 @@ Object.defineProperty(engine, 'features', {
     enumerable: true,
     configurable: false,
     writable: false,
-    value: Object.freeze(core.features)
+    value: features
 });
 
 Object.defineProperty(engine, 'versions', {

@@ -4,11 +4,19 @@ import assert from 'tjs:assert';
 assert.ok(tjs.version, 'tjs.version is defined');
 assert.ok(tjs.engine.versions, 'tjs.versions is defined');
 assert.ok(tjs.engine.versions.tjs, 'tjs is defined');
-assert.ok(tjs.engine.versions.lws, 'lws is defined');
 assert.ok(tjs.engine.versions.quickjs, 'quickjs is defined');
 assert.ok(tjs.engine.versions.uv, 'uv is defined');
+assert.ok(typeof tjs.engine.features.crypto === 'boolean', 'features.crypto is boolean');
+assert.ok(typeof tjs.engine.features.ffi === 'boolean', 'features.ffi is boolean');
+assert.ok(typeof tjs.engine.features.network === 'boolean', 'features.network is boolean');
+assert.ok(typeof tjs.engine.features.sqliteAsync === 'boolean', 'features.sqliteAsync is boolean');
+assert.ok(typeof tjs.engine.features.subprocess === 'boolean', 'features.subprocess is boolean');
+assert.ok(typeof tjs.engine.features.v8 === 'boolean', 'features.v8 is boolean');
 assert.ok(typeof tjs.engine.features.wasm === 'boolean', 'features.wasm is boolean');
 assert.ok(typeof tjs.engine.features.sqlite === 'boolean', 'features.sqlite is boolean');
+if (tjs.engine.features.network) {
+    assert.ok(tjs.engine.versions.lws, 'lws is defined');
+}
 if (tjs.engine.features.sqlite) {
     assert.ok(tjs.engine.versions.sqlite3, 'sqlite3 is defined');
 }

@@ -74,10 +74,10 @@ fn build2(
         .target = target,
         .optimize = optimize,
     });
-    const dep_mimalloc = b.dependency("mimalloc", .{
+    const dep_mimalloc = if (opts.with_mimalloc) b.dependency("mimalloc", .{
         .target = target,
         .optimize = optimize,
-    });
+    }) else null;
     const dep_mbedtls = b.dependency("mbedtls", .{
         .target = target,
         .optimize = optimize,
@@ -199,8 +199,9 @@ fn build2(
     }
 
     if (opts.with_mimalloc) {
-        lib.root_module.linkLibrary(dep_mimalloc.artifact("mimalloc-static"));
-        lib.installLibraryHeaders(dep_mimalloc.artifact("mimalloc-static"));
+        const mimalloc = dep_mimalloc.?;
+        lib.root_module.linkLibrary(mimalloc.artifact("mimalloc-static"));
+        lib.installLibraryHeaders(mimalloc.artifact("mimalloc-static"));
     }
 
     if (opts.with_network) {
@@ -286,7 +287,7 @@ fn build2(
     if (opts.with_ffi) {
         lib.root_module.addCSourceFile(.{ .file = b.path("src/mod_ffi.c"), .flags = cflags.items });
     }
-    if (target.result.os.tag == .linux or target.result.os.tag.isBSD()) {
+    if (opts.with_network and (target.result.os.tag == .linux or target.result.os.tag.isBSD())) {
         lib.root_module.addCSourceFiles(.{
             .files = &.{"src/mod_posix-socket.c"},
             .flags = cflags.items,
@@ -536,7 +537,7 @@ pub fn build(b: *std.Build) !void {
     const opt_no_mimalloc = b.option(bool, "no-mimalloc", "If set, build without mimalloc") orelse false;
     const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without WAMR (WASM)") orelse false;
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build without sqlite3") orelse false;
-    const opt_no_network = b.option(bool, "no-network", "If set, build without HTTP/WebSocket support") orelse false;
+    const opt_no_network = b.option(bool, "no-network", "If set, build without network support (IPC pipes remain)") orelse false;
     const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto and global crypto") orelse false;
     const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support (FFI is always off for -Dmatrix and when -Dtarget is not the host)") orelse false;
     const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable tjs.spawn and tjs.exec (for sandbox/secure builds)") orelse false;

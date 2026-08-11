@@ -2,7 +2,6 @@
 /* global tjs */
 // @ts-check
 
-import core from 'tjs:internal/core';
 import pathModule from 'tjs:internal/path';
 
 import { buildSkipFilter } from './skip.js';
@@ -103,54 +102,6 @@ function printResult(result) {
     }
 }
 
-function shouldSkipTest(name) {
-    if (!('webcrypto' in core)) {
-        if (name.startsWith('test-webcrypto-') ||
-            name === 'test-app-compile.js' ||
-            name === 'test-random.js' ||
-            name === 'test-uuid.js' ||
-            name === 'test-worker-url.js') {
-            return true;
-        }
-    }
-
-    if (!('Serializer' in core) || !('Deserializer' in core)) {
-        if (name === 'test-v8.js') {
-            return true;
-        }
-    }
-
-    if (!('ffi_load_native' in core) && name.startsWith('test-ffi-')) {
-        return true;
-    }
-
-    if (!('sqlite3_async' in core) && name === 'test-dispose-async-database.js') {
-        return true;
-    }
-
-    if (!('HttpClient' in core)) {
-        return [
-            'test-dispose-http-server',
-            'test-dispose-tls',
-            'test-dispose-udp',
-            'test-fetch',
-            'test-httpserver',
-            'test-import-http',
-            'test-lookup',
-            'test-serve',
-            'test-tls',
-            'test-udp',
-            'test-version',
-            'test-wasm-streaming',
-            'test-websocketstream',
-            'test-ws',
-            'test-xhr',
-        ].some(prefix => name.startsWith(prefix));
-    }
-
-    return false;
-}
-
 export async function runTests(d) {
     const dir = await tjs.realPath(d || tjs.cwd);
     const shouldSkipByBuild = await buildSkipFilter(dir);
@@ -164,7 +115,7 @@ export async function runTests(d) {
             continue;
         }
 
-        if (shouldSkipByBuild(name) || shouldSkipTest(name)) {
+        if (shouldSkipByBuild(name)) {
             console.log(`${name.padEnd(40, ' ')} ${colors.grey}SKIP${colors.none}`);
             continue;
         }

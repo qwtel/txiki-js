@@ -31,7 +31,9 @@
 #include "bundles/c/stdlib/hashing.c"
 #include "bundles/c/stdlib/ipaddr.c"
 #include "bundles/c/stdlib/path.c"
+#ifndef TJS__OMIT_NETWORK
 #include "bundles/c/stdlib/posix-socket.c"
+#endif
 #include "bundles/c/stdlib/readline.c"
 #ifdef TJS_HAVE_SQLITE
 #include "bundles/c/stdlib/sqlite.c"
@@ -63,7 +65,9 @@ static tjs_builtin_t builtins[] = {
     { "tjs:internal/path", tjs__internal_path, sizeof(tjs__internal_path) },
     { "tjs:ipaddr", tjs__ipaddr, sizeof(tjs__ipaddr) },
     { "tjs:path", tjs__path, sizeof(tjs__path) },
+#ifndef TJS__OMIT_NETWORK
     { "tjs:posix-socket", tjs__posix_socket, sizeof(tjs__posix_socket) },
+#endif
     { "tjs:readline", tjs__readline, sizeof(tjs__readline) },
 #ifdef TJS_HAVE_SQLITE
     { "tjs:sqlite", tjs__sqlite, sizeof(tjs__sqlite) },

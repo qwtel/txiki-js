@@ -1,4 +1,42 @@
 {
+  "crypto": [
+    "test-app-compile.js",
+    "test-random.js",
+    "test-uuid.js",
+    "test-webcrypto-*.js"
+  ],
+  "ffi": [
+    "test-dispose-ffi-lib.js",
+    "test-ffi-*.js"
+  ],
+  "network": [
+    "test-dispose-http-server.js",
+    "test-dispose-posix-socket.js",
+    "test-dispose-tcp-*.js",
+    "test-dispose-tls.js",
+    "test-dispose-udp.js",
+    "test-fetch*.js",
+    "test-httpserver-*.js",
+    "test-import-http*.js",
+    "test-lookup.js",
+    "test-posix-socket.js",
+    "test-serve-*.js",
+    "test-server-double-close.js",
+    "test-tcp*.js",
+    "test-tls-*.js",
+    "test-udp*.js",
+    "test-wasm-streaming.js",
+    "test-web-streams-*.js",
+    "test-websocketstream-*.js",
+    "test-ws-*.js",
+    "test-xhr-*.js"
+  ],
+  "sqliteAsync": [
+    "test-dispose-async-database.js"
+  ],
+  "v8": [
+    "test-v8.js"
+  ],
   "wasm": [
     "test-wasm-*.js",
     "test-app-compile.js"

@@ -67,7 +67,7 @@ xoption(BUILD_WITH_LTO "If ON, enable link-time optimization" OFF)
 xoption(BUILD_WITH_GC_SECTIONS "If ON, compile with per-function/data sections and link with dead-code stripping" OFF)
 
 # Fork-specific optional capabilities not yet modeled upstream.
-xoption(BUILD_NO_NETWORK "If ON, build without HTTP/WebSocket support (libwebsockets)" OFF)
+xoption(BUILD_NO_NETWORK "If ON, build without network support, while IPC pipes remain available" OFF)
 xoption(BUILD_NO_CRYPTO "If ON, build without WebCrypto and global crypto" OFF)
 xoption(BUILD_NO_SUBPROCESS "If ON, build without tjs.spawn, tjs.exec, and process helpers" OFF)
 
@@ -167,7 +167,7 @@ add_library(tjs STATIC
     src/bundles/c/core/worker-bootstrap.c
 )
 
-if(UNIX)
+if(UNIX AND NOT BUILD_NO_NETWORK)
     target_sources(tjs PRIVATE src/mod_posix-socket.c)
 endif()
 

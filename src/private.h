@@ -172,7 +172,7 @@ void tjs__mod_ws_init(JSContext *ctx, JSValue ns);
 void tjs__mod_httpserver_init(JSContext *ctx, JSValue ns);
 #endif
 void tjs__mod_url_init(JSContext *ctx, JSValue ns);
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(TJS__OMIT_NETWORK)
 void tjs__mod_posix_socket_init(JSContext *ctx, JSValue ns);
 #endif
 

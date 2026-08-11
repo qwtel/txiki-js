@@ -30,7 +30,9 @@
 
 
 /* Forward declarations */
+#ifndef TJS__OMIT_NETWORK
 static JSValue tjs_new_tcp(JSContext *ctx, int af);
+#endif
 
 
 /* Stream */
@@ -67,7 +69,9 @@ typedef struct {
     TJSBufferRef buf_ref;
 } TJSWriteReq;
 
+#ifndef TJS__OMIT_NETWORK
 static TJSStream *tjs_tcp_get(JSContext *ctx, JSValue obj);
+#endif
 static TJSStream *tjs_pipe_get(JSContext *ctx, JSValue obj);
 
 static void uv__stream_close_cb(uv_handle_t *handle) {
@@ -427,10 +431,12 @@ static void uv__stream_connection_cb(uv_stream_t *handle, int status) {
     if (status == 0) {
         TJSStream *t2;
         switch (handle->type) {
+#ifndef TJS__OMIT_NETWORK
             case UV_TCP:
                 args[1] = tjs_new_tcp(ctx, AF_UNSPEC);
                 t2 = tjs_tcp_get(ctx, args[1]);
                 break;
+#endif
             case UV_NAMED_PIPE:
                 args[1] = tjs_new_pipe(ctx);
                 t2 = tjs_pipe_get(ctx, args[1]);
@@ -540,6 +546,7 @@ static void tjs_stream_mark(JSRuntime *rt, TJSStream *s, JS_MarkFunc *mark_func)
 
 /* TCP object  */
 
+#ifndef TJS__OMIT_NETWORK
 static JSClassID tjs_tcp_class_id;
 
 static void tjs_tcp_finalizer(JSRuntime *rt, JSValue val) {
@@ -718,6 +725,7 @@ static JSValue tjs_tcp_nodelay(JSContext *ctx, JSValue this_val, int argc, JSVal
 
     return JS_UNDEFINED;
 }
+#endif
 
 
 /* TTY */
@@ -1000,6 +1008,7 @@ static const JSCFunctionListEntry tjs_stream_proto_funcs[] = {
 };
 /* clang-format on */
 
+#ifndef TJS__OMIT_NETWORK
 static const JSCFunctionListEntry tjs_tcp_proto_funcs[] = {
     JS_CFUNC_MAGIC_DEF("getsockname", 0, tjs_tcp_getsockpeername, 0),
     JS_CFUNC_MAGIC_DEF("getpeername", 0, tjs_tcp_getsockpeername, 1),
@@ -1008,6 +1017,7 @@ static const JSCFunctionListEntry tjs_tcp_proto_funcs[] = {
     TJS_CFUNC_DEF("setKeepAlive", 2, tjs_tcp_keepalive),
     TJS_CFUNC_DEF("setNoDelay", 1, tjs_tcp_nodelay),
 };
+#endif
 
 static const JSCFunctionListEntry tjs_tty_proto_funcs[] = {
     TJS_CFUNC_DEF("setMode", 1, tjs_tty_setMode),
@@ -1023,7 +1033,9 @@ static const JSCFunctionListEntry tjs_pipe_proto_funcs[] = {
 };
 
 static const JSCFunctionListEntry tjs_streams_funcs[] = {
+#ifndef TJS__OMIT_NETWORK
     TJS_UVCONST(TCP_IPV6ONLY),
+#endif
     TJS_UVCONST(TTY_MODE_NORMAL),
     TJS_UVCONST(TTY_MODE_RAW),
 };
@@ -1036,6 +1048,7 @@ void tjs__mod_streams_init(JSContext *ctx, JSValue ns) {
     stream_proto = JS_NewObject(ctx);
     JS_SetPropertyFunctionList(ctx, stream_proto, tjs_stream_proto_funcs, countof(tjs_stream_proto_funcs));
 
+#ifndef TJS__OMIT_NETWORK
     /* TCP class */
     JS_NewClassID(rt, &tjs_tcp_class_id);
     JS_NewClass(rt, tjs_tcp_class_id, &tjs_tcp_class);
@@ -1046,6 +1059,7 @@ void tjs__mod_streams_init(JSContext *ctx, JSValue ns) {
     /* TCP object */
     obj = JS_NewCFunction2(ctx, tjs_tcp_constructor, "TCP", 1, JS_CFUNC_constructor, 0);
     JS_DefinePropertyValueStr(ctx, ns, "TCP", obj, JS_PROP_C_W_E);
+#endif
 
     /* TTY class */
     JS_NewClassID(rt, &tjs_tty_class_id);

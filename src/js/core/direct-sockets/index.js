@@ -7,11 +7,14 @@ import { core } from './utils.js';
 export { TCPSocket, TCPServerSocket, TLSSocket, TLSServerSocket, UDPSocket, PipeSocket, PipeServerSocket };
 
 const globals = {
-    TCPSocket,
-    TCPServerSocket,
     PipeSocket,
     PipeServerSocket
 };
+
+if ('TCP' in core) {
+    globals.TCPSocket = TCPSocket;
+    globals.TCPServerSocket = TCPServerSocket;
+}
 
 if ('TLSTcp' in core) {
     globals.TLSSocket = TLSSocket;

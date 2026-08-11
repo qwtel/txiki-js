@@ -282,7 +282,7 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
     tjs__mod_ws_init(ctx, ns);
     tjs__mod_httpserver_init(ctx, ns);
 #endif
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(TJS__OMIT_NETWORK)
     tjs__mod_posix_socket_init(ctx, ns);
 #endif
 
