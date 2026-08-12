@@ -93,6 +93,12 @@ VERBOSE_TESTS=1 ./build/tjs test tests/    # Verbose output
 
 Test files must be named `test-*.js` and live in `tests/`. They use `tjs:assert` for assertions.
 
+**One test, one file.** Each test file should cover a single feature or behavior. Prefer
+splitting distinct behaviors into separate `test-*.js` files (e.g. `test-fetch-h2-post-body.js`,
+`test-fetch-h2-empty-body.js`) over accumulating many unrelated cases in one file — a focused
+file is easier to run in isolation (`tjs run tests/test-foo.js`) and makes a failure point
+directly at the behavior that broke.
+
 ### Feature-gated tests
 
 When a test file requires a feature that can be compiled out (e.g. `BUILD_WITH_WASM=OFF`),
@@ -138,3 +144,17 @@ All vendored as git submodules: quickjs, libuv, mimalloc, sqlite3, libwebsockets
 - Prefer `Promise.withResolvers()` for deferred promises
 - Platform-specific C code uses `#ifdef _WIN32` / `#ifndef _WIN32` guards
 - Stdlib modules are imported as `tjs:modulename` (e.g., `import assert from 'tjs:assert'`)
+- Comment only what the code can't say itself. Add a comment when the *why* is
+  non-obvious — an unusual approach, a subtle invariant, a workaround, a non-local
+  consequence. Do **not** add comments that restate what the code plainly does; if
+  reading the code tells you the same thing, the comment is noise. Delete such comments.
+- Don't defend against states that can't happen. If an invariant must always hold,
+  assert it with `CHECK(...)` (which aborts), not with a fallback branch that
+  silently "handles" the impossible case. Fallback-for-the-impossible hides bugs;
+  a `CHECK` documents the invariant and fails loudly if it is ever violated.
+- In JS classes, keep internal state in real private fields (`#foo`), never in
+  `_foo`-prefixed public properties. When another class in the same module needs
+  access, expose a module-private accessor from a `static {}` block instead of
+  widening the public API. Use a module-scoped `Symbol` key only for state that
+  must hang off an object of another class (e.g. pinning an owner on a native
+  object to keep it alive).

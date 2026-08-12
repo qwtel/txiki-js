@@ -191,6 +191,13 @@ void tjs_call_handler(JSContext *ctx, JSValue func, int argc, JSValue *argv) {
     if (JS_IsException(ret)) {
         TJSRuntime *qrt = TJS_GetRuntime(ctx);
         CHECK_NOT_NULL(qrt);
+        if (qrt->is_worker) {
+            /* Report the uncaught error to the parent, then restore the pending
+             * exception so it is still dumped to stderr. */
+            JSValue exc = JS_GetException(ctx);
+            tjs__worker_handle_uncaught(ctx, exc);
+            JS_Throw(ctx, exc);
+        }
         TJS_Stop(qrt);
     }
     JS_FreeValue(ctx, ret);
@@ -221,12 +228,12 @@ void TJS_SettlePromise(JSContext *ctx, TJSPromise *p, bool is_reject, JSValue ar
     TJS_ClearPromise(ctx, p);
 }
 
-static void tjs__buf_free(JSRuntime *rt, void *opaque, void *ptr) {
-    js_free_rt(rt, ptr);
+static void *tjs__buf_realloc(JSRuntime *rt, void *opaque, void *ptr, size_t size) {
+    return js_realloc_rt(rt, ptr, size);
 }
 
 JSValue TJS_NewUint8Array(JSContext *ctx, uint8_t *data, size_t size) {
-    return JS_NewUint8Array(ctx, data, size, tjs__buf_free, NULL, false);
+    return JS_NewUint8Array(ctx, data, size, tjs__buf_realloc, NULL, false);
 }
 
 void tjs_buf_ref_init(TJSBufferRef *ref) {

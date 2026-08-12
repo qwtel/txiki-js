@@ -139,3 +139,42 @@ const server = tjs.serve((request) => new Response('Hello!'));
 ```
 
 The returned [`Server`](/docs/api/global.tjs.Interface.Server) exposes `server.port` and `await server.close()`. It is also async-disposable, so `await using server = tjs.serve(...)` closes it automatically at the end of the scope. See [`ServeOptions`](/docs/api/global.tjs.Interface.ServeOptions) for the full set of options, including the [`TlsOptions`](/docs/api/global.tjs.Interface.TlsOptions) `ca`, `passphrase`, and `requestCert` fields for mutual TLS.
+
+### HTTP/2
+
+HTTPS connections negotiate HTTP/2 automatically via ALPN: a client that advertises `h2` gets HTTP/2, otherwise the connection falls back to HTTP/1.1. The request handler is identical either way.
+
+To restrict which protocols the server offers, set `tls.alpn` to a list in preference order. For example, `alpn: ['h2']` requires HTTP/2 — a client that cannot speak it has no protocol in common and fails the TLS handshake instead of downgrading:
+
+```js
+tjs.serve({
+    tls: { cert, key, alpn: ['h2'] },
+    fetch(request) {
+        return new Response('HTTP/2 only\n');
+    },
+});
+```
+
+### HTTP/3
+
+Set `http3: true` to also serve HTTP/3 over QUIC (UDP) on the same port. The
+server keeps serving HTTP/1.1 and HTTP/2 over TCP and advertises HTTP/3 to those
+clients with an `Alt-Svc` response header, so a client that supports it upgrades
+to HTTP/3 on a subsequent request. The request handler is identical across all
+three versions. HTTP/3 requires TLS (QUIC is always encrypted), so the `tls`
+option is mandatory.
+
+```js
+tjs.serve({
+    tls: { cert, key },
+    http3: true,
+    fetch(request) {
+        return new Response('served over h1, h2 or h3\n');
+    },
+});
+```
+
+`fetch()` performs the client side of this automatically: it learns HTTP/3
+availability from a server's `Alt-Svc` header and upgrades matching same-origin
+requests. HTTP/3 requires TLS (QUIC is always encrypted), so `cert` and `key`
+are mandatory.

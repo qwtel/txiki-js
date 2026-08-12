@@ -35,6 +35,25 @@
 
 #define TJS_LWS_HTTP_PROTOCOL_NAME "tjs-http"
 
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
+/* Max payload handed to a single lws_write() for the request body. Over HTTP/2
+ * the body must be written in chunks the connection can flush per writable
+ * callback; handing lws one giant buffer with LWS_WRITE_HTTP_FINAL truncates
+ * h2 request bodies larger than this.
+ *
+ * Each chunk becomes one h2 DATA frame: lws prepends a 9-byte frame header, so
+ * the bytes lws hands to the transport are chunk + 9. That must fit within the
+ * per-thread service buffer (pt_serv_buf_size, 16384 here). If a chunk fills
+ * the whole 16384 the resulting frame overflows the buffer and is sent only
+ * partially; for the *final* (END_STREAM) frame lws never flushes the buffered
+ * tail once the stream is marked done, so the server's body accounting never
+ * reaches content-length and the request stalls. Stay well under the buffer so
+ * every frame -- including the last -- is emitted whole. */
+#define TJS_HTTPCLIENT_WRITE_CHUNK_SIZE 8192
+
 enum {
     HC_CALLBACK_STATUS = 0,
     HC_CALLBACK_URL,
@@ -47,18 +66,26 @@ enum {
 };
 
 typedef struct {
+    TJSHandlePin pin;
     JSContext *ctx;
     JSValue callbacks[HC_CALLBACK_MAX];
-    JSValue this_val;
     struct lws *wsi;
     char *method;
     char *url_str;
     TBuf req_headers;
     TBuf send_buf;
+    size_t send_offset; /* bytes of send_buf written (non-streaming h2 chunking) */
     bool sent;
     bool streaming;
     bool body_done;
     bool completed;
+    bool torn_down;
+    bool keepalive;           /* connection may be pooled for reuse (decided at headers) */
+    bool try_http3;           /* attempt HTTP/3 over QUIC (ALPN "h3") */
+    bool h3_probing;          /* QUIC handshake still outstanding: the h3 deadline applies */
+    bool h3_deadline_armed;   /* the timer currently armed is the h3 deadline, not h->timeout */
+    unsigned long h3_timeout; /* ms to wait for the QUIC handshake before giving up (0 = no limit) */
+    lws_usec_t start_us;      /* request start, so re-arming can charge elapsed time */
     unsigned long timeout;
     int ssl_flags;
     JSValue url;
@@ -71,6 +98,9 @@ static JSClassID tjs_httpclient_class_id;
 static void tjs_httpclient_finalizer(JSRuntime *rt, JSValue val) {
     TJSHttpClient *h = JS_GetOpaque(val, tjs_httpclient_class_id);
     if (h) {
+        /* A pinned client holds a ref to itself, so it can't be finalized until
+         * the pin is released (in the lws close callback). */
+        CHECK(JS_IsUndefined(h->pin.obj));
         for (int i = 0; i < HC_CALLBACK_MAX; i++) {
             JS_FreeValueRT(rt, h->callbacks[i]);
         }
@@ -110,12 +140,21 @@ static TJSHttpClient *tjs_httpclient_get(JSContext *ctx, JSValue obj) {
     return JS_GetOpaque2(ctx, obj, tjs_httpclient_class_id);
 }
 
+/* Clear the JS callbacks at teardown (see TJSHandlePin.detach) so the lws close
+ * callback dispatches nothing once the context is destroyed. */
+static void tjs_httpclient_detach(TJSHandlePin *pin) {
+    TJSHttpClient *h = list_entry(pin, TJSHttpClient, pin);
+    for (int i = 0; i < HC_CALLBACK_MAX; i++) {
+        JS_FreeValue(h->ctx, h->callbacks[i]);
+        h->callbacks[i] = JS_UNDEFINED;
+    }
+}
+
 static void maybe_invoke_callback(TJSHttpClient *h, int callback, int argc, JSValue *argv) {
     JSContext *ctx = h->ctx;
-    TJSRuntime *qrt = TJS_GetRuntime(ctx);
 
     JSValue func = h->callbacks[callback];
-    if (qrt->freeing || !JS_IsFunction(ctx, func)) {
+    if (!JS_IsFunction(ctx, func)) {
         for (int i = 0; i < argc; i++) {
             JS_FreeValue(ctx, argv[i]);
         }
@@ -127,6 +166,126 @@ static void maybe_invoke_callback(TJSHttpClient *h, int callback, int argc, JSVa
     for (int i = 0; i < argc; i++) {
         JS_FreeValue(ctx, argv[i]);
     }
+}
+
+/* Arm the wsi's single lws timer for whichever deadline comes first.
+ *
+ * Two deadlines can be outstanding: the h3 connect deadline, which only applies
+ * while the QUIC handshake is unfinished, and the request timeout.  Both are
+ * measured from h->start_us, so re-arming after the handshake completes charges
+ * the time already spent instead of restarting the request timeout.
+ *
+ * h3_deadline_armed records which one is loaded, so LWS_CALLBACK_TIMER can tell
+ * "QUIC isn't getting through" (retryable over h1/h2) from a genuine request
+ * timeout (not retryable). */
+static void httpclient_arm_timer(TJSHttpClient *h, struct lws *wsi) {
+    lws_usec_t now = lws_now_usecs();
+    lws_usec_t deadline = 0; /* absolute; 0 = none */
+
+    h->h3_deadline_armed = false;
+
+    if (h->h3_probing && h->h3_timeout > 0) {
+        deadline = h->start_us + (lws_usec_t) h->h3_timeout * LWS_USEC_PER_SEC / 1000;
+        h->h3_deadline_armed = true;
+    }
+
+    if (h->timeout > 0) {
+        lws_usec_t req = h->start_us + (lws_usec_t) h->timeout * LWS_USEC_PER_SEC / 1000;
+
+        if (!deadline || req < deadline) {
+            deadline = req;
+            h->h3_deadline_armed = false;
+        }
+    }
+
+    if (!deadline) {
+        lws_set_timer_usecs(wsi, LWS_SET_TIMER_USEC_CANCEL);
+        return;
+    }
+
+    /* Already past due (or due this instant): lws treats 0 as "cancel", so ask
+     * for the shortest real delay instead and let the timer callback report it. */
+    lws_set_timer_usecs(wsi, deadline > now ? deadline - now : 1);
+}
+
+/* Release our hold on a finished request.  With connection reuse
+ * (LCCSCF_PIPELINE) a wsi is no longer 1:1 with a socket: on transaction
+ * completion lws keeps the connection warm and, for h1, migrates it to the
+ * next queued request — the retired leader is then destroyed WITHOUT a
+ * CLOSED_CLIENT_HTTP callback (it sets already_did_cce). So teardown must run
+ * from whichever terminal callback fires first: COMPLETED_CLIENT_HTTP on
+ * success, CLOSED/CONNECTION_ERROR on failure; an idle connection's eventual
+ * CLOSED arrives after we have already detached here and is a no-op.
+ *
+ * This drops loop-liveness (so idle pooled connections don't keep the process
+ * alive), cancels the request timeout, and detaches h from the wsi so no later
+ * callback on the reused/idle connection sees this client.  It does NOT free
+ * h: that stays the GC finalizer's job, since the JS wrapper (and abort())
+ * may still reach it until it is collected. */
+static void httpclient_teardown(TJSHttpClient *h, struct lws *cbwsi) {
+    if (h->torn_down) {
+        return;
+    }
+    h->torn_down = true;
+
+    tjs__lws_conn_unref(h->ctx);
+
+    if (h->wsi) {
+        lws_set_timer_usecs(h->wsi, LWS_SET_TIMER_USEC_CANCEL);
+    }
+
+    /* Detach h from every wsi that carries it as user_space, so no later callback
+     * on a reused/idle connection dereferences a client we no longer own. h->wsi
+     * is what lws wrote to cci.pwsi — for a pooled h2 request that is the shared
+     * network wsi, whereas the request's HTTP callbacks (including the terminal
+     * CLOSED) fire on a mux child stream wsi whose user_space is also h. cbwsi is
+     * the wsi of the terminal callback we tear down from; clear it, h->wsi, and
+     * cbwsi's network wsi, each guarded so we only ever null our own pointer. */
+    struct lws *carriers[3] = { h->wsi, cbwsi, cbwsi ? lws_get_network_wsi(cbwsi) : NULL };
+    for (size_t i = 0; i < sizeof(carriers) / sizeof(carriers[0]); i++) {
+        if (carriers[i] && lws_wsi_user(carriers[i]) == h) {
+            lws_set_wsi_user(carriers[i], NULL);
+        }
+    }
+    h->wsi = NULL;
+
+    /* Release the self-pin; the finalizer frees callbacks, url, buffers, and the
+     * struct itself once JS also lets go. Unpinning also removes h from the
+     * teardown registry, so an abnormal-exit drain won't touch it. */
+    CHECK(!JS_IsUndefined(h->pin.obj));
+    tjs__handle_unpin(h->ctx, &h->pin);
+}
+
+/* Decide whether a connection may be kept warm for reuse, from the response
+ * headers.  Called at ESTABLISHED_CLIENT_HTTP (not COMPLETED): for a
+ * close-delimited response lws fires COMPLETED off the socket EOF, by which
+ * point the response header table may already be gone, so the "Connection"
+ * token must be read while the headers are fresh.  The response must permit
+ * keep-alive (no "Connection: close"): a close-delimited h1 response is sent
+ * with Connection: close and the peer tears the socket down after it, so
+ * keeping it warm would race a dead socket on the next request.
+ * When not reusable the COMPLETED handler returns -1 so lws closes the socket
+ * and the next request to the same host opens a fresh connection. */
+static bool httpclient_conn_reusable(struct lws *wsi) {
+    char conn[64];
+    if (lws_hdr_copy(wsi, conn, sizeof(conn), WSI_TOKEN_CONNECTION) > 0) {
+        /* Connection is a comma-separated token list; a "close" token anywhere
+         * means the peer will not keep the connection alive. */
+        const char *p = conn;
+        while (*p) {
+            while (*p == ' ' || *p == ',') {
+                p++;
+            }
+            if (!strncasecmp(p, "close", 5) && (p[5] == '\0' || p[5] == ' ' || p[5] == ',')) {
+                return false;
+            }
+            while (*p && *p != ',') {
+                p++;
+            }
+        }
+    }
+
+    return true;
 }
 
 
@@ -276,6 +435,14 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
         case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
             unsigned char **p = (unsigned char **) in, *end = (*p) + len;
 
+            /* lws only asks for request headers once the connection carrying them
+             * is up, so over QUIC this means the handshake completed: the h3
+             * deadline has done its job and the request timeout takes over. */
+            if (h->h3_probing) {
+                h->h3_probing = false;
+                httpclient_arm_timer(h, wsi);
+            }
+
             /* Add User-Agent header unless the user already set one. */
             if (!has_request_header(&h->req_headers, "User-Agent")) {
                 if (lws_add_http_header_by_name(wsi,
@@ -376,6 +543,23 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
         case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP: {
             int status = (int) lws_http_client_http_response(wsi);
 
+            /* When a request reuses an existing h2 connection, lws binds a new
+             * stream and fires this callback once with no response yet (HTTP
+             * status 0) purely to signal the stream is ready; the real response
+             * headers arrive in a later ESTABLISHED. Ignore the signalling one
+             * so we don't deliver a bogus status-0 response. */
+            if (status <= 0) {
+                break;
+            }
+
+            /* Decide reuse now, while the response headers are still parsed: a
+             * response that carried "Connection: close" leaves the socket about
+             * to be torn down, so it must not be kept warm — the COMPLETED
+             * handler returns -1 to close it. Streaming (chunked) request bodies
+             * were already kept out of the pool at connect (no LCCSCF_PIPELINE),
+             * so there is nothing to evict here. */
+            h->keepalive = httpclient_conn_reusable(wsi);
+
             /* Detect Content-Encoding before firing headers. */
             const char *encoding = detect_content_encoding(wsi);
             if (encoding) {
@@ -395,6 +579,13 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
         }
 
         case LWS_CALLBACK_RECEIVE_CLIENT_HTTP: {
+            /* Aborted (e.g. EventSource.close() / stream cancel) but the wsi is
+             * pending an async close: stop reading and let lws close via the -1
+             * return, so we don't deliver more data into a cancelled stream. */
+            if (h->completed) {
+                return -1;
+            }
+
             char buffer[8192 + LWS_PRE];
             char *px = buffer + LWS_PRE;
             int lenx = sizeof(buffer) - LWS_PRE;
@@ -429,17 +620,74 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
         }
 
         case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE: {
+            if (!h->streaming) {
+                /* Non-streaming body: send the buffered body in chunks the
+                 * connection can flush per callback. A single unconditional
+                 * FINAL write of the whole body truncated h2 request bodies
+                 * larger than one frame; lws applies h2 send-window flow
+                 * control and buffers what the window can't take yet. */
+                size_t remaining = h->send_buf.size - h->send_offset;
+                if (remaining == 0) {
+                    lws_client_http_body_pending(wsi, 0);
+                    break;
+                }
+
+                size_t to_send = MIN(remaining, TJS_HTTPCLIENT_WRITE_CHUNK_SIZE);
+
+                /* Respect the peer's flow-control window. Over HTTP/2 the
+                 * connection/stream send window bounds how much the peer will
+                 * accept right now; lws_write() does NOT clamp to it, so writing
+                 * past it overruns the window. For bodies that span more than
+                 * one window that desyncs flow control and the request fails.
+                 * lws_get_peer_write_allowance() returns -1 when the protocol
+                 * has no window (h1: send freely) or the bytes the peer will
+                 * currently accept (h2). */
+                lws_fileofs_t allow = lws_get_peer_write_allowance(wsi);
+                if (allow == 0) {
+                    /* No send credit right now: keep the body pending and wait
+                     * to be re-made-writable when a WINDOW_UPDATE arrives. */
+                    break;
+                }
+                if (allow > 0 && (lws_fileofs_t) to_send > allow) {
+                    to_send = (size_t) allow;
+                }
+
+                /* FINAL only on the write carrying the body's last byte. */
+                enum lws_write_protocol wp = LWS_WRITE_HTTP;
+                if (h->send_offset + to_send >= h->send_buf.size) {
+                    wp = LWS_WRITE_HTTP_FINAL;
+                }
+
+                uint8_t *buf = js_malloc(h->ctx, LWS_PRE + to_send);
+                if (!buf) {
+                    return -1;
+                }
+                memcpy(buf + LWS_PRE, h->send_buf.buf + h->send_offset, to_send);
+                int n = lws_write(wsi, buf + LWS_PRE, to_send, wp);
+                js_free(h->ctx, buf);
+                if (n < 0) {
+                    return -1;
+                }
+                h->send_offset += (size_t) n;
+
+                if (h->send_offset < h->send_buf.size) {
+                    lws_callback_on_writable(wsi);
+                } else {
+                    lws_client_http_body_pending(wsi, 0);
+                }
+
+                break;
+            }
+
+            /* Streaming body (chunked transfer-encoding). */
             if (h->send_buf.size == 0) {
                 if (h->body_done) {
-                    /* All body data sent — finalize. */
+                    /* All body data sent — finalize with the terminating chunk. */
                     lws_client_http_body_pending(wsi, 0);
-                    if (h->streaming) {
-                        /* Send final chunk: "0\r\n\r\n" */
-                        uint8_t buf[LWS_PRE + 5];
-                        memcpy(buf + LWS_PRE, "0\r\n\r\n", 5);
-                        lws_write(wsi, buf + LWS_PRE, 5, LWS_WRITE_HTTP_FINAL);
-                    }
-                } else if (h->streaming) {
+                    uint8_t buf[LWS_PRE + 5];
+                    memcpy(buf + LWS_PRE, "0\r\n\r\n", 5);
+                    lws_write(wsi, buf + LWS_PRE, 5, LWS_WRITE_HTTP_FINAL);
+                } else {
                     /* No data buffered — ask JS for more. */
                     maybe_invoke_callback(h, HC_CALLBACK_DRAIN, 0, NULL);
                 }
@@ -448,50 +696,34 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
 
             size_t to_send = h->send_buf.size;
 
-            if (h->streaming) {
-                /* Chunked encoding: "<hex-len>\r\n<data>\r\n" */
-                char chunk_hdr[20];
-                int hdr_len = snprintf(chunk_hdr, sizeof(chunk_hdr), "%zx\r\n", to_send);
-                size_t frame_size = (size_t) hdr_len + to_send + 2;
+            /* Chunked encoding: "<hex-len>\r\n<data>\r\n" */
+            char chunk_hdr[20];
+            int hdr_len = snprintf(chunk_hdr, sizeof(chunk_hdr), "%zx\r\n", to_send);
+            size_t frame_size = (size_t) hdr_len + to_send + 2;
 
-                uint8_t *buf = js_malloc(h->ctx, LWS_PRE + frame_size);
-                if (!buf) {
-                    return -1;
-                }
-                memcpy(buf + LWS_PRE, chunk_hdr, hdr_len);
-                memcpy(buf + LWS_PRE + hdr_len, h->send_buf.buf, to_send);
-                memcpy(buf + LWS_PRE + hdr_len + to_send, "\r\n", 2);
+            uint8_t *buf = js_malloc(h->ctx, LWS_PRE + frame_size);
+            if (!buf) {
+                return -1;
+            }
+            memcpy(buf + LWS_PRE, chunk_hdr, hdr_len);
+            memcpy(buf + LWS_PRE + hdr_len, h->send_buf.buf, to_send);
+            memcpy(buf + LWS_PRE + hdr_len + to_send, "\r\n", 2);
 
-                int n = lws_write(wsi, buf + LWS_PRE, frame_size, LWS_WRITE_HTTP);
-                js_free(h->ctx, buf);
-                if (n < 0) {
-                    return -1;
-                }
-            } else {
-                uint8_t *buf = js_malloc(h->ctx, LWS_PRE + to_send);
-                if (!buf) {
-                    return -1;
-                }
-                memcpy(buf + LWS_PRE, h->send_buf.buf, to_send);
-
-                int n = lws_write(wsi, buf + LWS_PRE, to_send, LWS_WRITE_HTTP_FINAL);
-                js_free(h->ctx, buf);
-                if (n < 0) {
-                    return -1;
-                }
+            int n = lws_write(wsi, buf + LWS_PRE, frame_size, LWS_WRITE_HTTP);
+            js_free(h->ctx, buf);
+            if (n < 0) {
+                return -1;
             }
 
             h->send_buf.size = 0;
 
-            if (h->streaming && !h->body_done) {
+            if (!h->body_done) {
                 /* Ask JS for more body data. sendData will
                  * call lws_callback_on_writable when ready. */
                 maybe_invoke_callback(h, HC_CALLBACK_DRAIN, 0, NULL);
-            } else if (h->streaming && h->body_done) {
+            } else {
                 /* Need another WRITEABLE to send the final chunk. */
                 lws_callback_on_writable(wsi);
-            } else {
-                lws_client_http_body_pending(wsi, 0);
             }
 
             break;
@@ -503,29 +735,34 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
                 JSValue error = JS_NULL;
                 maybe_invoke_callback(h, HC_CALLBACK_COMPLETE, 1, &error);
             }
-            return -1;
+            /* Keep the connection warm for reuse (LCCSCF_PIPELINE) only when the
+             * response allowed it (decided at ESTABLISHED); otherwise return -1
+             * so lws closes it and the next request to the same host opens a
+             * fresh connection. */
+            bool reusable = h->keepalive;
+            httpclient_teardown(h, wsi);
+            return reusable ? 0 : -1;
         }
 
         case LWS_CALLBACK_TIMER: {
             if (!h->completed) {
                 h->completed = true;
-                JSValue error = JS_NewString(h->ctx, "TIMED_OUT");
+                JSValue error = JS_NewString(h->ctx, h->h3_deadline_armed ? "H3_TIMED_OUT" : "TIMED_OUT");
                 maybe_invoke_callback(h, HC_CALLBACK_COMPLETE, 1, &error);
             }
             return -1;
         }
 
-            /* CLOSED and CONNECTION_ERROR are mutually exclusive — exactly
-             * one of them fires as the final callback through our protocol.
-             * (WSI_DESTROY goes to protocols[0], not to us.)
-             * Do full teardown here. */
+            /* Terminal failure/close callbacks. On a reused connection a
+             * successful transaction ends at COMPLETED_CLIENT_HTTP (which tore
+             * down already, detaching h → user is NULL and we returned at the
+             * top). Reaching here means either the transaction never completed
+             * (connection error / server closed mid-response) or an aborted
+             * request's deferred close. Report the failure if not already
+             * completed, then tear down. */
 
         case LWS_CALLBACK_CLOSED_CLIENT_HTTP:
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
-            tjs__lws_conn_unref(h->ctx);
-            lws_set_wsi_user(h->wsi, NULL);
-            h->wsi = NULL;
-
             if (!h->completed) {
                 h->completed = true;
                 if (reason == LWS_CALLBACK_CLIENT_CONNECTION_ERROR) {
@@ -539,12 +776,7 @@ static int tjs_lws_http_callback(struct lws *wsi, enum lws_callback_reasons reas
                 }
             }
 
-            /* Drop the prevent-GC reference.  The GC finalizer will free
-             * callbacks, url, buffers, and the struct itself. */
-            CHECK(!JS_IsUndefined(h->this_val));
-            JSValue val = h->this_val;
-            h->this_val = JS_UNDEFINED;
-            JS_FreeValue(h->ctx, val);
+            httpclient_teardown(h, wsi);
             break;
         }
 
@@ -576,15 +808,20 @@ static JSValue tjs_httpclient_constructor(JSContext *ctx, JSValue new_target, in
 
     h->ctx = ctx;
     h->url = JS_NULL;
-    h->this_val = JS_UNDEFINED;
+    h->pin.obj = JS_UNDEFINED;
+    h->pin.detach = tjs_httpclient_detach;
     tbuf_init(ctx, &h->req_headers);
     tbuf_init(ctx, &h->send_buf);
+    h->send_offset = 0;
     h->method = NULL;
     h->url_str = NULL;
     h->sent = false;
     h->streaming = false;
     h->body_done = false;
     h->completed = false;
+    h->torn_down = false;
+    h->keepalive = true;
+    h->try_http3 = false;
     h->ssl_flags = 0;
 
     for (int i = 0; i < HC_CALLBACK_MAX; i++) {
@@ -706,6 +943,11 @@ static int tjs_httpclient_connect(TJSHttpClient *h) {
     char full_path[TJS_PATH_MAX];
     snprintf(full_path, sizeof(full_path), "/%s", uri->path);
 
+    /* lws emits cci.host verbatim as the Host header; include a non-default
+     * port so the server sees the correct authority (RFC 7230 §5.4). */
+    char host_hdr[512];
+    tjs__lws_format_host(host_hdr, sizeof(host_hdr), uri->scheme, uri->host, uri->port);
+
     struct lws_context *lws_ctx = tjs__lws_get_context(ctx);
     if (!lws_ctx) {
         lws_parse_uri_destroy(&uri);
@@ -719,14 +961,47 @@ static int tjs_httpclient_connect(TJSHttpClient *h) {
     cci.address = uri->host;
     cci.port = uri->port;
     cci.path = full_path;
-    cci.host = uri->host;
+    cci.host = host_hdr;
     cci.origin = uri->host;
-    cci.ssl_connection = (use_ssl ? LCCSCF_USE_SSL : 0) | h->ssl_flags | LCCSCF_HTTP_NO_FOLLOW_REDIRECT;
+    /* LCCSCF_PIPELINE opts this connection into lws's client connection pool:
+     * requests to the same endpoint (address+port+tls, per vhost) reuse a warm
+     * connection instead of a fresh TCP+TLS handshake each time — h1 pipelines
+     * sequentially, h2 multiplexes streams. Without it lws also sends
+     * "Connection: close" on every request.
+     *
+     * A streaming (unknown-length) request body is sent chunked, and a
+     * keep-alive peer that cannot de-frame a chunked request body would fail to
+     * parse the next request on a reused connection (lws itself has no such
+     * server-side de-framer). Rather than pool such a connection and evict it
+     * afterwards, we keep it out of the pool from the start: no LCCSCF_PIPELINE,
+     * so lws gives it its own connection and sends "Connection: close". These
+     * requests are rare; for h2 it only means a streaming upload does not
+     * multiplex onto a shared connection, a negligible cost. */
+    cci.ssl_connection = (use_ssl ? LCCSCF_USE_SSL : 0) | h->ssl_flags | LCCSCF_HTTP_NO_FOLLOW_REDIRECT |
+                         LCCSCF_H2_QUIRK_OVERFLOWS_TXCR | LCCSCF_H2_QUIRK_NGHTTP2_END_STREAM |
+                         (h->streaming ? 0 : LCCSCF_PIPELINE);
     cci.method = h->method;
     cci.local_protocol_name = TJS_LWS_HTTP_PROTOCOL_NAME;
     cci.userdata = h;
     cci.pwsi = &h->wsi;
     cci.vhost = tjs__lws_select_vhost(ctx, uri->scheme, uri->host, uri->port);
+
+    /* HTTP/3 (set by the fetch layer's Alt-Svc auto-upgrade). h3 is selected
+     * purely by ALPN "h3"; disable_h3_fallback keeps lws from racing TCP
+     * connects against the QUIC one, because the fetch layer owns h3 discovery
+     * (its own Alt-Svc cache) and falls back to h1/h2 itself on failure.
+     *
+     * lws's own fallback cannot do this job: it only falls back by promoting a
+     * happy-eyeballs racer, so single-address origins get no fallback at all,
+     * and a promoted racer would offer this "h3" ALPN over TCP -- which real
+     * servers answer by failing the handshake (Google) or, worse, by selecting
+     * h3 on a TCP socket (Fastly), the hang fixed in "tls: stop offering h3 in
+     * TLS-over-TCP ALPN lists". Instead h3_timeout below bounds how long the
+     * QUIC handshake may take before we fall back ourselves. */
+    if (use_ssl && h->try_http3) {
+        cci.alpn = "h3";
+        cci.disable_h3_fallback = 1;
+    }
 
     tjs__lws_conn_ref(ctx);
 
@@ -742,9 +1017,9 @@ static int tjs_httpclient_connect(TJSHttpClient *h) {
 
     lws_cancel_service(lws_ctx);
 
-    if (h->timeout > 0) {
-        lws_set_timer_usecs(wsi, (lws_usec_t) h->timeout * LWS_USEC_PER_SEC / 1000);
-    }
+    h->start_us = lws_now_usecs();
+    h->h3_probing = use_ssl && h->try_http3 && h->h3_timeout > 0;
+    httpclient_arm_timer(h, wsi);
 
     return 0;
 }
@@ -785,13 +1060,12 @@ static JSValue tjs_httpclient_open(JSContext *ctx, JSValue this_val, int argc, J
     }
 
     /* Prevent GC while request is in flight. */
-    h->this_val = JS_DupValue(ctx, this_val);
+    tjs__handle_pin(ctx, &h->pin, this_val);
     h->sent = true;
 
     if (tjs_httpclient_connect(h)) {
         h->sent = false;
-        JS_FreeValue(ctx, h->this_val);
-        h->this_val = JS_UNDEFINED;
+        tjs__handle_unpin(ctx, &h->pin);
         return JS_ThrowInternalError(ctx, "Connection failed");
     }
 
@@ -884,9 +1158,14 @@ static JSValue tjs_httpclient_abort(JSContext *ctx, JSValue this_val, int argc, 
         JSValue error = JS_NewString(ctx, "ABORTED");
         maybe_invoke_callback(h, HC_CALLBACK_COMPLETE, 1, &error);
 
-        /* Kill the WSI synchronously. The teardown callback chain
-         * will handle cleanup — do not access h afterwards. */
-        lws_set_timeout(wsi, PENDING_TIMEOUT_USER_OK, LWS_TO_KILL_SYNC);
+        /* Mark the WSI to be closed at the next loop iteration. Abort can be
+         * driven from a microtask drained *inside* this wsi's own service
+         * callback (e.g. a streaming fetch aborted from its ReadableStream
+         * cancel()): LWS_TO_KILL_SYNC would free the wsi inline while lws is
+         * still using it further up the stack (heap-use-after-free). ASYNC
+         * defers the close to a safe point in lws's service loop. The teardown
+         * callback chain will handle cleanup — do not access h afterwards. */
+        lws_set_timeout(wsi, PENDING_TIMEOUT_USER_OK, LWS_TO_KILL_ASYNC);
     }
 
     return JS_UNDEFINED;
@@ -903,6 +1182,29 @@ static JSValue tjs_httpclient_set_allow_insecure(JSContext *ctx, JSValue this_va
     } else {
         h->ssl_flags &= ~LCCSCF_ALLOW_INSECURE;
     }
+    return JS_UNDEFINED;
+}
+
+static JSValue tjs_httpclient_set_http3(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    TJSHttpClient *h = tjs_httpclient_get(ctx, this_val);
+    if (!h) {
+        return JS_EXCEPTION;
+    }
+
+    h->try_http3 = JS_ToBool(ctx, argv[0]);
+
+    /* Optional: ms to wait for the QUIC handshake before failing with
+     * H3_TIMED_OUT so the fetch layer can retry over h1/h2. 0 disables it. */
+    if (argc > 1 && !JS_IsUndefined(argv[1])) {
+        uint32_t ms;
+
+        if (JS_ToUint32(ctx, &ms, argv[1])) {
+            return JS_EXCEPTION;
+        }
+
+        h->h3_timeout = ms;
+    }
+
     return JS_UNDEFINED;
 }
 
@@ -923,6 +1225,7 @@ static const JSCFunctionListEntry tjs_httpclient_proto_funcs[] = {
     TJS_CFUNC_DEF("setRequestHeader", 2, tjs_httpclient_setrequestheader),
     TJS_CFUNC_DEF("setEnableCookies", 1, tjs_httpclient_set_enable_cookies),
     TJS_CFUNC_DEF("setAllowInsecure", 1, tjs_httpclient_set_allow_insecure),
+    TJS_CFUNC_DEF("setHttp3", 2, tjs_httpclient_set_http3),
     TJS_CFUNC_DEF("sendData", 1, tjs_httpclient_senddata),
     TJS_CFUNC_DEF("abort", 0, tjs_httpclient_abort),
 };

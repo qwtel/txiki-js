@@ -74,6 +74,25 @@ typedef struct {
     JSValue reason;
 } TJSPendingRejection;
 
+/* A native handle's GC-invisible self-pin, embedded in a struct to keep its JS
+ * wrapper alive while a libuv operation is in flight. `obj` is a duplicated
+ * reference to the wrapper that is deliberately NOT reported to the GC (so the
+ * cycle collector can't free the wrapper mid-operation); `link` registers the
+ * pin on TJSRuntime.handle_pins so teardown can drop it. `obj` is JS_UNDEFINED
+ * (and the pin unlinked) when idle.
+ *
+ * `detach` quiesces the handle at the start of teardown so it stops running JS
+ * during shutdown without a global flag. It must not touch the pin itself. Its
+ * job depends on who owns the handle's close: lws-backed handles clear their JS
+ * callbacks (lws closes them later, via lws_context_destroy), while libuv-backed
+ * handles begin closing (maybe_close), so their close does not depend on the GC
+ * collecting the wrapper. See tjs__detach_handles in vm.c. */
+typedef struct TJSHandlePin {
+    struct list_head link;
+    JSValue obj;
+    void (*detach)(struct TJSHandlePin *pin);
+} TJSHandlePin;
+
 struct TJSRuntime {
     TJSRunOptions options;
     JSRuntime *rt;
@@ -86,7 +105,6 @@ struct TJSRuntime {
     } jobs;
     uv_async_t stop;
     bool is_worker;
-    bool freeing;
     bool draining_microtasks;
 #ifdef TJS_HAVE_WASM
     struct {
@@ -124,9 +142,38 @@ struct TJSRuntime {
         JSValue import_map_resolver;
         JSValue internal_core;
         JSValue internal_message_pipe;
+        JSValue error_event_ctor;
     } builtins;
     struct list_head pending_rejections;
+    /* Self-pins of all active native handles (TJSHandlePin), so teardown can
+     * drop them and let the final GC collect and close the handles. */
+    struct list_head handle_pins;
 };
+
+/* Pin/unpin a native handle's JS wrapper for the duration of an async op, and
+ * register/deregister the pin so teardown can release it. Idempotent: pinning an
+ * already-pinned handle or unpinning an idle one is a no-op. */
+void tjs__handle_pin(JSContext *ctx, TJSHandlePin *pin, JSValue obj);
+void tjs__handle_unpin(JSContext *ctx, TJSHandlePin *pin);
+/* Teardown, before the lws context is destroyed: run each registered pin's
+ * `detach` hook (no-op for pins without one) so lws-backed wrappers stop
+ * dispatching to JS before their close callbacks fire. */
+void tjs__detach_handles(TJSRuntime *qrt);
+/* Teardown: drop every registered self-pin so the objects become collectable. */
+void tjs__release_pins(TJSRuntime *qrt);
+
+void tjs__mod_channel_init(JSContext *ctx, JSValue ns);
+
+/* Worker main-channel bridge (mod_channel.c): a MessageChannel whose two sides
+ * are owned by different threads' loops. The parent creates the two mailboxes
+ * (each with one reserved ref), wraps a side on each loop with a port, and drops
+ * both reserved refs once the ports exist. */
+typedef struct TJSMailbox TJSMailbox;
+bool tjs__channel_mailbox_pair(TJSMailbox **a, TJSMailbox **b);
+JSValue tjs__channel_port_new(JSContext *ctx, TJSMailbox *rx, TJSMailbox *tx);
+void tjs__channel_mailbox_unref(TJSMailbox *mb);
+void tjs__channel_port_close(JSValue port_handle);
+void tjs__channel_port_post_error(JSContext *ctx, JSValue port_handle, JSValueConst error_obj);
 
 #ifndef TJS__OMIT_NETWORK
 void tjs__mod_dns_init(JSContext *ctx, JSValue ns);
@@ -184,6 +231,14 @@ uv_stream_t *tjs_pipe_get_stream(JSContext *ctx, JSValue obj);
 
 void tjs__drain_microtasks(JSContext *ctx);
 void tjs__execute_jobs(JSContext *ctx);
+
+/* Forward an uncaught error from a worker to its parent so the parent's Worker
+ * 'error' handler fires. No-op on the main runtime or if the worker has no pipe. */
+void tjs__worker_post_error(JSContext *ctx, JSValueConst error);
+/* Dispatch a cancelable 'error' event at the worker global scope (so self.onerror
+ * fires) and, unless the event was canceled, forward it to the parent. No-op on
+ * the main runtime. */
+void tjs__worker_handle_uncaught(JSContext *ctx, JSValueConst exc);
 JSModuleDef *tjs__load_builtin(JSContext *ctx, const char *name);
 int tjs__load_file(JSContext *ctx, TBuf *dbuf, const char *filename);
 int tjs_module_attr_checker(JSContext *ctx, void *opaque, JSValueConst attributes);
@@ -210,6 +265,7 @@ void tjs__lws_conn_ref(JSContext *ctx);
 void tjs__lws_conn_unref(JSContext *ctx);
 struct lws_vhost *tjs__lws_select_vhost(JSContext *ctx, const char *scheme, const char *hostname, int port);
 int tjs__lws_load_http(TJSRuntime *qrt, TBuf *dbuf, const char *url);
+void tjs__lws_format_host(char *buf, size_t buflen, const char *scheme, const char *host, int port);
 #endif
 
 uv_loop_t *TJS_GetLoop(TJSRuntime *qrt);

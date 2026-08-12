@@ -12,6 +12,7 @@ deps/libwebsockets/zig/lws_config_private.h
 
 build/
 zig-out/
+build-*/
 src/bundles/js/
 src/js/core.js
 src/js/std.js

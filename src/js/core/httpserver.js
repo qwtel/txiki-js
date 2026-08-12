@@ -26,7 +26,7 @@ class Server {
             options = { fetch: options };
         }
 
-        const { fetch: handler, port = 0, listenIp = '0.0.0.0', websocket, tls } = options;
+        const { fetch: handler, port = 0, listenIp = '0.0.0.0', websocket, tls, http3 = false } = options;
 
         if (typeof handler !== 'function') {
             throw new TypeError('fetch handler must be a function');
@@ -43,6 +43,7 @@ class Server {
         let caPem = null;
         let passphrase = null;
         let requestCert = false;
+        let alpn = null;
 
         if (tls) {
             if (typeof tls.cert !== 'string' || typeof tls.key !== 'string') {
@@ -54,15 +55,32 @@ class Server {
             caPem = tls.ca ?? null;
             passphrase = tls.passphrase ?? null;
             requestCert = !!tls.requestCert;
+
+            // Optional ALPN protocol list to advertise (string or array),
+            // e.g. 'h2' to require HTTP/2. Defaults to lws's "h2,http/1.1".
+            if (tls.alpn) {
+                alpn = Array.isArray(tls.alpn) ? tls.alpn.join(',') : tls.alpn;
+            }
+        }
+
+        // Also serve HTTP/3 over QUIC (UDP) on the same port; the TCP vhost
+        // advertises it to clients via an Alt-Svc header. QUIC is always
+        // TLS 1.3, so it needs the tls option.
+        if (http3 && !tls) {
+            throw new TypeError('http3 requires the tls option (cert and key)');
         }
 
         this.#isTLS = !!tls;
 
-        const onRequest = (requestId, method, url, headersArr, bodyBuffer, remoteAddr, isWsUpgrade, isStreaming) => {
+        const onRequest = (
+            requestId, method, url, headersArr, bodyBuffer, remoteAddr, isWsUpgrade, isStreaming, httpVersion,
+        ) => {
             if (isWsUpgrade) {
                 this.#handleWsUpgrade(requestId, method, url, headersArr, remoteAddr);
             } else {
-                this.#handleRequest(requestId, method, url, headersArr, bodyBuffer, remoteAddr, isStreaming);
+                this.#handleRequest(
+                    requestId, method, url, headersArr, bodyBuffer, remoteAddr, isStreaming, httpVersion,
+                );
             }
         };
 
@@ -96,6 +114,8 @@ class Server {
             caPem,
             passphrase,
             requestCert,
+            alpn,
+            http3: !!http3,
         });
     }
 
@@ -162,7 +182,7 @@ class Server {
         // server.upgrade(req) must have been called synchronously
     }
 
-    async #handleRequest(requestId, method, url, headersArr, bodyBuffer, remoteAddr, isStreaming) {
+    async #handleRequest(requestId, method, url, headersArr, bodyBuffer, remoteAddr, isStreaming, httpVersion) {
         let headersSent = false;
 
         try {
@@ -190,7 +210,7 @@ class Server {
             const request = new Request(fullUrl, requestInit);
 
             // Call user handler.
-            let response = this.#handler(request, { server: this, remoteAddress: remoteAddr });
+            let response = this.#handler(request, { server: this, remoteAddress: remoteAddr, httpVersion });
 
             if (response instanceof Promise) {
                 response = await response;
@@ -208,7 +228,7 @@ class Server {
                 responseHeaders.push([ name, value ]);
             });
 
-            if (response.body && response._bodySize < 0) {
+            if (response.body && response.bodySize < 0) {
                 // Streaming: send headers first, then stream body chunks.
                 // Filter hop-by-hop headers that lws manages itself.
                 const streamHeaders = responseHeaders.filter(

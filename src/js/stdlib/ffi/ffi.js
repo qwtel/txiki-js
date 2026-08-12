@@ -1,150 +1,118 @@
 import core from 'tjs:internal/core';
 const ffiInt = core.ffi_load_native();
 
-import buildCParser from './ffiutils.js';
+import buildAstToSymbols, { parseCProto } from './ffiutils.js';
+import buildDefineStruct from './structs.js';
 
 const suffixMap = { macOS: 'dylib', Windows: 'dll' };
 
 export const suffix = suffixMap[navigator.userAgentData.platform] ?? 'so';
 
+// The two libraries every platform has under a different file name, aliased to
+// the short names a linker knows them by: dlopen('c') and dlopen('m'). Null
+// prototype, so that a library actually named 'constructor' or 'toString' is
+// looked up rather than answered by Object.prototype.
+const libAliases = {
+    __proto__: null,
+    c: ffiInt.LIBC_NAME,
+    m: ffiInt.LIBM_NAME,
+};
 
-export class DlSymbol {
-    constructor(name, uvlib, dlsym) {
-        this._name = name;
-        this._uvlib = uvlib;
-        this._dlsym = dlsym;
+
+// Pins the owning UvLib on the native symbol: a UvDlSym holds nothing but a raw
+// function pointer, so without this the library could be collected and
+// dlclose()d while a symbol resolved from it is still callable. The pin lives on
+// the native object rather than on DlSymbol so that holding just the native
+// symbol (as dlopen's fast path does) keeps the library loaded.
+const kLib = Symbol('uvlib');
+
+// Module-private accessor for DlSymbol's native symbol, which CFunction and
+// dlopen hand to FfiCif. Installed from the class body so the native symbol
+// stays unreachable outside this module.
+let nativeSymbol;
+
+class DlSymbol {
+    #dlsym;
+
+    static {
+        nativeSymbol = sym => sym.#dlsym;
+    }
+
+    constructor(uvlib, dlsym) {
+        dlsym[kLib] = uvlib;
+        this.#dlsym = dlsym;
     }
     get addr() {
-        return this._dlsym.addr;
+        return this.#dlsym.addr;
     }
 }
 
-function formatTypeName(name) {
-    if (name.includes(' ')) {
-        const mPtr = name.match(/\*+/g);
+class Lib {
+    #uvlib;
 
-        name = name.replace(/\*+/g, '');
-        let parts = name.split(/\s+/);
-        let struct = false;
-
-        if (parts.includes('struct')) {
-            parts = parts.filter(e=>e !== 'struct');
-            struct = true;
-        }
-
-        name = parts.sort().join(' ');
-
-        if (mPtr) {
-            name += mPtr[0];
-        }
-
-        if (struct) {
-            name = 'struct ' + name;
-        }
-    }
-
-    return name;
-}
-
-export class Lib {
     constructor(libname) {
-        this._libname = libname;
-        this._uvlib = new ffiInt.UvLib(libname);
-        this._funcs = new Map();
-        this._types = new Map();
-
-        for (const [ t, aliases ] of typeMap) {
-            for (const alias of aliases) {
-                this.registerType(alias, t);
-            }
-        }
+        this.#uvlib = new ffiInt.UvLib(libAliases[libname] ?? libname);
     }
     symbol(name) {
-        const symbol = this._uvlib.symbol(name);
-
-        return new DlSymbol(name, this._uvlib, symbol);
-    }
-    static LIBC_NAME = ffiInt.LIBC_NAME;
-    static LIBM_NAME = ffiInt.LIBM_NAME;
-
-    registerType(name, type) {
-        name = formatTypeName(name);
-        this._types.set(name, type);
-    }
-    getType(name) {
-        name = formatTypeName(name);
-
-        return this._types.get(name);
-    }
-    registerFunction(name, func) {
-        this._funcs.set(name, func);
-    }
-    getFunc(name) {
-        return this._funcs.get(name);
-    }
-    call(funcname, ...args) {
-        const func = this.getFunc(funcname);
-
-        if (!func) {
-            throw new Error(`Function ${funcname} not found`);
-        }
-
-        return func.call(...args);
+        return new DlSymbol(this.#uvlib, this.#uvlib.symbol(name));
     }
 
     close() {
-        this._uvlib.close();
+        this.#uvlib.close();
     }
 
     [Symbol.dispose]() {
         this.close();
     }
-
-    parseCProto(header) {
-        const ast = parseCProto(header);
-
-        astToLib(this, ast);
-    }
 }
 
 export class AdvancedType {
+    #ffiType;
+    #conf;
+
     constructor(type, conf) {
-        this._ffiType = type;
-        this._conf = conf;
+        this.#ffiType = type;
+        this.#conf = conf;
     }
     toBuffer(data, ctx = {}) {
-        if (this._conf.toBuffer) {
-            return this._conf.toBuffer(data, ctx);
+        if (this.#conf.toBuffer) {
+            return this.#conf.toBuffer(data, ctx);
         } else {
-            return this._ffiType.toBuffer(data, ctx);
+            return this.#ffiType.toBuffer(data, ctx);
         }
     }
     fromBuffer(buf, ctx = {}) {
-        if (this._conf.fromBuffer) {
-            return this._conf.fromBuffer(buf, ctx);
+        if (this.#conf.fromBuffer) {
+            return this.#conf.fromBuffer(buf, ctx);
         } else {
-            return this._ffiType.fromBuffer(buf, ctx);
+            return this.#ffiType.fromBuffer(buf, ctx);
         }
     }
     get ffiType() {
-        return this._ffiType;
+        return this.#ffiType;
     }
     get ffiTypeStruct() {
-        return this._conf.getFfiTypeStruct ? this._conf.getFfiTypeStruct() : this._ffiType;
+        return this.#conf.getFfiTypeStruct ? this.#conf.getFfiTypeStruct() : this.#ffiType;
     }
     get name() {
-        return this._conf.name;
+        return this.#conf.name;
     }
     get size() {
-        return this._ffiType.size;
+        return this.#ffiType.size;
     }
 }
 
-export class CFunction {
+class CFunction {
+    // Holding the DlSymbol keeps the library it came from loaded (see kLib).
+    #symbol;
+    #rtype;
+    #argtypes;
+    #cif;
+
     constructor(symbol, rtype, argtypes, fixed) {
-        this._symbol = symbol;
-        this._rtype = rtype;
-        this._argtypes = argtypes;
+        this.#symbol = symbol;
+        this.#rtype = rtype;
+        this.#argtypes = argtypes;
 
         function getFfiType(t) {
             if (t.ffiType) {
@@ -154,8 +122,7 @@ export class CFunction {
             return t;
         }
 
-        this._cif = new ffiInt.FfiCif(getFfiType(rtype), ...argtypes.map(getFfiType), fixed);
-        this._fixed = fixed;
+        this.#cif = new ffiInt.FfiCif(getFfiType(rtype), ...argtypes.map(getFfiType), fixed);
     }
     call(...argsJs) {
         const ctx = {};
@@ -163,16 +130,33 @@ export class CFunction {
 
         for (const i in argsJs) {
             ctx[i] = {};
-            args[i] = this._argtypes[i].toBuffer(argsJs[i], ctx[i]);
+            args[i] = this.#argtypes[i].toBuffer(argsJs[i], ctx[i]);
         }
 
-        const ret = this._cif.call(this._symbol._dlsym, ...args);
+        const ret = this.#cif.call(nativeSymbol(this.#symbol), ...args);
 
         ctx['ret'] = {};
 
-        return this._rtype.fromBuffer(ret, ctx['ret']);
+        return this.#rtype.fromBuffer(ret, ctx['ret']);
     }
 }
+
+// A single shared instance: dlopen()'s fast-path check compares argument types
+// by identity, so minting a fresh AdvancedType per types.jscallback() call would
+// make every callback signature fall back to the slow path.
+const jscallbackType = new AdvancedType(ffiInt.type_pointer, {
+    toBuffer: jsc => {
+        if (!(jsc instanceof JSCallback)) {
+            throw new Error('not a JSCallback');
+        }
+
+        return jsc.addr;
+    },
+    fromBuffer: () =>{
+        throw new Error('JSCallback as a return is not supported!');
+    },
+    name: 'jscallback'
+});
 
 export const types = {
     void: ffiInt.type_void,
@@ -228,19 +212,21 @@ export const types = {
         name: 'buffer'
     }),
 
-    jscallback: () => new AdvancedType(ffiInt.type_pointer, {
-        toBuffer: jsc => {
-            if (!(jsc instanceof JSCallback)) {
-                throw new Error('not a JSCallback');
-            }
+    // A JS boolean carried by an unsigned integer, in the two widths C code uses
+    // for a flag: C99 `bool` (and ObjC `BOOL`) is one byte, Win32 `BOOL` is four.
+    bool_u8: new AdvancedType(ffiInt.type_uint8, {
+        toBuffer: b => ffiInt.type_uint8.toBuffer(b ? 1 : 0),
+        fromBuffer: buf => Boolean(ffiInt.type_uint8.fromBuffer(buf)),
+        name: 'bool_u8'
+    }),
 
-            return jsc.addr;
-        },
-        fromBuffer: () =>{
-            throw new Error('JSCallback as a return is not supported!');
-        },
-        name: 'jscallback'
-    })
+    bool_u32: new AdvancedType(ffiInt.type_uint32, {
+        toBuffer: b => ffiInt.type_uint32.toBuffer(b ? 1 : 0),
+        fromBuffer: buf => Boolean(ffiInt.type_uint32.fromBuffer(buf)),
+        name: 'bool_u32'
+    }),
+
+    jscallback: () => jscallbackType
 };
 
 const typeMap = [
@@ -286,46 +272,75 @@ export function bufferToPointer(buf) {
     return ffiInt.getArrayBufPtr(buf);
 }
 
+// Rebuild a NativePointer from a raw address obtained via `pointer.value`
+// (a BigInt). Primarily for moving a pointer across a same-process worker
+// thread: postMessage `pointer.value`, then `createPointer(addr)` on the
+// other side. See NativePointer.value for the caveats.
+export function createPointer(addr) {
+    return ffiInt.createPointer(addr);
+}
+
 // The zero-copy ArrayBuffer subtype returned by NativePointer.toArrayBuffer()
 // (and backing the Uint8Array from NativePointer.toUint8Array()). It is a real
 // ArrayBuffer with an extra detach() method; see src/mod_ffi.c.
 export const ExternalArrayBuffer = ffiInt.ExternalArrayBuffer;
 
+// Module-private setter for the library pin on a Pointer to a data symbol, used
+// by dlopen. Installed from the class body so a Pointer built by a caller keeps
+// exposing nothing but its address, level and type.
+let pinPointerLib;
+
 export class Pointer {
+    #type;
+    #level;
+    #addr;
+    // Set by createRefFromBuf() to keep the pointed-to buffer from being GCed;
+    // never read.
+    #data;
+    // Set by pinPointerLib() for the same reason, for the library a data symbol
+    // was resolved from; never read.
+    #lib;
+
+    static {
+        pinPointerLib = (ptr, lib) => {
+            ptr.#lib = lib;
+        };
+    }
+
     constructor(addr, level, type) {
-        this._type = type;
-        this._level = level;
-        this._addr = addr;
+        this.#type = type;
+        this.#level = level;
+        this.#addr = addr;
     }
     get addr() {
-        return this._addr;
+        return this.#addr;
     }
     get level() {
-        return this._level;
+        return this.#level;
     }
     get type() {
-        return this._type;
+        return this.#type;
     }
     get isNull() {
-        return this._addr === null;
+        return this.#addr === null;
     }
     deref() {
         if (this.level === 1) {
-            const addr = this._addr;
-            const buf = ffiInt.ptrToBuffer(addr, this._type.size);
+            const addr = this.#addr;
+            const buf = ffiInt.ptrToBuffer(addr, this.#type.size);
 
-            return this._type.fromBuffer(buf, {});
+            return this.#type.fromBuffer(buf, {});
         } else {
-            const addr = ffiInt.derefPtr(this._addr, 1);
+            const addr = ffiInt.derefPtr(this.#addr, 1);
 
-            return new Pointer(addr, this._level - 1, this._type);
+            return new Pointer(addr, this.#level - 1, this.#type);
         }
     }
     derefAll() {
-        const addr = ffiInt.derefPtr(this._addr, this._level-1);
-        const buf = ffiInt.ptrToBuffer(addr, this._type.size);
+        const addr = ffiInt.derefPtr(this.#addr, this.#level-1);
+        const buf = ffiInt.ptrToBuffer(addr, this.#type.size);
 
-        return this._type.fromBuffer(buf, {});
+        return this.#type.fromBuffer(buf, {});
     }
     static createRef(type, data) {
         const buf = type.toBuffer(data, {});
@@ -336,19 +351,22 @@ export class Pointer {
         const addr = ffiInt.getArrayBufPtr(buf);
         const ptr = new Pointer(addr, 1, type);
 
-        ptr._data = buf; // attach to keep buf from being GCed
+        ptr.#data = buf;
 
         return ptr;
     }
 }
 
 export class PointerType extends AdvancedType {
+    #level;
+    #type;
+
     constructor(type, level = 1) {
         super(types.pointer || type, {
             name: (type.name || 'void') + ('*').repeat(level),
         });
-        this._level = level;
-        this._type = type;
+        this.#level = level;
+        this.#type = type;
     }
     toBuffer(data, ctx = {}) {
         if (data instanceof Pointer) {
@@ -369,27 +387,29 @@ export class PointerType extends AdvancedType {
             'to pass a value by reference use Pointer.createRef(type, value)');
     }
     fromBuffer(buf, ctx = {}) {
-        return new Pointer(types.pointer.fromBuffer(buf, ctx), this._level, this._type);
+        return new Pointer(types.pointer.fromBuffer(buf, ctx), this.#level, this.#type);
     }
     get type() {
-        return this._type;
+        return this.#type;
     }
     get level() {
-        return this._level;
+        return this.#level;
     }
 }
 
 export class StructType extends AdvancedType {
+    #fields;
+
     constructor(fields, name) {
         const ffitype = new ffiInt.FfiType(...fields.map(([ _f, t ]) => t.ffiTypeStruct || t.ffiType || t));
 
         super(ffitype, {
             toBuffer: (obj, ctx)=>{
-                const buf = new Uint8Array(this._ffiType.size);
-                const offsets = this._ffiType.offsets;
+                const buf = new Uint8Array(this.ffiType.size);
+                const offsets = this.ffiType.offsets;
 
                 for (let i=0; i<offsets.length; i++) {
-                    const [ field, type ] = this._fields[i];
+                    const [ field, type ] = this.#fields[i];
 
                     // eslint-disable-next-line no-prototype-builtins
                     if (obj.hasOwnProperty(field)) {
@@ -403,10 +423,10 @@ export class StructType extends AdvancedType {
             },
             fromBuffer: (buf, ctx)=>{
                 let obj = {};
-                const offsets = this._ffiType.offsets;
+                const offsets = this.ffiType.offsets;
 
                 for (let i=0; i<offsets.length; i++) {
-                    const [ field, type ] = this._fields[i];
+                    const [ field, type ] = this.#fields[i];
                     const fbuf = buf.slice(offsets[i], offsets[i] + type.size);
 
                     obj[field] = type.fromBuffer(fbuf, ctx);
@@ -416,21 +436,24 @@ export class StructType extends AdvancedType {
             },
             name
         });
-        this._fields = fields;
+        this.#fields = fields;
     }
     get fields() {
-        return this._fields;
+        return this.#fields;
     }
 }
 
 export class ArrayType extends AdvancedType {
+    #length;
+    #ffiStruct;
+
     constructor(type, length, name) {
         const ffitype = type.ffiType ? type.ffiType : type;
         const ffisz = ffitype.size;
 
         super(ffitype, {
             toBuffer: (arr, ctx)=>{
-                if (arr.length > this._length) {
+                if (arr.length > this.#length) {
                     throw new RangeError('Array length exceeds type length');
                 }
 
@@ -447,7 +470,7 @@ export class ArrayType extends AdvancedType {
             fromBuffer: (buf, ctx)=>{
                 let arr = [];
 
-                for (let i=0; i<this._length; i++) {
+                for (let i=0; i<this.#length; i++) {
                     arr[i] = type.fromBuffer(buf.slice(i*ffisz, (i+1)*ffisz), ctx);
                 }
 
@@ -455,21 +478,20 @@ export class ArrayType extends AdvancedType {
             },
             name,
         });
-        this._type = type;
-        this._length = length;
+        this.#length = length;
     }
     get ffiTypeStruct() {
-        if (!this._ffiStruct) {
-            this._ffiStruct = new ffiInt.FfiType(this._length, this._ffiType);
+        if (!this.#ffiStruct) {
+            this.#ffiStruct = new ffiInt.FfiType(this.#length, this.ffiType);
         }
 
-        return this._ffiStruct;
+        return this.#ffiStruct;
     }
     get length() {
-        return this._length;
+        return this.#length;
     }
     get size() {
-        return this._ffiType.size * this._length;
+        return this.ffiType.size * this.#length;
     }
 }
 
@@ -499,8 +521,15 @@ export function strerror(err = errno()) {
 
 
 export class JSCallback {
+    // The closure calls through the cif and the wrapper, so both have to outlive
+    // it; keep them alive here.
+    #func;
+    #cif;
+    #closure;
+    #addr;
+
     constructor(rtype, argtypes, func) {
-        this._func = (...args) => {
+        this.#func = (...args) => {
             const arr = [];
             const ctx = {};
 
@@ -514,17 +543,20 @@ export class JSCallback {
             return rtype.toBuffer(ret);
         };
 
-        this._rtype = rtype;
-        this._argtypes = argtypes;
-        this._cif = new ffiInt.FfiCif(rtype.ffiType ?? rtype, ...argtypes.map(t => t.ffiType ?? t));
-        this._closure = new ffiInt.FfiClosure(this._cif, this._func);
+        this.#cif = new ffiInt.FfiCif(rtype.ffiType ?? rtype, ...argtypes.map(t => t.ffiType ?? t));
+        this.#closure = new ffiInt.FfiClosure(this.#cif, this.#func);
+
+        // The closure's code pointer is fixed at creation and lives as long as the
+        // closure does, so the NativePointer wrapping it is minted once: reading
+        // .addr happens on every call that passes this callback.
+        this.#addr = this.#closure.addr;
     }
     get addr() {
-        return this._closure.addr;
+        return this.#addr;
     }
 }
 
-const { parseCProto, astToLib } = buildCParser({ StructType, ArrayType, CFunction, PointerType, types });
+const astToSymbols = buildAstToSymbols({ StructType, ArrayType, PointerType, types, typeMap });
 
 const typeAliases = {
     void: types.void,
@@ -541,12 +573,29 @@ const typeAliases = {
     pointer: types.pointer, ptr: types.pointer,
     string: types.string, cstring: types.string,
     buffer: types.buffer,
+    bool_u8: types.bool_u8, bool_u32: types.bool_u32,
     uchar: types.uchar, schar: types.schar, char: types.schar,
     ushort: types.ushort, sshort: types.sshort,
     uint: types.uint, sint: types.sint,
     ulong: types.ulong, slong: types.slong, long: types.slong,
     size_t: types.size, ssize_t: types.ssize,
 };
+
+// The documented spelling of a type, for reporting a layout back to a caller.
+// The raw libffi types name themselves after their C counterpart (`type_sint32`),
+// which is not a name anyone can write in a symbol map or a field list; the first
+// alias declared for a type is the short one the guide uses.
+const typeAliasNames = new Map();
+
+for (const [ alias, type ] of Object.entries(typeAliases)) {
+    if (!typeAliasNames.has(type)) {
+        typeAliasNames.set(type, alias);
+    }
+}
+
+function typeName(t) {
+    return typeAliasNames.get(t) ?? t.name;
+}
 
 function resolveType(t) {
     if (typeof t === 'string') {
@@ -562,13 +611,65 @@ function resolveType(t) {
     return t;
 }
 
+// Declaring a struct layout is a job of its own, so it lives in structs.js; the
+// pieces it needs (the type vocabulary, the libffi-facing StructType, the
+// pointer helpers) are handed to it rather than exported, which would widen this
+// module's public surface.
+export const { defineStruct, defineEnum, allocStruct } = buildDefineStruct({
+    AdvancedType,
+    ArrayType,
+    StructType,
+    types,
+    resolveType,
+    typeName,
+    createPointer,
+    bufferToPointer,
+    isPointer: ffiInt.isPointer,
+});
+
+// `using lib = dlopen(...)` has to work, but what the dlopen() family hands back
+// is a plain object rather than one of the stdlib's disposable classes, so alias
+// its close() as Symbol.dispose here. Non-enumerable, like the method a class
+// would carry on its prototype.
+function withDispose(handle) {
+    return Object.defineProperty(handle, Symbol.dispose, {
+        value: handle.close,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+    });
+}
+
+// Opens a shared library and binds the symbols the map describes. `path` is a
+// library path, or one of the aliases in libAliases for a library whose file
+// name is platform-specific.
 export function dlopen(path, symbols) {
     // Resolve all types before opening the library so that type errors
     // don't leave a library handle open.
     const resolved = {};
 
     for (const [ name, def ] of Object.entries(symbols)) {
+        // The C symbol to resolve. It defaults to the map key, which is only the
+        // JS property name: an explicit `name` lets one C symbol be bound more
+        // than once (different signatures of a variadic function, say) and lets a
+        // C name be exposed under a friendlier one.
+        const symbol = def.name ?? name;
+
+        if (def.type !== undefined) {
+            if (def.returns !== undefined || def.args !== undefined) {
+                throw new TypeError(
+                    `FFI symbol '${name}': 'type' declares a data symbol, ` +
+                    'it cannot be combined with \'returns\' or \'args\'');
+            }
+
+            resolved[name] = { symbol, optional: def.optional, type: resolveType(def.type) };
+
+            continue;
+        }
+
         resolved[name] = {
+            symbol,
+            optional: def.optional,
             returns: resolveType(def.returns ?? 'void'),
             args: (def.args ?? []).map(resolveType),
             fixed: def.fixed,
@@ -578,25 +679,99 @@ export function dlopen(path, symbols) {
     const lib = new Lib(path);
     const result = {};
 
-    for (const [ name, def ] of Object.entries(resolved)) {
-        const sym = lib.symbol(name);
+    try {
+        bindSymbols(lib, resolved, result);
+    } catch (e) {
+        // The library is open at this point and nothing else references it yet
+        // (a failure here means the caller gets no symbols), so close it instead
+        // of leaving the handle open until the Lib is finalized. Unresolvable
+        // symbol names make this the common path, not a corner case.
+        lib.close();
 
-        // Check if all arg types are simple (scalar/pointer/string/buffer)
-        // and if so, use the fast call path.
+        throw e;
+    }
+
+    return withDispose({
+        symbols: result,
+        close: () => lib.close(),
+    });
+}
+
+// Same as dlopen(), but the symbol definitions come from C declarations instead
+// of a JS object: every function the header declares is bound, and the types it
+// declares (structs, typedefs, and the pointer types derived from them) come
+// back keyed by the name they were declared under, e.g. 'struct test'.
+export function dlopenCProto(path, header) {
+    // Parse before opening the library so a malformed header doesn't leave a
+    // handle open.
+    const { symbols, types: declaredTypes } = astToSymbols(parseCProto(header));
+    const { symbols: bound, close } = dlopen(path, symbols);
+
+    return withDispose({ symbols: bound, types: declaredTypes, close });
+}
+
+function bindSymbols(lib, resolved, result) {
+    for (const [ name, def ] of Object.entries(resolved)) {
+        let sym;
+
+        try {
+            sym = lib.symbol(def.symbol);
+        } catch (e) {
+            if (!def.optional) {
+                throw e;
+            }
+
+            // The symbol isn't there: leave the property out entirely, so that
+            // `name in symbols` tells the caller whether this build of the
+            // library has it. Only the resolution is guarded — anything that
+            // goes wrong while binding a symbol that *does* exist still throws.
+            continue;
+        }
+
+        if (def.type) {
+            // A data symbol: the symbol's address *is* the global, so hand back a
+            // level-1 Pointer at it rather than a callable. A deeper indirection
+            // (an int* global, say) is `new Pointer(p.addr, 2, type)` built from
+            // this one.
+            const ptr = new Pointer(sym.addr, 1, def.type);
+
+            // A Pointer holds nothing but a raw address, so pin the native symbol
+            // on it (which pins the library, see kLib) — otherwise a GC could
+            // dlclose() the library and unmap the global while the Pointer is
+            // still reachable.
+            pinPointerLib(ptr, nativeSymbol(sym));
+
+            result[name] = ptr;
+
+            continue;
+        }
+
+        // A PointerType return marshals as a plain pointer; the only thing its
+        // fromBuffer adds is the Pointer wrapper, which the closure below
+        // reproduces. Every other AdvancedType return (struct, array, static
+        // string, buffer) needs its own fromBuffer and stays on the slow path.
+        const returnsPointerType = def.returns instanceof PointerType;
+
+        // Check if all arg types are simple (scalar/pointer/string/buffer/jscallback)
+        // and if so, use the fast call path. jscallback is not allowed as a return
+        // type — that has no meaning, and its fromBuffer throws.
         const canFastCall = def.args.length <= 16 && def.args.every(t =>
-            t === types.string || t === types.buffer || !t.ffiType
-        ) && (def.returns === types.string || !def.returns.ffiType);
+            t === types.string || t === types.buffer || t === jscallbackType || !t.ffiType
+        ) && (def.returns === types.string || returnsPointerType || !def.returns.ffiType);
 
         if (canFastCall) {
-            // Build bitmasks for string and buffer arguments.
+            // Build bitmasks for string, buffer and jscallback arguments.
             let stringMask = 0;
             let bufferMask = 0;
+            let callbackMask = 0;
 
             for (let i = 0; i < def.args.length; i++) {
                 if (def.args[i] === types.string) {
                     stringMask |= (1 << i);
                 } else if (def.args[i] === types.buffer) {
                     bufferMask |= (1 << i);
+                } else if (def.args[i] === jscallbackType) {
+                    callbackMask |= (1 << i);
                 }
             }
 
@@ -607,9 +782,24 @@ export function dlopen(path, symbols) {
             const ffiArgTypes = def.args.map(t => t.ffiType ?? t);
             const ffiRetType = def.returns.ffiType ?? def.returns;
             const cif = new ffiInt.FfiCif(ffiRetType, ...ffiArgTypes, def.fixed);
-            const dlsym = sym._dlsym;
+            // The captured native symbol keeps the library loaded (see kLib), so
+            // the bound function stays valid even if the Lib is collected.
+            const dlsym = nativeSymbol(sym);
 
-            result[name] = (...a) => cif.fast_call(dlsym, stringMask, bufferMask, ...a);
+            if (returnsPointerType) {
+                // fast_call returns a bare NativePointer, or null for NULL. Both
+                // are what PointerType.fromBuffer feeds to Pointer, so wrapping
+                // them here yields the same value the slow path produced —
+                // including a Pointer whose isNull is true for a NULL return.
+                // Read level/type once: they are fixed for this symbol.
+                const level = def.returns.level;
+                const pointee = def.returns.type;
+
+                result[name] = (...a) =>
+                    new Pointer(cif.fast_call(dlsym, stringMask, bufferMask, callbackMask, ...a), level, pointee);
+            } else {
+                result[name] = (...a) => cif.fast_call(dlsym, stringMask, bufferMask, callbackMask, ...a);
+            }
         } else {
             // Fallback to CFunction for complex types (structs, etc.)
             const func = new CFunction(sym, def.returns, def.args, def.fixed);
@@ -617,9 +807,4 @@ export function dlopen(path, symbols) {
             result[name] = (...a) => func.call(...a);
         }
     }
-
-    return {
-        symbols: result,
-        close: () => lib.close(),
-    };
 }

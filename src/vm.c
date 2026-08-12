@@ -178,6 +178,15 @@ static JSValue tjs__set_ca_bundle_path(JSContext *ctx, JSValue this_val, int arg
 }
 #endif
 
+/* Forward an error to the parent over the worker's message channel (surfaces as
+ * Worker.onerror). No-ops on the main thread. Used by the JS "report the
+ * exception" path when a listener throws and the worker-scope 'error' event was
+ * not canceled. */
+static JSValue tjs__js_post_worker_error(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
+    tjs__worker_post_error(ctx, argv[0]);
+    return JS_UNDEFINED;
+}
+
 static JSValue tjs__js_drain_microtasks(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSRuntime *qrt = TJS_GetRuntime(ctx);
     CHECK_NOT_NULL(qrt);
@@ -236,6 +245,7 @@ static JSValue tjs__set_import_map_resolver(JSContext *ctx, JSValue this_val, in
 }
 
 static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
+    tjs__mod_channel_init(ctx, ns);
 #ifndef TJS__OMIT_NETWORK
     tjs__mod_dns_init(ctx, ns);
 #endif
@@ -318,6 +328,11 @@ static void tjs__bootstrap_core(JSContext *ctx, JSValue ns) {
                               "setImportMapResolver",
                               JS_NewCFunction(ctx, tjs__set_import_map_resolver, "setImportMapResolver", 1),
                               JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx,
+                              ns,
+                              "postWorkerError",
+                              JS_NewCFunction(ctx, tjs__js_post_worker_error, "postWorkerError", 1),
+                              JS_PROP_C_W_E);
 }
 
 JSValue tjs__get_args(JSContext *ctx) {
@@ -332,7 +347,8 @@ static JSValue tjs__dispatch_event(JSContext *ctx, JSValue *event) {
     TJSRuntime *qrt = TJS_GetRuntime(ctx);
     CHECK_NOT_NULL(qrt);
 
-    if (qrt->freeing) {
+    /* Cleared at the start of teardown; nothing to dispatch to once it's gone. */
+    if (JS_IsUndefined(qrt->builtins.dispatch_event_func)) {
         return JS_UNDEFINED;
     }
 
@@ -341,6 +357,50 @@ static JSValue tjs__dispatch_event(JSContext *ctx, JSValue *event) {
     JS_FreeValue(ctx, global_obj);
 
     return ret;
+}
+
+void tjs__worker_handle_uncaught(JSContext *ctx, JSValueConst exc) {
+    TJSRuntime *qrt = TJS_GetRuntime(ctx);
+    CHECK_NOT_NULL(qrt);
+
+    /* error_event_ctor is cleared at the start of teardown — with it gone there
+     * is no worker scope left to dispatch the 'error' event at. */
+    if (!qrt->is_worker || JS_IsUndefined(qrt->builtins.error_event_ctor)) {
+        return;
+    }
+
+    /* Dispatch a cancelable 'error' ErrorEvent at the worker global scope so
+     * self.onerror can observe (and, via preventDefault(), suppress propagation
+     * to) the parent. */
+    JSValue init = JS_NewObject(ctx);
+    JS_SetPropertyStr(ctx, init, "message", JS_ToString(ctx, exc));
+    JS_SetPropertyStr(ctx, init, "error", JS_DupValue(ctx, exc));
+    JS_SetPropertyStr(ctx, init, "cancelable", JS_TRUE);
+
+    JSValue args[2] = { JS_NewString(ctx, "error"), init };
+    JSValue event = JS_CallConstructor(ctx, qrt->builtins.error_event_ctor, 2, args);
+    JS_FreeValue(ctx, args[0]);
+    JS_FreeValue(ctx, init);
+
+    bool canceled = false;
+    if (JS_IsException(event)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    } else {
+        JSValue ret = tjs__dispatch_event(ctx, &event);
+        if (JS_IsException(ret)) {
+            /* A handler threw: ignore it and forward the original error. */
+            JS_FreeValue(ctx, JS_GetException(ctx));
+        } else {
+            /* dispatchEvent() returns false when preventDefault() was called. */
+            canceled = !JS_ToBool(ctx, ret);
+        }
+        JS_FreeValue(ctx, ret);
+    }
+    JS_FreeValue(ctx, event);
+
+    if (!canceled) {
+        tjs__worker_post_error(ctx, exc);
+    }
 }
 
 static void uv__maybe_idle(TJSRuntime *qrt);
@@ -381,10 +441,6 @@ static void tjs__promise_rejection_tracker(JSContext *ctx,
                                            void *opaque) {
     TJSRuntime *qrt = TJS_GetRuntime(ctx);
     CHECK_NOT_NULL(qrt);
-
-    if (qrt->freeing) {
-        return;
-    }
 
     if (!is_handled) {
         /* Defer event dispatch: the promise may get a handler attached
@@ -508,6 +564,8 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     CHECK_EQ(JS_IsUndefined(qrt->builtins.dispatch_event_func), 0);
     qrt->builtins.promise_event_ctor = JS_GetPropertyStr(qrt->ctx, global_obj, "PromiseRejectionEvent");
     CHECK_EQ(JS_IsUndefined(qrt->builtins.promise_event_ctor), 0);
+    qrt->builtins.error_event_ctor = JS_GetPropertyStr(qrt->ctx, global_obj, "ErrorEvent");
+    CHECK_EQ(JS_IsUndefined(qrt->builtins.error_event_ctor), 0);
 
     /* end bootstrap */
     JS_FreeValue(ctx, global_obj);
@@ -532,6 +590,9 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     /* Pending rejection tracking */
     init_list_head(&qrt->pending_rejections);
 
+    /* Active native-handle self-pins (for teardown). */
+    init_list_head(&qrt->handle_pins);
+
     /* libwebsockets initializtion */
 #ifndef TJS__OMIT_NETWORK
     tjs__lws_setup();
@@ -540,8 +601,93 @@ TJSRuntime *TJS_NewRuntimeInternal(bool is_worker, TJSRunOptions *options) {
     return qrt;
 }
 
+void tjs__handle_pin(JSContext *ctx, TJSHandlePin *pin, JSValue obj) {
+    if (JS_IsUndefined(pin->obj)) {
+        pin->obj = JS_DupValue(ctx, obj);
+        list_add_tail(&pin->link, &TJS_GetRuntime(ctx)->handle_pins);
+    }
+}
+
+void tjs__handle_unpin(JSContext *ctx, TJSHandlePin *pin) {
+    if (!JS_IsUndefined(pin->obj)) {
+        /* Detach and clear the pin *before* releasing the reference: this drop
+         * can be the last one and finalize the wrapper synchronously, and the
+         * finalizer asserts the pin is already released. */
+        JSValue obj = pin->obj;
+        list_del(&pin->link);
+        pin->obj = JS_UNDEFINED;
+        JS_FreeValue(ctx, obj);
+    }
+}
+
+/* Run every registered pin's `detach` hook at the very start of teardown. The
+ * hook quiesces the handle so nothing dispatches into the half-torn-down
+ * runtime, but its exact job differs by who owns the handle's close:
+ *  - lws-backed handles (httpclient, ws): lws owns the close
+ *    (lws_context_destroy, later in teardown), so the hook only clears the JS
+ *    callbacks; the close callback then finds no handler and dispatches nothing.
+ *  - libuv-backed handles: we own the close, so the hook begins it (maybe_close
+ *    -> uv_close). This decouples closing from the GC — the handle is closed
+ *    even if a wrapper turns out to be reachable and survives the teardown GC.
+ *    The wrapper is still pinned here, so its struct is freed later (finalizer,
+ *    once release_pins lets the GC collect it); and its dispatch during the
+ *    post-GC drain is suppressed by the per-object `finalized` flag the
+ *    finalizer sets, so `detach` need not clear libuv callbacks. */
+void tjs__detach_handles(TJSRuntime *qrt) {
+    struct list_head *el;
+    list_for_each(el, &qrt->handle_pins) {
+        TJSHandlePin *pin = list_entry(el, TJSHandlePin, link);
+        if (pin->detach) {
+            pin->detach(pin);
+        }
+    }
+}
+
+void tjs__release_pins(TJSRuntime *qrt) {
+    /* Drop every self-pin so the wrappers become collectable. Lift the whole
+     * list into a local head first, then release each entry: a wrapper stays
+     * alive via its own pin until we free it, so the move frees nothing, and the
+     * release pass no longer walks the shared list — a cascading finalizer that
+     * touches handle_pins can't corrupt the traversal. */
+    struct list_head pins;
+    list_splice_init(&pins, &qrt->handle_pins);
+    while (!list_empty(&pins)) {
+        TJSHandlePin *pin = list_entry(pins.next, TJSHandlePin, link);
+        JSValue obj = pin->obj;
+        list_del(&pin->link);
+        pin->obj = JS_UNDEFINED;
+        JS_FreeValue(qrt->ctx, obj);
+    }
+}
+
 void TJS_FreeRuntime(TJSRuntime *qrt) {
-    qrt->freeing = true;
+    /* Quiesce every active native handle before dismantling anything else, so no
+     * handle callback can fire into a half-torn-down runtime: libuv-backed
+     * handles begin closing (their close no longer waits on the GC collecting
+     * the wrapper), and lws-backed handles clear their JS callbacks. */
+    tjs__detach_handles(qrt);
+
+    /* Tear down the paths that would run JS in response to teardown activity,
+     * up front, so nothing below needs a global "are we shutting down" flag:
+     *  - stop tracking promise rejections (the engine now frees rejected
+     *    promises itself, and we must not touch pending_rejections);
+     *  - drop the event-dispatch / worker-error builtins, so the C error and
+     *    rejection paths (tjs__dispatch_event, tjs__worker_*) find their
+     *    machinery gone and no-op instead of dispatching into a half-torn-down
+     *    runtime. */
+    JS_SetHostPromiseRejectionTracker(qrt->rt, NULL, NULL);
+    JS_FreeValue(qrt->ctx, qrt->builtins.dispatch_event_func);
+    qrt->builtins.dispatch_event_func = JS_UNDEFINED;
+    JS_FreeValue(qrt->ctx, qrt->builtins.promise_event_ctor);
+    qrt->builtins.promise_event_ctor = JS_UNDEFINED;
+    JS_FreeValue(qrt->ctx, qrt->builtins.error_event_ctor);
+    qrt->builtins.error_event_ctor = JS_UNDEFINED;
+    JS_FreeValue(qrt->ctx, qrt->builtins.import_map_resolver);
+    qrt->builtins.import_map_resolver = JS_UNDEFINED;
+    JS_FreeValue(qrt->ctx, qrt->builtins.internal_core);
+    qrt->builtins.internal_core = JS_UNDEFINED;
+    JS_FreeValue(qrt->ctx, qrt->builtins.internal_message_pipe);
+    qrt->builtins.internal_message_pipe = JS_UNDEFINED;
 
     /* Close all core loop handles. */
     uv_close((uv_handle_t *) &qrt->jobs.prepare, NULL);
@@ -576,22 +722,27 @@ void TJS_FreeRuntime(TJSRuntime *qrt) {
     js_free(qrt->ctx, qrt->lws.ca_bundle_data);
     qrt->lws.ca_bundle_data = NULL;
 
+    /* Drop the GC-invisible self-pins that keep actively reading/listening/
+     * running native handles alive (set on an abnormal exit, when JS never
+     * closed them). The handles are already closing (tjs__detach_handles above);
+     * releasing the pins lets the GC collect the wrappers so their finalizers
+     * run — freeing each struct once its close completes, and setting the
+     * `finalized` flag that suppresses dispatch during the drain below. Draining
+     * the loop here — while the runtime and the shared TLS context are still
+     * alive — lets the resulting close (and any canceled request) callbacks run
+     * safely, before anything they might touch is torn down. */
+    tjs__release_pins(qrt);
+    JS_RunGC(qrt->rt);
+    for (int i = 0; i < 32 && uv_loop_alive(&qrt->loop); i++) {
+        uv_run(&qrt->loop, UV_RUN_NOWAIT);
+    }
+
     /* Destroy shared TLS context. */
 #ifndef TJS__OMIT_NETWORK
     tjs__mod_tls_cleanup(qrt);
 #endif
 
     /* Destroy the JS engine. */
-    JS_FreeValue(qrt->ctx, qrt->builtins.dispatch_event_func);
-    qrt->builtins.dispatch_event_func = JS_UNDEFINED;
-    JS_FreeValue(qrt->ctx, qrt->builtins.promise_event_ctor);
-    qrt->builtins.promise_event_ctor = JS_UNDEFINED;
-    JS_FreeValue(qrt->ctx, qrt->builtins.import_map_resolver);
-    qrt->builtins.import_map_resolver = JS_UNDEFINED;
-    JS_FreeValue(qrt->ctx, qrt->builtins.internal_core);
-    qrt->builtins.internal_core = JS_UNDEFINED;
-    JS_FreeValue(qrt->ctx, qrt->builtins.internal_message_pipe);
-    qrt->builtins.internal_message_pipe = JS_UNDEFINED;
     {
         struct list_head *el, *el1;
         list_for_each_safe(el, el1, &qrt->pending_rejections) {
@@ -728,6 +879,13 @@ void tjs__drain_microtasks(JSContext *ctx) {
             if (err < 0) {
                 TJSRuntime *qrt = TJS_GetRuntime(ctx);
                 CHECK_NOT_NULL(qrt);
+                if (qrt->is_worker) {
+                    /* Report the uncaught error to the parent, then restore the
+                     * pending exception so it is still dumped to stderr. */
+                    JSValue exc = JS_GetException(ctx1);
+                    tjs__worker_handle_uncaught(ctx1, exc);
+                    JS_Throw(ctx1, exc);
+                }
                 TJS_Stop(qrt);
             }
 
@@ -788,6 +946,12 @@ void tjs__execute_jobs(JSContext *ctx) {
                 }
                 list_del(&pr2->link);
                 js_free(ctx, pr2);
+            }
+            /* In a worker, an unhandled rejection that aborts the runtime should
+             * also reach the parent. The 'unhandledrejection' event already
+             * fired at the worker global, so just forward the reason. */
+            if (qrt->is_worker) {
+                tjs__worker_post_error(ctx, reason);
             }
             JS_Throw(ctx, reason);
             TJS_Stop(qrt);

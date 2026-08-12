@@ -38,6 +38,11 @@
 #define TJS_HTTP_MAX_CHUNK_SIZE        (64 * 1024 * 1024)
 #define TJS_HTTP_MAX_CHUNK_SIZE_DIGITS 16
 #define TJS_HTTP_MAX_CHUNK_HEADER_SIZE 1024
+/* Max payload handed to a single lws_write(). Over HTTP/2 a response body
+ * must be written in chunks the connection can flush per writable callback
+ * (matches H2SET_MAX_FRAME_SIZE / pt_serv_buf_size); handing lws one giant
+ * buffer with LWS_WRITE_HTTP_FINAL truncates h2 bodies larger than this. */
+#define TJS_HTTP_WRITE_CHUNK_SIZE 16384
 
 typedef enum {
     TJS_HTTP_CHUNK_STATE_SIZE,
@@ -52,8 +57,29 @@ typedef struct {
     struct list_head link;
     uint8_t *data; /* includes LWS_PRE padding before actual data */
     size_t len;    /* length of actual data (not including LWS_PRE) */
+    size_t sent;   /* bytes of this chunk already written (for h2 chunking) */
     bool is_final;
 } TJSHttpPendingWrite;
+
+/* Wire protocol a request arrived over. HTTP/2 and HTTP/3 are both multiplexed
+ * (they carry the :method pseudo-header and take the mux response write path);
+ * HTTP/3 is additionally distinguished by arriving on the QUIC vhost. */
+typedef enum {
+    TJS_HTTP_1_1,
+    TJS_HTTP_2,
+    TJS_HTTP_3,
+} TJSHttpVersion;
+
+static const char *tjs_http_version_name(TJSHttpVersion v) {
+    switch (v) {
+        case TJS_HTTP_3:
+            return "3";
+        case TJS_HTTP_2:
+            return "2";
+        default:
+            return "1.1";
+    }
+}
 
 /*
  * Per-request state, managed by us (not by lws per_session_data_size).
@@ -69,8 +95,10 @@ typedef struct TJSHttpRequest {
     int method;
     char url[2048];
     char remote_addr[64];
+    TJSHttpVersion http_version; /* wire protocol the request arrived over */
     bool body_complete;
-    bool chunked; /* true for Transfer-Encoding: chunked — body is streamed to JS */
+    bool dispatched; /* JS handler has been invoked for this request */
+    bool chunked;    /* true for Transfer-Encoding: chunked — body is streamed to JS */
     TJSHttpChunkState chunk_state;
     size_t chunk_size;
     size_t chunk_remaining;
@@ -83,6 +111,7 @@ typedef struct TJSHttpRequest {
     /* Response state. */
     bool responded;
     bool streaming;
+    bool chunked_response; /* h1 streaming response framed with Transfer-Encoding: chunked */
     struct list_head pending_writes;
     uint8_t *response_data; /* includes LWS_PRE padding */
     size_t response_len;    /* total length including LWS_PRE + headers + body */
@@ -137,13 +166,19 @@ typedef struct {
  * Per-server state.
  */
 typedef struct {
+    /* Self-pin keeping the JS wrapper (and thus this struct, which the vhost
+     * points into for its protocol name) alive while lws still owns a vhost.
+     * Registered with the runtime, so teardown releases it even when lws never
+     * reports the vhost gone — see the PROTOCOL_DESTROY handler. */
+    TJSHandlePin pin;
     JSContext *ctx;
     JSValue callback;                   /* JS onrequest handler */
     JSValue body_chunk_callback;        /* JS onBodyChunk handler for streaming bodies */
     JSValue close_callback;             /* JS onClose, invoked when lws fires PROTOCOL_DESTROY */
-    JSValue this_val;                   /* prevent GC while listening */
     JSValue ws_callbacks[WS_EVENT_MAX]; /* server-level: open, message, close, error */
     struct lws_vhost *vhost;
+    struct lws_vhost *quic_vhost; /* HTTP/3 (QUIC/UDP) vhost, or NULL if h3 off */
+    int vhost_count;              /* live vhosts (1, or 2 with h3); s is released on the last PROTOCOL_DESTROY */
     int port;
     bool closed;
     uint64_t next_req_id;
@@ -161,6 +196,7 @@ typedef struct {
     char *ssl_key_mem;
     char *ssl_ca_mem;
     char *ssl_passphrase;
+    char *alpn; /* explicit ALPN protocol list (e.g. "h2"), or NULL for lws default */
 } TJSHttpServer;
 
 static JSClassID tjs_httpserver_class_id;
@@ -242,9 +278,30 @@ static TJSWsConnection *tjs_wsconn_get(JSContext *ctx, JSValue obj) {
     return JS_GetOpaque2(ctx, obj, tjs_wsconn_class_id);
 }
 
+/* Clear the JS callbacks at teardown (see TJSHandlePin.detach) so the vhost
+ * teardown lws runs while destroying its context dispatches nothing. */
+static void tjs_httpserver_detach(TJSHandlePin *pin) {
+    TJSHttpServer *s = list_entry(pin, TJSHttpServer, pin);
+
+    JS_FreeValue(s->ctx, s->callback);
+    s->callback = JS_UNDEFINED;
+
+    JS_FreeValue(s->ctx, s->body_chunk_callback);
+    s->body_chunk_callback = JS_UNDEFINED;
+
+    JS_FreeValue(s->ctx, s->close_callback);
+    s->close_callback = JS_UNDEFINED;
+
+    for (int i = 0; i < WS_EVENT_MAX; i++) {
+        JS_FreeValue(s->ctx, s->ws_callbacks[i]);
+        s->ws_callbacks[i] = JS_UNDEFINED;
+    }
+}
+
 static void tjs_httpserver_finalizer(JSRuntime *rt, JSValue val) {
     TJSHttpServer *s = JS_GetOpaque(val, tjs_httpserver_class_id);
     if (s) {
+        CHECK(JS_IsUndefined(s->pin.obj));
         JS_FreeValueRT(rt, s->callback);
         JS_FreeValueRT(rt, s->body_chunk_callback);
         JS_FreeValueRT(rt, s->close_callback);
@@ -279,6 +336,7 @@ static void tjs_httpserver_finalizer(JSRuntime *rt, JSValue val) {
         js_free_rt(rt, s->ssl_key_mem);
         js_free_rt(rt, s->ssl_ca_mem);
         js_free_rt(rt, s->ssl_passphrase);
+        js_free_rt(rt, s->alpn);
 
         js_free_rt(rt, s);
     }
@@ -432,7 +490,17 @@ static const char *tjs_http_method_name(int method_idx) {
 static void tjs_http_invoke_handler(TJSHttpServer *s, TJSHttpRequest *req) {
     JSContext *ctx = s->ctx;
 
-    JSValue args[8];
+    /* Dispatch the request to JS exactly once. Over HTTP/2 a POST drives
+     * LWS_CALLBACK_HTTP twice (the bind-for-post step and the action step) and
+     * an empty body additionally yields an HTTP_BODY_COMPLETION; without this
+     * guard the handler would run more than once and emit duplicate responses
+     * on the stream. */
+    if (req->dispatched) {
+        return;
+    }
+    req->dispatched = true;
+
+    JSValue args[9];
     args[0] = JS_NewInt64(ctx, req->id);
     args[1] = JS_NewString(ctx, tjs_http_method_name(req->method));
     args[2] = JS_NewString(ctx, req->url);
@@ -445,6 +513,7 @@ static void tjs_http_invoke_handler(TJSHttpServer *s, TJSHttpRequest *req) {
     args[5] = JS_NewString(ctx, req->remote_addr);
     args[6] = JS_FALSE; /* not a WS upgrade */
     args[7] = JS_NewBool(ctx, req->chunked);
+    args[8] = JS_NewString(ctx, tjs_http_version_name(req->http_version));
 
     tjs_call_handler(ctx, s->callback, countof(args), args);
 
@@ -793,6 +862,17 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
         }
 
         case LWS_CALLBACK_HTTP: {
+            /* Over HTTP/2 a POST drives LWS_CALLBACK_HTTP twice (the
+             * bind-for-post step and the action step). If we already created
+             * per-request state for this stream, this is that duplicate —
+             * ignore it so we neither allocate a second request nor dispatch
+             * the handler twice. (wsi user is cleared when a request completes,
+             * so a genuine new request on a kept-alive connection still starts
+             * with no user pointer and is handled normally.) */
+            if (lws_wsi_user(wsi)) {
+                return 0;
+            }
+
             /* Allocate per-request state. */
             TJSHttpRequest *req = js_mallocz(s->ctx, sizeof(*req));
             if (!req) {
@@ -831,6 +911,20 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
             /* Get remote address. */
             lws_get_peer_simple(wsi, req->remote_addr, sizeof(req->remote_addr));
 
+            /* HTTP/2 and HTTP/3 requests carry the mandatory :method
+             * pseudo-header; an HTTP/1.x request never does. Record the version
+             * now, while the request headers are still live, so the handler can
+             * report the protocol and the response takes the mux write path.
+             * h3 additionally arrives on the QUIC vhost, which distinguishes it
+             * from h2 (both carry :method). */
+            if (lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_COLON_METHOD) <= 0) {
+                req->http_version = TJS_HTTP_1_1;
+            } else if (s->quic_vhost && lws_get_vhost(wsi) == s->quic_vhost) {
+                req->http_version = TJS_HTTP_3;
+            } else {
+                req->http_version = TJS_HTTP_2;
+            }
+
             /* Add to active requests hash table. */
             HASH_ADD(hh, s->active_requests, id, sizeof(req->id), req);
 
@@ -839,16 +933,11 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
             int has_cl = lws_hdr_copy(wsi, cl, sizeof(cl), WSI_TOKEN_HTTP_CONTENT_LENGTH);
             int has_te = lws_hdr_total_length(wsi, WSI_TOKEN_HTTP_TRANSFER_ENCODING);
 
-            /* RFC 9112 § 6.1: reject messages that carry both Content-Length and
-             * Transfer-Encoding so upstream/backend parsers cannot disagree about
-             * framing (HTTP request smuggling). */
-            if (has_cl > 0 && has_te > 0) {
-                lws_return_http_status(wsi, HTTP_STATUS_BAD_REQUEST, NULL);
-                return -1;
-            }
-
-            /* Only "chunked" is a recognized transfer coding; reject anything else
-             * per RFC 9112 § 6.1. */
+            /* A message carrying both Content-Length and Transfer-Encoding is
+             * ambiguous (RFC 9112 § 6.1, request smuggling); lws rejects it in
+             * its own parser before this callback, so we need not re-check here.
+             * Only "chunked" is a recognized transfer coding; reject anything
+             * else, which lws does not. */
             if (has_te > 0) {
                 char te[32];
                 int te_len = lws_hdr_copy(wsi, te, sizeof(te), WSI_TOKEN_HTTP_TRANSFER_ENCODING);
@@ -1035,24 +1124,56 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
             }
 
             if (req->streaming) {
-                /* Streaming path: dequeue and send pending writes. */
+                /* Streaming path: send the head chunk, in pieces the connection
+                 * can flush and within the h2 send window (same constraints as
+                 * the buffered path below). */
                 if (list_empty(&req->pending_writes)) {
                     return 0;
                 }
 
                 TJSHttpPendingWrite *pw = list_entry(req->pending_writes.next, TJSHttpPendingWrite, link);
 
-                enum lws_write_protocol wp = pw->is_final ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP;
-                int n = lws_write(wsi, pw->data + LWS_PRE, pw->len, wp);
+                /* One chunk per callback (see the buffered path). */
+                size_t to_write = MIN(pw->len - pw->sent, TJS_HTTP_WRITE_CHUNK_SIZE);
+
+                /* Respect the peer's HTTP/2 receive window. lws_write() does NOT
+                 * clamp to it, so writing past it overruns the window; for a body
+                 * that spans more than one window that desyncs flow control and the
+                 * transfer fails (the peer closes the connection mid-response). This
+                 * mirrors the client tx path (httpclient.c). A zero-length FINAL
+                 * (END_STREAM) carries no payload and consumes no window, so only
+                 * clamp when there is data to send. */
+                if (to_write > 0) {
+                    lws_fileofs_t allow = lws_get_peer_write_allowance(wsi);
+                    if (allow == 0) {
+                        /* No send credit now; lws re-fires writable on WINDOW_UPDATE. */
+                        return 0;
+                    }
+                    if (allow > 0 && (lws_fileofs_t) to_write > allow) {
+                        to_write = (size_t) allow;
+                    }
+                }
+
+                /* FINAL only on the piece that carries this chunk's last byte
+                 * of a final chunk, so h2 sets END_STREAM on the right frame. */
+                bool chunk_done = pw->sent + to_write >= pw->len;
+                enum lws_write_protocol wp = (pw->is_final && chunk_done) ? LWS_WRITE_HTTP_FINAL : LWS_WRITE_HTTP;
+                int n = lws_write(wsi, pw->data + LWS_PRE + pw->sent, to_write, wp);
+                if (n < 0) {
+                    return -1;
+                }
+                pw->sent += (size_t) n;
+
+                if (pw->sent < pw->len) {
+                    /* Chunk only partly sent; finish it on the next callback. */
+                    lws_callback_on_writable(wsi);
+                    return 0;
+                }
 
                 bool is_final = pw->is_final;
                 list_del(&pw->link);
                 js_free(s->ctx, pw->data);
                 js_free(s->ctx, pw);
-
-                if (n < 0) {
-                    return -1;
-                }
 
                 if (is_final) {
                     int must_close = lws_http_transaction_completed(wsi);
@@ -1081,11 +1202,33 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
                 return -1;
             }
 
+            /* Write at most one chunk the connection can flush per callback.
+             * Handing lws the whole body in one LWS_WRITE_HTTP_FINAL call
+             * truncated h2 bodies larger than one frame. */
+            size_t to_write = MIN(remaining, TJS_HTTP_WRITE_CHUNK_SIZE);
+
+            /* Respect the peer's HTTP/2 receive window (see the streaming path
+             * above and the client tx path in httpclient.c): lws_write() does not
+             * clamp to it, and overrunning desyncs flow control, failing the
+             * transfer for responses larger than one window. */
+            {
+                lws_fileofs_t allow = lws_get_peer_write_allowance(wsi);
+                if (allow == 0) {
+                    /* No send credit now; lws re-fires writable on WINDOW_UPDATE. */
+                    return 0;
+                }
+                if (allow > 0 && (lws_fileofs_t) to_write > allow) {
+                    to_write = (size_t) allow;
+                }
+            }
+
+            /* Flag FINAL only on the write that carries the last payload byte,
+             * so h2 sets END_STREAM on the correct DATA frame. */
             enum lws_write_protocol wp = LWS_WRITE_HTTP;
-            if (req->response_offset + remaining >= total_payload) {
+            if (req->response_offset + to_write >= total_payload) {
                 wp = LWS_WRITE_HTTP_FINAL;
             }
-            int n = lws_write(wsi, req->response_data + LWS_PRE + req->response_offset, remaining, wp);
+            int n = lws_write(wsi, req->response_data + LWS_PRE + req->response_offset, to_write, wp);
             if (n < 0) {
                 return -1;
             }
@@ -1125,17 +1268,24 @@ static int tjs_http_callback(struct lws *wsi, enum lws_callback_reasons reason, 
         }
 
         case LWS_CALLBACK_PROTOCOL_DESTROY: {
+            /* Fired once per vhost whose protocol lws actually initialized.
+             * With HTTP/3 the server owns two vhosts (TCP + QUIC), both bound to
+             * this protocol/user; release s only after the last one is gone, or
+             * the second teardown reads freed memory. A vhost destroyed before
+             * lws got round to its (deferred) protocol init never reports here,
+             * so this count can stay above zero forever — the pin is registered
+             * with the runtime, which releases it at teardown. */
+            if (--s->vhost_count > 0) {
+                return 0;
+            }
+
             if (JS_IsFunction(s->ctx, s->close_callback)) {
                 JSValue cb = s->close_callback;
                 s->close_callback = JS_UNDEFINED;
                 tjs_call_handler(s->ctx, cb, 0, NULL);
                 JS_FreeValue(s->ctx, cb);
             }
-            if (!JS_IsUndefined(s->this_val)) {
-                JSValue this_val = s->this_val;
-                s->this_val = JS_UNDEFINED;
-                JS_FreeValue(s->ctx, this_val);
-            }
+            tjs__handle_unpin(s->ctx, &s->pin);
             return 0;
         }
 
@@ -1277,7 +1427,8 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
     s->callback = JS_UNDEFINED;
     s->body_chunk_callback = JS_UNDEFINED;
     s->close_callback = JS_UNDEFINED;
-    s->this_val = JS_UNDEFINED;
+    s->pin.obj = JS_UNDEFINED;
+    s->pin.detach = tjs_httpserver_detach;
     for (int i = 0; i < WS_EVENT_MAX; i++) {
         s->ws_callbacks[i] = JS_UNDEFINED;
     }
@@ -1286,6 +1437,7 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
     s->ssl_key_mem = NULL;
     s->ssl_ca_mem = NULL;
     s->ssl_passphrase = NULL;
+    s->alpn = NULL;
 
     JSValue options = argv[0];
 
@@ -1335,6 +1487,7 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
     JSValue js_key = JS_GetPropertyStr(ctx, options, "keyPem");
 
     bool use_tls = JS_IsString(js_cert) && JS_IsString(js_key);
+    bool want_http3 = false;
 
     if (use_tls) {
         const char *cert_str = JS_ToCString(ctx, js_cert);
@@ -1366,6 +1519,24 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
             JS_FreeCString(ctx, pp_str);
         }
         JS_FreeValue(ctx, js_passphrase);
+
+        /* Explicit ALPN protocol list to advertise, e.g. "h2" to require
+         * HTTP/2. Without it the TCP vhost offers "h2,http/1.1". */
+        JSValue js_alpn = JS_GetPropertyStr(ctx, options, "alpn");
+        if (JS_IsString(js_alpn)) {
+            const char *alpn_str = JS_ToCString(ctx, js_alpn);
+            CHECK_NOT_NULL(alpn_str);
+            s->alpn = js_strdup(ctx, alpn_str);
+            JS_FreeCString(ctx, alpn_str);
+        }
+        JS_FreeValue(ctx, js_alpn);
+
+        /* Serve HTTP/3 over QUIC (UDP) on the same port. Requires TLS (QUIC is
+         * always TLS 1.3). The TCP vhost keeps serving h1/h2 and advertises h3
+         * to clients via an Alt-Svc response header. */
+        JSValue js_http3 = JS_GetPropertyStr(ctx, options, "http3");
+        want_http3 = JS_ToBool(ctx, js_http3);
+        JS_FreeValue(ctx, js_http3);
     }
 
     JS_FreeValue(ctx, js_cert);
@@ -1416,6 +1587,11 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
             vhost_info.ssl_private_key_password = s->ssl_passphrase;
         }
 
+        /* lws derives its default ALPN list from the enabled roles, which on an
+         * HTTP/3-capable build offers h3 and WebTransport over TCP, where
+         * neither can exist.  h3 is served on the separate QUIC vhost below. */
+        vhost_info.alpn = s->alpn ? s->alpn : "h2,http/1.1";
+
         /* Client certificate requirement. */
         JSValue js_request_cert = JS_GetPropertyStr(ctx, options, "requestCert");
         if (JS_ToBool(ctx, js_request_cert)) {
@@ -1426,18 +1602,91 @@ static JSValue tjs_httpserver_constructor(JSContext *ctx, JSValue new_target, in
 
     s->vhost = lws_create_vhost(lws_ctx, &vhost_info);
 
-    JS_FreeCString(ctx, listen_ip);
-
     if (!s->vhost) {
+        JS_FreeCString(ctx, listen_ip);
         JS_FreeValue(ctx, obj);
         return JS_ThrowInternalError(ctx, "failed to create HTTP server vhost");
     }
 
     /* Get the actual port (in case port 0 was used for auto-assignment). */
     s->port = lws_get_vhost_port(s->vhost);
+    s->vhost_count = 1;
+
+    /* HTTP/3: a second vhost bound to the QUIC role serves h3 over a UDP socket
+     * on the same port. lws does not open a UDP listener from vhost_info.port,
+     * so we create a no-TCP-listener vhost and adopt the UDP socket explicitly.
+     * It shares the server's protocols/user, cert and key with the TCP vhost;
+     * the TCP vhost advertises h3 to clients via an Alt-Svc header. */
+    if (want_http3) {
+        /* A wildcard bind address must be passed as NULL: lws_create_adopt_udp
+         * would otherwise try to resolve the literal string. */
+        const char *udp_ads = listen_ip;
+        if (udp_ads && (!udp_ads[0] || !strcmp(udp_ads, "0.0.0.0") || !strcmp(udp_ads, "::"))) {
+            udp_ads = NULL;
+        }
+
+        struct lws_context_creation_info qinfo;
+        memset(&qinfo, 0, sizeof(qinfo));
+        qinfo.port = CONTEXT_PORT_NO_LISTEN_SERVER;
+        qinfo.protocols = protocols;
+        qinfo.user = s;
+        qinfo.vhost_name = "tjs-http-server-h3";
+        qinfo.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+        qinfo.server_ssl_cert_mem = s->ssl_cert_mem;
+        qinfo.server_ssl_cert_mem_len = (unsigned int) strlen(s->ssl_cert_mem);
+        qinfo.server_ssl_private_key_mem = s->ssl_key_mem;
+        qinfo.server_ssl_private_key_mem_len = (unsigned int) strlen(s->ssl_key_mem);
+        qinfo.server_ssl_ca_mem = s->ssl_ca_mem;
+        qinfo.server_ssl_ca_mem_len = s->ssl_ca_mem ? (unsigned int) strlen(s->ssl_ca_mem) : 0;
+        qinfo.ssl_private_key_password = s->ssl_passphrase;
+        qinfo.listen_accept_role = "quic";
+        qinfo.listen_accept_protocol = s->ws_protocol_name;
+        qinfo.alpn = "h3,lws-quic";
+
+        s->quic_vhost = lws_create_vhost(lws_ctx, &qinfo);
+        if (!s->quic_vhost || !lws_create_adopt_udp(s->quic_vhost,
+                                                    udp_ads,
+                                                    s->port,
+                                                    LWS_CAUDP_BIND,
+                                                    s->ws_protocol_name,
+                                                    NULL,
+                                                    NULL,
+                                                    NULL,
+                                                    NULL,
+                                                    "tjs-quic-listen")) {
+            /*
+             * The QUIC listener could not be brought up (eg, the UDP port the
+             * TCP listener was auto-assigned is already taken). Tear down the
+             * vhosts that were created, mirroring close(): a created vhost's
+             * deferred protocol init / PROTOCOL_DESTROY runs on a later service
+             * loop and reads s via the vhost user pointer, so s must be kept
+             * alive (via the pin) until then or that callback reads freed
+             * memory. The server never started, so drop the close callback
+             * rather than firing it.
+             */
+            JS_FreeValue(ctx, s->close_callback);
+            s->close_callback = JS_UNDEFINED;
+            s->closed = true;
+            s->vhost_count = s->quic_vhost ? 2 : 1;
+            tjs__handle_pin(ctx, &s->pin, obj);
+            if (s->quic_vhost) {
+                lws_vhost_destroy(s->quic_vhost);
+                s->quic_vhost = NULL;
+            }
+            lws_vhost_destroy(s->vhost);
+            s->vhost = NULL;
+            JS_FreeCString(ctx, listen_ip);
+            JS_FreeValue(ctx, obj);
+            return JS_ThrowInternalError(ctx, "failed to create HTTP/3 (QUIC) listener");
+        }
+
+        s->vhost_count = 2;
+    }
+
+    JS_FreeCString(ctx, listen_ip);
 
     /* Prevent GC while server is active. */
-    s->this_val = JS_DupValue(ctx, obj);
+    tjs__handle_pin(ctx, &s->pin, obj);
 
     /* Kick lws service loop. */
     lws_cancel_service(lws_ctx);
@@ -1456,13 +1705,18 @@ static JSValue tjs_httpserver_close(JSContext *ctx, JSValue this_val, int argc, 
 
     s->closed = true;
 
+    if (s->quic_vhost) {
+        lws_vhost_destroy(s->quic_vhost);
+        s->quic_vhost = NULL;
+    }
+
     if (s->vhost) {
         lws_vhost_destroy(s->vhost);
         s->vhost = NULL;
     }
 
     /* Release callback references to break reference cycles.
-     * The server struct must stay alive (via this_val) until lws
+     * The server struct must stay alive (via the pin) until lws
      * fires PROTOCOL_DESTROY, so we only release callbacks here. */
     JS_FreeValue(ctx, s->callback);
     s->callback = JS_UNDEFINED;
@@ -1489,6 +1743,25 @@ static TJSHttpRequest *tjs_http_find_request(TJSHttpServer *s, uint64_t req_id) 
 
 /* Max size for response header buffer.  Matches Node.js / Deno default. */
 #define TJS_MAX_HEADER_SIZE 16384
+
+/* Advertise HTTP/3 to h1/h2 (TCP) clients via Alt-Svc so they can discover and
+ * upgrade to the QUIC listener on the same port. Not emitted on h3 responses
+ * (the client is already on h3). */
+static int tjs_http_add_altsvc(TJSHttpServer *s, TJSHttpRequest *req, unsigned char **p, unsigned char *end) {
+    if (!s->quic_vhost || req->http_version == TJS_HTTP_3) {
+        return 0;
+    }
+
+    char altsvc[64];
+    int n = lws_snprintf(altsvc, sizeof(altsvc), "h3=\":%d\"; ma=86400", s->port);
+
+    return lws_add_http_header_by_name(req->wsi,
+                                       (const unsigned char *) "alt-svc:",
+                                       (const unsigned char *) altsvc,
+                                       n,
+                                       p,
+                                       end);
+}
 
 /*
  * HttpServer.prototype.sendResponse(requestId, status, headersArray, bodyBuffer)
@@ -1535,6 +1808,11 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
     if (lws_add_http_header_status(req->wsi, (unsigned int) status, &p, end)) {
         js_free(ctx, header_buf);
         return JS_ThrowInternalError(ctx, "failed to add status header");
+    }
+
+    if (tjs_http_add_altsvc(s, req, &p, end)) {
+        js_free(ctx, header_buf);
+        return JS_ThrowInternalError(ctx, "failed to add alt-svc header");
     }
 
     /* Iterate headers array. */
@@ -1650,12 +1928,21 @@ static JSValue tjs_httpserver_send_response(JSContext *ctx, JSValue this_val, in
     if (body_len > 0) {
         lws_callback_on_writable(req->wsi);
     } else {
-        /* No body, complete the transaction now and release the request so
-         * a subsequent keep-alive transaction on this wsi doesn't accumulate
-         * the previous request's state.  The return value indicates whether
-         * lws will close the connection; we can't propagate that from here (we
-         * are not in the protocol callback), so we drop our state either way
-         * and let lws handle the wsi lifecycle. */
+        /* No body. Over a multiplexed protocol (HTTP/2 or HTTP/3) a response is
+         * not complete until its stream is closed with END_STREAM; the HEADERS
+         * frame alone leaves the peer waiting for a DATA frame (the transfer
+         * fails). Emit a zero-length LWS_WRITE_HTTP_FINAL to carry END_STREAM
+         * and end the stream. Over HTTP/1 the content-length: 0 header fully
+         * frames the response, so no terminator is needed. */
+        if (req->http_version != TJS_HTTP_1_1) {
+            lws_write(req->wsi, req->response_data + LWS_PRE + hdr_len, 0, LWS_WRITE_HTTP_FINAL);
+        }
+        /* Complete the transaction now and release the request so a subsequent
+         * keep-alive transaction on this wsi doesn't accumulate the previous
+         * request's state.  The return value indicates whether lws will close
+         * the connection; we can't propagate that from here (we are not in the
+         * protocol callback), so we drop our state either way and let lws handle
+         * the wsi lifecycle. */
         int must_close = lws_http_transaction_completed(req->wsi);
         (void) must_close;
         tjs_http_req_complete(s, req);
@@ -1703,10 +1990,36 @@ static JSValue tjs_httpserver_send_headers(JSContext *ctx, JSValue this_val, int
     unsigned char *p = start;
     unsigned char *end = header_buf + hdr_buf_size - 1;
 
-    /* Status line without Content-Length (streaming / unknown size). */
-    if (lws_add_http_common_headers(req->wsi, (unsigned int) status, NULL, LWS_ILLEGAL_HTTP_CONTENT_LEN, &p, end)) {
+    /* Streaming response of unknown length. Over a multiplexed protocol (HTTP/2
+     * or HTTP/3) the body is framed as DATA frames terminated by END_STREAM, so
+     * lws's common-headers path (which adds neither Content-Length nor
+     * Connection for a mux stream) is right. Over HTTP/1.1 that path would add
+     * "Connection: close" (lws close-delimits unknown-length h1 responses),
+     * which prevents keep-alive/pipelining. So for h1 we frame the body
+     * ourselves with Transfer-Encoding: chunked and keep the connection
+     * reusable. */
+    if (req->http_version != TJS_HTTP_1_1) {
+        if (lws_add_http_common_headers(req->wsi, (unsigned int) status, NULL, LWS_ILLEGAL_HTTP_CONTENT_LEN, &p, end)) {
+            js_free(ctx, header_buf);
+            return JS_ThrowInternalError(ctx, "failed to add status header");
+        }
+    } else {
+        req->chunked_response = true;
+        if (lws_add_http_header_status(req->wsi, (unsigned int) status, &p, end) ||
+            lws_add_http_header_by_token(req->wsi,
+                                         WSI_TOKEN_HTTP_TRANSFER_ENCODING,
+                                         (const unsigned char *) "chunked",
+                                         7,
+                                         &p,
+                                         end)) {
+            js_free(ctx, header_buf);
+            return JS_ThrowInternalError(ctx, "failed to add status header");
+        }
+    }
+
+    if (tjs_http_add_altsvc(s, req, &p, end)) {
         js_free(ctx, header_buf);
-        return JS_ThrowInternalError(ctx, "failed to add status header");
+        return JS_ThrowInternalError(ctx, "failed to add alt-svc header");
     }
 
     /* Add custom headers from the array. */
@@ -1805,6 +2118,27 @@ static JSValue tjs_httpserver_send_body(JSContext *ctx, JSValue this_val, int ar
         }
     }
 
+    /* For an h1 chunked streaming response we frame the payload ourselves:
+     * a non-empty chunk as "<hex-len>\r\n<data>\r\n", and the final write as the
+     * terminating "0\r\n\r\n". (Over h2 the body is raw DATA frames terminated by
+     * END_STREAM, so leave the bytes unframed there.) */
+    char chunk_hdr[24];
+    int chunk_hdr_len = 0;
+    bool add_terminator = req->chunked_response && is_final;
+    size_t out_len = data_len;
+
+    if (req->chunked_response) {
+        if (data && data_len > 0) {
+            chunk_hdr_len = snprintf(chunk_hdr, sizeof(chunk_hdr), "%zx\r\n", data_len);
+            out_len = (size_t) chunk_hdr_len + data_len + 2; /* hdr + data + CRLF */
+        } else {
+            out_len = 0;
+        }
+        if (add_terminator) {
+            out_len += 5; /* "0\r\n\r\n" */
+        }
+    }
+
     /* Allocate pending write with LWS_PRE padding. */
     TJSHttpPendingWrite *pw = js_malloc(ctx, sizeof(*pw));
     if (!pw) {
@@ -1812,17 +2146,31 @@ static JSValue tjs_httpserver_send_body(JSContext *ctx, JSValue this_val, int ar
         return JS_ThrowOutOfMemory(ctx);
     }
 
-    pw->data = js_malloc(ctx, LWS_PRE + data_len);
+    pw->data = js_malloc(ctx, LWS_PRE + out_len);
     if (!pw->data) {
         js_free(ctx, pw);
         JS_FreeValue(ctx, data_ab);
         return JS_ThrowOutOfMemory(ctx);
     }
 
-    if (data && data_len > 0) {
+    if (req->chunked_response) {
+        uint8_t *w = pw->data + LWS_PRE;
+        if (data && data_len > 0) {
+            memcpy(w, chunk_hdr, (size_t) chunk_hdr_len);
+            w += chunk_hdr_len;
+            memcpy(w, data, data_len);
+            w += data_len;
+            memcpy(w, "\r\n", 2);
+            w += 2;
+        }
+        if (add_terminator) {
+            memcpy(w, "0\r\n\r\n", 5);
+        }
+    } else if (data && data_len > 0) {
         memcpy(pw->data + LWS_PRE, data, data_len);
     }
-    pw->len = data_len;
+    pw->len = out_len;
+    pw->sent = 0;
     pw->is_final = is_final;
 
     JS_FreeValue(ctx, data_ab);

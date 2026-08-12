@@ -29,28 +29,36 @@ class CloseEvent extends Event {
 }
 
 class ErrorEvent extends Event {
+    #message;
+    #filename;
+    #lineno;
+    #colno;
     #error;
 
-    constructor(error) {
-        super('error');
+    constructor(type, init = {}) {
+        super(type, init);
 
-        this.#error = error;
+        this.#message = init.message ?? '';
+        this.#filename = init.filename ?? '';
+        this.#lineno = init.lineno ?? 0;
+        this.#colno = init.colno ?? 0;
+        this.#error = init.error;
     }
 
     get message() {
-        return String(this.#error);
+        return this.#message;
     }
 
     get filename() {
-        return undefined;
+        return this.#filename;
     }
 
     get lineno() {
-        return undefined;
+        return this.#lineno;
     }
 
     get colno() {
-        return undefined;
+        return this.#colno;
     }
 
     get error() {
@@ -60,15 +68,39 @@ class ErrorEvent extends Event {
 
 class MessageEvent extends Event {
     #data;
+    #origin;
+    #lastEventId;
+    #source;
+    #ports;
 
-    constructor(eventTye, data) {
-        super(eventTye);
+    constructor(type, init = {}) {
+        super(type, init);
 
-        this.#data = data;
+        this.#data = init.data ?? null;
+        this.#origin = init.origin !== undefined ? String(init.origin) : '';
+        this.#lastEventId = init.lastEventId !== undefined ? String(init.lastEventId) : '';
+        this.#source = init.source ?? null;
+        this.#ports = init.ports ? [ ...init.ports ] : [];
     }
 
     get data() {
         return this.#data;
+    }
+
+    get origin() {
+        return this.#origin;
+    }
+
+    get lastEventId() {
+        return this.#lastEventId;
+    }
+
+    get source() {
+        return this.#source;
+    }
+
+    get ports() {
+        return this.#ports;
     }
 }
 

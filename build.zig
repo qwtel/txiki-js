@@ -255,6 +255,7 @@ fn build2(
             "src/ws.c",
             "src/httpclient.c",
             "src/httpserver.c",
+            "src/mod_channel.c",
             "src/mod_dns.c",
             "src/mod_engine.c",
             "src/mod_fs.c",

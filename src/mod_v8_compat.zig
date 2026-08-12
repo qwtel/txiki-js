@@ -219,8 +219,8 @@ fn jsSerializerWriteUint64(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c
     return z.JS_UNDEFINED;
 }
 
-fn freeFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque) callconv(.c) void {
-    c.js_free_rt(rt, ptr);
+fn reallocFunc(rt: ?*c.JSRuntime, _: ?*anyopaque, ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
+    return c.js_realloc_rt(rt, ptr, size);
 }
 
 fn jsSerializerReleaseBuffer(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc: c_int, argv: [*c]c.JSValueConst) callconv(.c) c.JSValue {
@@ -231,7 +231,7 @@ fn jsSerializerReleaseBuffer(ctx: ?*c.JSContext, this_val: c.JSValueConst, argc:
     };
     _ = argc;
     _ = argv;
-    return c.JS_NewUint8Array(ctx, bytes.ptr, bytes.len, &freeFunc, null, false);
+    return c.JS_NewUint8Array(ctx, bytes.ptr, bytes.len, &reallocFunc, null, false);
 }
 
 const serializer_class = c.JSClassDef{

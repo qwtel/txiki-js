@@ -6,6 +6,8 @@ import './self.js';
 import './timers.js';
 import './event-target-polyfill.js';
 import './structured-clone.js';
+import './message-channel.js';
+import './broadcast-channel.js';
 
 import './text-encoding.js';
 import './text-encode-transform.js';
@@ -31,11 +33,12 @@ import './compression-streams.js';
 
 // XXX: Could remove it form the build entirely by using --define in esbuild.
 // But since it's only a couples LoCs it's not really worth it.
-if ('HttpClient' in core && 'WebSocket' in core && 'HttpServer' in core) {
+if ('TCP' in core && 'HttpClient' in core && 'WebSocket' in core && 'HttpServer' in core) {
     await import('./xhr.js');
     await import('./fetch/polyfill.js');
     await import('./ws.js');
     await import('./ws-stream.js');
+    await import('./eventsource.js');
 }
 
 if ('sqlite3' in core) {

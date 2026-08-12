@@ -14,12 +14,15 @@ txiki.js implements a number of Web Platform APIs to provide a familiar environm
 | [AbortController](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) / [AbortSignal](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) | Includes static `AbortSignal.abort()`, `timeout()`, `any()` |
 | [atob / btoa](https://developer.mozilla.org/en-US/docs/Web/API/btoa) | Base64 encode/decode |
 | [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) | |
+| [BroadcastChannel](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel) | Cross-worker pub/sub messaging |
+| [Channel Messaging API](https://developer.mozilla.org/en-US/docs/Web/API/Channel_Messaging_API) | `MessageChannel` / `MessagePort`, transferable across workers |
 | [CompressionStream](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream) / [DecompressionStream](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream) | Formats: `gzip`, `deflate`, `deflate-raw` |
 | [Console](https://developer.mozilla.org/en-US/docs/Web/API/Console) | |
 | [Crypto](https://developer.mozilla.org/en-US/docs/Web/API/Crypto) | Includes [SubtleCrypto](#web-crypto-subtlecrypto) |
 | [Direct Sockets](https://wicg.github.io/direct-sockets/) | TCP, TLS, UDP and Unix pipe sockets — see the [Networking](../guides/networking.md) guide |
 | [DOMException](https://developer.mozilla.org/en-US/docs/Web/API/DOMException) | |
 | [Encoding API](https://developer.mozilla.org/en-US/docs/Web/API/Encoding_API) | `TextEncoder` / `TextDecoder`, plus the streaming [`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream) / [`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream) |
+| [EventSource](https://developer.mozilla.org/en-US/docs/Web/API/EventSource) | Server-Sent Events over `fetch`; no CORS (`withCredentials` is a no-op) |
 | [EventTarget](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget) | |
 | [fetch](https://fetch.spec.whatwg.org/) | |
 | [File](https://developer.mozilla.org/en-US/docs/Web/API/File) | |
@@ -39,7 +42,7 @@ txiki.js implements a number of Web Platform APIs to provide a familiar environm
 | [WebAssembly](https://developer.mozilla.org/en-US/docs/WebAssembly) | Interpreter-based ([WAMR](https://github.com/bytecodealliance/wasm-micro-runtime)); some [limitations](#webassembly) |
 | [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) | [Extensions](#websocket--websocketstream-headers) |
 | [WebSocketStream](https://developer.mozilla.org/en-US/docs/Web/API/WebSocketStream) | [Extensions](#websocket--websocketstream-headers) |
-| [Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Worker) | |
+| [Web Workers](https://developer.mozilla.org/en-US/docs/Web/API/Worker) | Structured-clone messaging with transferables (`ArrayBuffer`, `MessagePort`) |
 | [XMLHttpRequest](https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest) | |
 
 ## Web Crypto (SubtleCrypto)

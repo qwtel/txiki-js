@@ -42,6 +42,24 @@
 extern const struct lws_protocols tjs_ws_protocol;
 extern const struct lws_protocols tjs_http_protocol;
 
+/* Format the value of the HTTP "Host" header for a client connection into buf.
+ * lws emits lws_client_connect_info.host verbatim, so a non-default port must
+ * be appended and IPv6 literals bracketed (RFC 7230 §5.4 / RFC 3986 §3.2.2).
+ * lws_parse_uri_create() stores IPv6 hosts without their brackets and defaults
+ * the port to 80 (http/ws) or 443 (https/wss). */
+void tjs__lws_format_host(char *buf, size_t buflen, const char *scheme, const char *host, int port) {
+    int default_port = (!strcmp(scheme, "https") || !strcmp(scheme, "wss")) ? 443 : 80;
+    bool is_ipv6 = strchr(host, ':') != NULL;
+    const char *lb = is_ipv6 ? "[" : "";
+    const char *rb = is_ipv6 ? "]" : "";
+
+    if (port == default_port) {
+        lws_snprintf(buf, buflen, "%s%s%s", lb, host, rb);
+    } else {
+        lws_snprintf(buf, buflen, "%s%s%s:%d", lb, host, rb, port);
+    }
+}
+
 #define TJS_LWS_HTTP_LOAD_PROTOCOL_NAME "tjs-http-load"
 
 typedef struct {
@@ -175,8 +193,18 @@ static void tjs__load_ca_bundle(TJSRuntime *qrt) {
     tbuf_init(qrt->ctx, &dbuf);
 
     if (tjs__load_file(qrt->ctx, &dbuf, qrt->lws.ca_bundle_path) == 0 && dbuf.size > 0) {
-        qrt->lws.ca_bundle_data = dbuf.buf;
-        qrt->lws.ca_bundle_len = (unsigned int) dbuf.size;
+        /* lws's mbedtls backend parses a mem CA bundle as PEM only when the
+         * buffer is NUL-terminated and the length passed to mbedtls includes
+         * that NUL; otherwise it misdetects DER and fails. Keep ca_bundle_len
+         * as the content length and append a NUL so tjs__set_ca_info can pass
+         * len + 1. */
+        size_t content_len = dbuf.size;
+        if (tbuf_putc(&dbuf, 0) == 0) {
+            qrt->lws.ca_bundle_data = dbuf.buf;
+            qrt->lws.ca_bundle_len = (unsigned int) content_len;
+        } else {
+            tbuf_free(&dbuf);
+        }
     } else {
         tbuf_free(&dbuf);
     }
@@ -185,12 +213,16 @@ static void tjs__load_ca_bundle(TJSRuntime *qrt) {
 static void tjs__set_ca_info(TJSRuntime *qrt, struct lws_context_creation_info *info) {
     tjs__load_ca_bundle(qrt);
 
+    /* lws's mbedtls backend feeds client_ssl_ca_mem straight to
+     * mbedtls_x509_crt_parse(), which only treats the buffer as PEM when the
+     * length includes the trailing NUL (otherwise it parses as DER and fails
+     * with -0x2180). Both buffers here are NUL-terminated, so pass len + 1. */
     if (qrt->lws.ca_bundle_data) {
         info->client_ssl_ca_mem = qrt->lws.ca_bundle_data;
-        info->client_ssl_ca_mem_len = qrt->lws.ca_bundle_len;
+        info->client_ssl_ca_mem_len = qrt->lws.ca_bundle_len + 1;
     } else {
         info->client_ssl_ca_mem = tjs_cacert_pem;
-        info->client_ssl_ca_mem_len = tjs_cacert_pem_len;
+        info->client_ssl_ca_mem_len = (unsigned int) tjs_cacert_pem_len + 1;
     }
 }
 
@@ -375,8 +407,26 @@ static struct lws_vhost *tjs__create_client_vhost(TJSRuntime *qrt, const char *n
 
     vinfo.port = CONTEXT_PORT_NO_LISTEN;
     vinfo.protocols = protocols;
-    vinfo.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+    /*
+     * H2_JUST_FIX_WINDOW_UPDATE_OVERFLOW: some h2 servers (e.g. Cloudflare)
+     * send a connection-level WINDOW_UPDATE that pushes the tx-credit window
+     * to exactly 2^31, one over the spec max; without this lws treats it as a
+     * fatal flow-control error and drops the connection. The option makes lws
+     * clamp the window instead. lws's own minimal-http-client sets it too.
+     */
+    vinfo.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT | LWS_SERVER_OPTION_H2_JUST_FIX_WINDOW_UPDATE_OVERFLOW;
     vinfo.vhost_name = name;
+    /*
+     * ALPN list offered on TLS-over-TCP client handshakes.  lws derives its
+     * default from the enabled roles, which on an HTTP/3-capable build means
+     * "h2,h3,h3,wt,http/1.1" — it offers h3 (and WebTransport) over TCP, where
+     * neither can exist.  Most servers ignore the bogus entries, but Fastly
+     * selects h3, and lws then takes its QUIC-negotiated-h3 path on a TCP
+     * socket: the connection migrates to a new wsi, the request is left queued
+     * on the txn queue, and fetch() never settles.  The h3 path sets ALPN "h3"
+     * per connection (httpclient.c), which overrides this.
+     */
+    vinfo.alpn = "h2,http/1.1";
     vinfo.pt_serv_buf_size = 16384;
     vinfo.max_http_header_data2 = 16384;
 
@@ -611,7 +661,9 @@ static int tjs__lws_load_http_once(TJSRuntime *qrt, TJSHttpLoadCtx *load_ctx, co
 
     info.port = CONTEXT_PORT_NO_LISTEN;
     info.protocols = protocols;
-    info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+    /* See tjs__create_client_vhost: tolerate h2 servers that overflow the
+     * connection-level window (e.g. Cloudflare) instead of dropping them. */
+    info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT | LWS_SERVER_OPTION_H2_JUST_FIX_WINDOW_UPDATE_OVERFLOW;
 
     tjs__set_ca_info(qrt, &info);
 
@@ -690,13 +742,19 @@ static int tjs__lws_load_http_once(TJSRuntime *qrt, TJSHttpLoadCtx *load_ctx, co
     struct lws_client_connect_info cci;
     memset(&cci, 0, sizeof(cci));
 
+    /* lws emits cci.host verbatim as the Host header; include a non-default
+     * port so the server sees the correct authority (RFC 7230 §5.4). */
+    char host_hdr[512];
+    tjs__lws_format_host(host_hdr, sizeof(host_hdr), uri->scheme, uri->host, uri->port);
+
     cci.context = lws_ctx;
     cci.address = ip_str;
     cci.port = uri->port;
     cci.path = full_path;
-    cci.host = uri->host;
+    cci.host = host_hdr;
     cci.origin = uri->host;
-    cci.ssl_connection = (use_ssl ? LCCSCF_USE_SSL : 0);
+    cci.ssl_connection =
+        (use_ssl ? LCCSCF_USE_SSL : 0) | LCCSCF_H2_QUIRK_OVERFLOWS_TXCR | LCCSCF_H2_QUIRK_NGHTTP2_END_STREAM;
     cci.method = "GET";
     cci.local_protocol_name = TJS_LWS_HTTP_LOAD_PROTOCOL_NAME;
     cci.userdata = load_ctx;

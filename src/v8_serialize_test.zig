@@ -140,8 +140,7 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
 test "tjs_structs layouts match QuickJS" {
     const js_value_size = @sizeOf(c.JSValue);
 
-    try testing.expectEqual(@as(usize, 4), @sizeOf(z.JSRefCountHeader));
-    try testing.expectEqual(@as(usize, 8), @sizeOf(z.JSBigInt));
+    try testing.expectEqual(@as(usize, 4), @sizeOf(z.JSBigInt));
     try testing.expectEqual(@as(usize, 16), @sizeOf(z.JSRegExp));
     try testing.expectEqual(@as(usize, 48 + 2 * js_value_size), @sizeOf(z.JSMapRecord));
     try testing.expectEqual(@as(usize, 48), @sizeOf(z.JSMapState));
@@ -506,7 +505,7 @@ test "deserialize error 1" {
     try testDeserialize(&data,
         \\(() => {
         \\  const reason = Error("");
-        \\  reason.stack = `Error: signal is aborted without reason
+        \\  Object.defineProperty(reason, "stack", { value: `Error: signal is aborted without reason
         \\    at abort (https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:30617:17)
         \\    at signal (https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:30621:7)
         \\    at https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:35228:96
@@ -516,7 +515,7 @@ test "deserialize error 1" {
         \\    at Object.fn (https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:2471:37)
         \\    at runComputation (https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:2747:22)
         \\    at updateComputation (https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:2726:3)
-        \\    at runTop (https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:2838:7)`;
+        \\    at runTop (https://file+.vscode-resource.vscode-cdn.net/Users/qwtel/GitHub/vscode-extension-samples/custom-editor-sample/sqlite-viewer-core/vscode/build/assets/index.js:2838:7)`, writable: true, configurable: true });
         \\  return { reason };
         \\})()
     );

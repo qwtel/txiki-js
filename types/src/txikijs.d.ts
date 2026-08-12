@@ -1118,6 +1118,11 @@ declare global {
             server: Server;
             /** The remote client IP address. */
             remoteAddress: string;
+            /**
+            * The HTTP version the request was received over: `"2"` for HTTP/2
+            * (negotiated via ALPN on a TLS connection) or `"1.1"` otherwise.
+            */
+            httpVersion: string;
         }
 
         /**
@@ -1136,6 +1141,15 @@ declare global {
             passphrase?: string;
             /** If `true`, the server requires a valid client certificate. Implies use of {@link ca}. */
             requestCert?: boolean;
+            /**
+             * ALPN protocol list to advertise during the TLS handshake, in
+             * preference order. When omitted, the server offers every enabled
+             * protocol (`['h2', 'http/1.1']`). Restrict it to require a
+             * particular protocol — e.g. `['h2']` to require HTTP/2, so a
+             * client that cannot speak h2 fails the ALPN handshake instead of
+             * falling back to HTTP/1.1.
+             */
+            alpn?: string[];
         }
 
         /**
@@ -1154,6 +1168,13 @@ declare global {
             websocket?: WebSocketHandlers;
             /** TLS options for enabling HTTPS. When provided, the server listens for HTTPS connections. */
             tls?: TlsOptions;
+            /**
+             * If `true`, also serve HTTP/3 over QUIC (UDP) on the same port and
+             * advertise it to HTTP/1.1 and HTTP/2 clients with an `Alt-Svc`
+             * response header. Requires {@link tls} (QUIC is always TLS 1.3).
+             * Defaults to `false`.
+             */
+            http3?: boolean;
         }
 
         /**
@@ -1678,6 +1699,11 @@ declare global {
     /**
     * txiki.js adds `Symbol.dispose` to {@link Worker}, so
     * `using w = new Worker(url)` terminates the worker at scope exit.
+    *
+    * An uncaught error in the worker (at load, in a message handler, or an
+    * unhandled rejection) is surfaced as an `ErrorEvent` on the worker's
+    * `error` event, unless the worker cancels it via `self.onerror` +
+    * `preventDefault()`.
     */
     interface Worker extends Disposable {}
 }
