@@ -34,16 +34,35 @@ comptime {
 }
 
 pub const js_limb_t = u32;
+
+/// Mirrors JSBigInt in quickjs.c. The C flexible array member is represented
+/// by a zero-length array so that `tab` still points just past `len`.
 pub const JSBigInt = extern struct {
     len: u32, // number of limbs, >= 1
     tab: [0]js_limb_t, // two's complement representation, always normalized so that 'len' is the minimum possible length >= 1
 };
 
+comptime {
+    std.debug.assert(@sizeOf(JSBigInt) == 4);
+    std.debug.assert(@offsetOf(JSBigInt, "len") == 0);
+    std.debug.assert(@offsetOf(JSBigInt, "tab") == 4);
+}
+
+/// Mirrors JSRegExp in quickjs.c. Both fields are borrowed pointers to
+/// QuickJS-owned strings; `bytecode` also contains the regexp flags.
 pub const JSRegExp = extern struct {
     pattern: *JSString,
     bytecode: *JSString, // also contains the flags
 };
 
+comptime {
+    std.debug.assert(@sizeOf(JSRegExp) == 2 * @sizeOf(*JSString));
+    std.debug.assert(@offsetOf(JSRegExp, "pattern") == 0);
+    std.debug.assert(@offsetOf(JSRegExp, "bytecode") == @sizeOf(*JSString));
+}
+
+/// Mirrors JSMapRecord in quickjs.c. `link` is the intrusive-list node used
+/// to recover the enclosing record, so its exact offset is ABI-critical.
 pub const JSMapRecord = extern struct {
     ref_count: c_int, // used during enumeration to avoid freeing the record
     empty: bool, // TRUE if the record is deleted
@@ -54,6 +73,8 @@ pub const JSMapRecord = extern struct {
     value: c.JSValue,
 };
 
+/// Mirrors JSMapState in quickjs.c. The serializer borrows its record list;
+/// QuickJS retains ownership of the state, records, and hash table.
 pub const JSMapState = extern struct {
     is_weak: bool,
     records: c.list_head,
@@ -62,6 +83,60 @@ pub const JSMapState = extern struct {
     hash_size: u32,
     record_count_threshold: u32,
 };
+
+fn abiAlignForward(offset: usize, alignment: usize) usize {
+    return ((offset + alignment - 1) / alignment) * alignment;
+}
+
+comptime {
+    const map_offset = abiAlignForward(
+        @sizeOf(c_int) + @sizeOf(bool),
+        @alignOf(*JSMapState),
+    );
+    const link_offset = abiAlignForward(
+        map_offset + @sizeOf(*JSMapState),
+        @alignOf(c.list_head),
+    );
+    const key_offset = abiAlignForward(
+        link_offset + 2 * @sizeOf(c.list_head),
+        @alignOf(c.JSValue),
+    );
+    const record_size = abiAlignForward(
+        key_offset + 2 * @sizeOf(c.JSValue),
+        @alignOf(JSMapRecord),
+    );
+
+    std.debug.assert(@offsetOf(JSMapRecord, "ref_count") == 0);
+    std.debug.assert(@offsetOf(JSMapRecord, "empty") == @sizeOf(c_int));
+    std.debug.assert(@offsetOf(JSMapRecord, "map") == map_offset);
+    std.debug.assert(@offsetOf(JSMapRecord, "link") == link_offset);
+    std.debug.assert(@offsetOf(JSMapRecord, "key") == key_offset);
+    std.debug.assert(@offsetOf(JSMapRecord, "value") == key_offset + @sizeOf(c.JSValue));
+    std.debug.assert(@sizeOf(JSMapRecord) == record_size);
+
+    const records_offset = abiAlignForward(
+        @sizeOf(bool),
+        @alignOf(c.list_head),
+    );
+    const record_count_offset = abiAlignForward(
+        records_offset + @sizeOf(c.list_head),
+        @alignOf(u32),
+    );
+    const hash_table_offset = abiAlignForward(
+        record_count_offset + @sizeOf(u32),
+        @alignOf(*c.list_head),
+    );
+    const state_size = abiAlignForward(
+        hash_table_offset + @sizeOf(*c.list_head) + 2 * @sizeOf(u32),
+        @alignOf(JSMapState),
+    );
+
+    std.debug.assert(@offsetOf(JSMapState, "is_weak") == 0);
+    std.debug.assert(@offsetOf(JSMapState, "records") == records_offset);
+    std.debug.assert(@offsetOf(JSMapState, "record_count") == record_count_offset);
+    std.debug.assert(@offsetOf(JSMapState, "hash_table") == hash_table_offset);
+    std.debug.assert(@sizeOf(JSMapState) == state_size);
+}
 
 /// These are the values of the `class_id` field in `JSObject`. In qjs they are named `JS_CLASS_*`.
 /// IMPORTANT: This must match the anonymous enum in quickjs.c (not exported in quickjs.h).
