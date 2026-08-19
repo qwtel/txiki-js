@@ -7,6 +7,32 @@ pub const c = @import("c");
 
 pub const JSString = opaque {};
 
+pub const JSShape = opaque {};
+
+/// Mirrors JSShapeProperty in quickjs.c. QuickJS stores the six flag bits at
+/// the top of the first word and the atom in the second word.
+pub const JSShapeProperty = extern struct {
+    hash_next_and_flags: u32,
+    atom: c.JSAtom,
+
+    pub fn flags(self: JSShapeProperty) u32 {
+        return self.hash_next_and_flags >> 26;
+    }
+};
+
+/// Mirrors JSProperty in quickjs.c. The value member is only valid for a
+/// JS_PROP_NORMAL shape property.
+pub const JSProperty = extern union {
+    value: c.JSValue,
+    raw: [2]usize,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(JSShapeProperty) == 8);
+    std.debug.assert(@offsetOf(JSShapeProperty, "atom") == 4);
+    std.debug.assert(@sizeOf(JSProperty) == @sizeOf(c.JSValue));
+}
+
 pub const js_limb_t = u32;
 pub const JSBigInt = extern struct {
     len: u32, // number of limbs, >= 1

@@ -17,11 +17,15 @@ extern fn _js_dataview_constructor(ctx: ?*c.JSContext, new_target: c.JSValue, ar
 extern fn _js_get_regexp(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSRegExp;
 extern fn _js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) bool;
 extern fn _js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) bool;
-extern fn _js_get_non_index_enumerable_string_keys_excluding(ctx: ?*c.JSContext, ptab: [*c][*c]c.JSPropertyEnum, plen: *u32, obj: c.JSValueConst, skip_indices_below: u32) c_int;
+extern fn _js_atom_is_array_index(ctx: ?*c.JSContext, pval: *u32, atom: c.JSAtom) bool;
+extern fn _js_atom_get_string(ctx: ?*c.JSContext, atom: c.JSAtom) ?*const z.JSString;
+extern fn _js_get_object_shape_and_prop_ptrs(obj: c.JSValue, pprop_ptr: **[*]z.JSProperty, pflags: *u8) **z.JSShape;
+extern fn _js_get_shape_prop(shape: *z.JSShape, pcount: *u32) [*]const z.JSShapeProperty;
+extern fn _js_dup_shape(shape: *z.JSShape) *z.JSShape;
+extern fn _js_free_shape(ctx: ?*c.JSContext, shape: *z.JSShape) void;
 
 // A few non-standard qjs functions that we've added.
 extern fn _js_check_stack_overflow(ctx: ?*c.JSContext, alloca_size: usize) bool;
-// extern fn _js_atom_is_string(ctx: ?*c.JSContext, v: c.JSAtom) bool;
 extern fn _js_get_map_state(ctx: ?*c.JSContext, obj: c.JSValue, throw_error: bool) *z.JSMapState;
 extern fn _js_string_is_wide_char(p: *const z.JSString) bool;
 extern fn _js_string_get_len(p: *const z.JSString) u32;
@@ -271,6 +275,19 @@ pub fn Serializer(comptime Delegate: type) type {
         delegate: ?Delegate,
 
         const Self = @This();
+
+        const ObjectShapeFlags = packed struct(u8) {
+            is_exotic: bool,
+            is_fast_array: bool,
+            _: u6,
+        };
+
+        const ShapePropertyKey = union(enum) {
+            skip,
+            excluded_index,
+            fallback,
+            string: *const z.JSString,
+        };
 
         pub fn init(allocator: std.mem.Allocator, ctx: ?*c.JSContext, delegate: ?Delegate) !Self {
             return Self{
@@ -646,42 +663,89 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeJSObject(self: *Self, obj: c.JSValue) !void {
-            // const raw_props: [*]z.JSShapeProperty = @ptrCast(&p.shape.prop);
-            // const props = raw_props[0..@intCast(p.shape.prop_size)];
-
-            // var properties_written: u32 = 0;
-            // var is_pojo = true;
-
-            // inline for (0..2) |pass| {
-            //     if (is_pojo) {
-            //         if (pass == 1) try self.writeTag(.BeginJSObject);
-            //         for (props, 0..) |*prop, i| {
-            //             const atom = prop.atom;
-            //             const flags = prop.flags();
-            //             if (atom != c.JS_ATOM_NULL and _js_atom_is_string(self.ctx, atom) == cTRUE and (flags & c.JS_PROP_ENUMERABLE) != 0) {
-            //                 if (pass == 0 and (flags & c.JS_PROP_TMASK) != 0) {
-            //                     is_pojo = false;
-            //                     break;
-            //                 }
-            //                 if (pass == 1) {
-            //                     const key = c.JS_AtomToValue(self.ctx, atom);
-            //                     defer c.JS_FreeValue(self.ctx, key);
-
-            //                     const value = p.prop[i].u.value;
-
-            //                     try self.writeObject(key);
-            //                     try self.writeObject(value);
-            //                     properties_written += 1;
-            //                 }
-            //             }
-            //         }
-            //         if (pass == 1) try self.writeTag(.EndJSObject);
-            //         if (pass == 1) try self.writeVarint(u32, properties_written);
-            //     } else {
-            //         try self.writeJSObjectSlow(.Object, obj);
-            //     }
-            // }
+            if (try self.writeOwnEnumerableStringProperties(obj, 0, .begin_js_object)) |properties_written| {
+                try self.writeTag(.end_js_object);
+                try self.writeVarint(u32, properties_written);
+                return;
+            }
             try self.writeJSObjectOrSparseArraySlow(.Object, obj);
+        }
+
+        fn shapePropertyKey(self: *Self, property: z.JSShapeProperty, skip_indices_below: u32) ShapePropertyKey {
+            if (property.atom == c.JS_ATOM_NULL or (property.flags() & c.JS_PROP_ENUMERABLE) == 0) return .skip;
+
+            var index: u32 = undefined;
+            if (_js_atom_is_array_index(self.ctx, &index, property.atom)) {
+                return if (index < skip_indices_below) .excluded_index else .fallback;
+            }
+            return if (_js_atom_get_string(self.ctx, property.atom)) |key| .{ .string = key } else .skip;
+        }
+
+        /// Returns null when the object needs the general property-enumeration path.
+        fn writeOwnEnumerableStringProperties(self: *Self, obj: c.JSValue, skip_indices_below: u32, begin_tag: ?SerializationTag) !?u32 {
+            var object_properties_ptr: *[*]z.JSProperty = undefined;
+            var object_flags_byte: u8 = undefined;
+            const object_shape_ptr = _js_get_object_shape_and_prop_ptrs(obj, &object_properties_ptr, &object_flags_byte);
+            const initial_shape = object_shape_ptr.*;
+            const object_flags: ObjectShapeFlags = @bitCast(object_flags_byte);
+            if (object_flags.is_exotic and !object_flags.is_fast_array) return null;
+
+            var property_count: u32 = undefined;
+            const shape_properties = _js_get_shape_prop(initial_shape, &property_count)[0..property_count];
+
+            // Do all fallback and TDZ checks before emitting anything.
+            for (shape_properties) |property| {
+                switch (self.shapePropertyKey(property, skip_indices_below)) {
+                    .fallback => return null,
+                    .excluded_index, .string => {
+                        if ((property.flags() & c.JS_PROP_TMASK) == c.JS_PROP_VARREF) {
+                            const has_property = c.JS_HasProperty(self.ctx, obj, property.atom);
+                            if (has_property < 0) return Error.JSException;
+                        }
+                    },
+                    .skip => {},
+                }
+            }
+
+            const shape = _js_dup_shape(initial_shape);
+            defer _js_free_shape(self.ctx, shape);
+
+            var pending_begin_tag = begin_tag;
+            var properties_written: u32 = 0;
+            for (shape_properties, 0..) |property, i| {
+                const key = switch (self.shapePropertyKey(property, skip_indices_below)) {
+                    .skip, .excluded_index => continue,
+                    .fallback => unreachable,
+                    .string => |key| key,
+                };
+
+                const current_shape = object_shape_ptr.*;
+                const is_direct = current_shape == shape and (property.flags() & c.JS_PROP_TMASK) == c.JS_PROP_NORMAL;
+                const value = if (is_direct)
+                    c.JS_DupValue(self.ctx, object_properties_ptr.*[i].value)
+                else
+                    c.JS_GetProperty(self.ctx, obj, property.atom);
+                try exceptionCheck(value);
+                defer c.JS_FreeValue(self.ctx, value);
+
+                if (!is_direct) {
+                    const has_property = c.JS_HasProperty(self.ctx, obj, property.atom);
+                    if (has_property < 0) return Error.JSException;
+                    if (has_property == cFALSE) continue;
+                }
+
+                if (pending_begin_tag) |tag| {
+                    try self.writeTag(tag);
+                    pending_begin_tag = null;
+                }
+                try self.writeString(key);
+                try self.writeObject(value);
+                properties_written += 1;
+            }
+
+            // Empty objects never entered the property loop, so emit their opening tag here.
+            if (pending_begin_tag) |tag| try self.writeTag(tag);
+            return properties_written;
         }
 
         fn getOwnPropertyNames(self: *Self, obj: c.JSValue) ![]c.JSPropertyEnum {
@@ -711,21 +775,26 @@ pub fn Serializer(comptime Delegate: type) type {
         }
 
         fn writeArrayNonElementProps(self: *Self, arr: c.JSValue, length: u32) !u32 {
+            if (try self.writeOwnEnumerableStringProperties(arr, length, null)) |properties_written| {
+                return properties_written;
+            }
+
             var prop_enum: [*c]c.JSPropertyEnum = undefined;
             var len: u32 = 0;
 
-            // Iterate over shape properties only
-            if (_js_get_non_index_enumerable_string_keys_excluding(self.ctx, &prop_enum, &len, arr, length) != 0) {
+            if (c.JS_GetOwnPropertyNames(self.ctx, &prop_enum, &len, arr, c.JS_GPN_STRING_MASK | c.JS_GPN_ENUM_ONLY) != 0) {
                 @branchHint(.unlikely);
                 try self.throwDataCloneError();
             }
-            if (len == 0) return 0; // nothing allocated, nothing to free
             defer c.JS_FreePropertyEnum(self.ctx, prop_enum, @intCast(len));
 
             var properties_written: u32 = 0;
             const props = prop_enum[0..len];
 
             for (props) |prop| {
+                var index: u32 = undefined;
+                if (_js_atom_is_array_index(self.ctx, &index, prop.atom) and index < length) continue;
+
                 const key = c.JS_AtomToValue(self.ctx, prop.atom);
                 defer c.JS_FreeValue(self.ctx, key);
 

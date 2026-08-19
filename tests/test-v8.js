@@ -161,6 +161,40 @@ function generateRandomObject(breadth, depth) {
   assert.equal(c[1], 'b');
   assert.equal(c[10], 'c');
   assert.equal(c.x, 1);
+  assert.deepEqual(Object.keys(c), ['0', '1', '10', 'x']);
+}
+
+// Symbol keys are not part of the enumerable string-key snapshot
+{
+  const symbol = Symbol('ignored');
+  const o = { a: 1 };
+  o[symbol] = 2;
+  const c = structuredClone(o);
+  assert.deepEqual(c, { a: 1 });
+  assert.equal(Object.getOwnPropertySymbols(c).length, 0);
+
+  const a = [1];
+  a[symbol] = 2;
+  const ac = structuredClone(a);
+  assert.deepEqual(ac, [1]);
+  assert.equal(Object.getOwnPropertySymbols(ac).length, 0);
+}
+
+// Recursive serialization may mutate the shape currently being traversed
+{
+  const parent = { child: {}, removed: 2, changed: 3 };
+  Object.defineProperty(parent.child, 'value', {
+    enumerable: true,
+    get() {
+      delete parent.removed;
+      parent.changed = 4;
+      parent.added = 5;
+      return 1;
+    },
+  });
+
+  const c = structuredClone(parent);
+  assert.deepEqual(c, { child: { value: 1 }, changed: 4 });
 }
 
 // RegExp flags
