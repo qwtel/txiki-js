@@ -19,6 +19,7 @@ extern fn _js_is_fast_array(ctx: ?*c.JSContext, obj: c.JSValue) bool;
 extern fn _js_get_fast_array(ctx: ?*c.JSContext, obj: c.JSValue, arrpp: *[*]c.JSValue, countp: *u32) bool;
 extern fn _js_atom_is_array_index(ctx: ?*c.JSContext, pval: *u32, atom: c.JSAtom) bool;
 extern fn _js_atom_get_string(ctx: ?*c.JSContext, atom: c.JSAtom) ?*const z.JSString;
+extern fn _js_has_own_property(ctx: ?*c.JSContext, obj: c.JSValue, atom: c.JSAtom) c_int;
 extern fn _js_get_object_shape_and_prop_ptrs(obj: c.JSValue, pprop_ptr: **[*]z.JSProperty, pflags: *u8) **z.JSShape;
 extern fn _js_get_shape_prop(shape: *z.JSShape, pcount: *u32) [*]const z.JSShapeProperty;
 extern fn _js_dup_shape(shape: *z.JSShape) *z.JSShape;
@@ -1503,21 +1504,26 @@ pub fn Deserializer(comptime Delegate: type) type {
                 const key = try self.readObject();
                 defer c.JS_FreeValue(self.ctx, key);
 
-                const property_key = c.JS_ToPropertyKey(self.ctx, key);
-                try exceptionCheck(property_key);
-                defer c.JS_FreeValue(self.ctx, key);
+                // V8 accepts names and numbers as serialized object keys. Symbols
+                // cannot occur because they are not themselves serializable.
+                if (!c.JS_IsString(key) and !c.JS_IsNumber(key)) try self.throwDataCloneDeserializationError();
 
-                const value = try self.readObject();
-                errdefer c.JS_FreeValue(self.ctx, value); // XXX: not good enough
-
-                const atom = c.JS_ValueToAtom(self.ctx, property_key);
+                const atom = c.JS_ValueToAtom(self.ctx, key);
+                if (atom == c.JS_ATOM_NULL) return Error.JSException;
                 defer c.JS_FreeAtom(self.ctx, atom);
 
-                // if the property already exists, something went wrong (probably getter/setter modified the object)
-                const has_property = c.JS_HasProperty(self.ctx, object, atom);
+                const value = try self.readObject();
+                var value_owned = true;
+                defer if (value_owned) c.JS_FreeValue(self.ctx, value);
+
+                // Reading the value can run user code, so check for an own property
+                // afterward. Inherited properties do not conflict with a new own one.
+                const has_property = _js_has_own_property(self.ctx, object, atom);
                 if (has_property < 0) return Error.JSException;
                 if (has_property == cTRUE) try self.throwDataCloneDeserializationError();
 
+                // JS_DefinePropertyValue consumes value even when it fails.
+                value_owned = false;
                 const code = c.JS_DefinePropertyValue(self.ctx, object, atom, value, c.JS_PROP_C_W_E);
                 if (code < 0) return Error.JSException;
             }

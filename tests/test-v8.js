@@ -164,6 +164,28 @@ function generateRandomObject(breadth, depth) {
   assert.deepEqual(Object.keys(c), ['0', '1', '10', 'x']);
 }
 
+// Inherited names do not conflict with deserialized own properties
+{
+  const o = { toString: 1, constructor: 2, hasOwnProperty: 3 };
+  const c = structuredClone(o);
+  assert.deepEqual(Object.keys(c), ['toString', 'constructor', 'hasOwnProperty']);
+  assert.equal(Object.hasOwn(c, 'toString'), true);
+  assert.equal(Object.hasOwn(c, 'constructor'), true);
+  assert.equal(Object.hasOwn(c, 'hasOwnProperty'), true);
+  assert.equal(c.toString, 1);
+  assert.equal(c.constructor, 2);
+  assert.equal(c.hasOwnProperty, 3);
+}
+
+// Duplicate own properties in malformed input are rejected
+{
+  const data = serialize({ a: 1, b: 2 });
+  const b = data.lastIndexOf('b'.charCodeAt(0));
+  assert.equal(b >= 0, true);
+  data[b] = 'a'.charCodeAt(0);
+  assert.throws(() => deserialize(data));
+}
+
 // Symbol keys are not part of the enumerable string-key snapshot
 {
   const symbol = Symbol('ignored');
