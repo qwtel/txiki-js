@@ -2,7 +2,6 @@ import core from 'tjs:internal/core';
 const sqlite3 = core.sqlite3;
 const sqlite3_async = core.sqlite3_async;
 
-const kSqlite3AsyncHandle = Symbol('kSqlite3AsyncHandle');
 let controllers;
 
 function assertAsyncSqliteAvailable() {
@@ -210,6 +209,7 @@ function attachAbortSignal(handle, promise, signal) {
 
 
 class AsyncDatabase {
+    #handle;
     #queue = Promise.resolve();
 
     constructor(dbName = ':memory:', options = { create: true, readOnly: false }) {
@@ -227,13 +227,13 @@ class AsyncDatabase {
             flags |= sqlite3_async.SQLITE_OPEN_READWRITE;
         }
 
-        this[kSqlite3AsyncHandle] = sqlite3_async.open(dbName, flags);
+        this.#handle = sqlite3_async.open(dbName, flags);
     }
 
     close() {
-        if (this[kSqlite3AsyncHandle]) {
-            sqlite3_async.close(this[kSqlite3AsyncHandle]);
-            this[kSqlite3AsyncHandle] = null;
+        if (this.#handle) {
+            sqlite3_async.close(this.#handle);
+            this.#handle = null;
         }
     }
 
@@ -243,15 +243,15 @@ class AsyncDatabase {
     }
 
     loadExtension(file, entrypoint=undefined) {
-        return sqlite3_async.load_extension(this[kSqlite3AsyncHandle], file, entrypoint);
+        return sqlite3_async.load_extension(this.#handle, file, entrypoint);
     }
 
     run(sql, params, options = {}) {
-        if (!this[kSqlite3AsyncHandle]) {
+        if (!this.#handle) {
             throw new Error('Invalid DB');
         }
 
-        const handle = this[kSqlite3AsyncHandle];
+        const handle = this.#handle;
         const result = this.#queue.then(() => {
             const promise = sqlite3_async.exec_async(handle, sql, params);
             attachAbortSignal(handle, promise, options.signal);
@@ -264,11 +264,11 @@ class AsyncDatabase {
     }
 
     all(sql, params, options = {}) {
-        if (!this[kSqlite3AsyncHandle]) {
+        if (!this.#handle) {
             throw new Error('Invalid DB');
         }
 
-        const handle = this[kSqlite3AsyncHandle];
+        const handle = this.#handle;
         const result = this.#queue.then(() => {
             const promise = sqlite3_async.all_async(handle, sql, params);
             attachAbortSignal(handle, promise, options.signal);

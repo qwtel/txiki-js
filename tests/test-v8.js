@@ -208,6 +208,28 @@ function generateRandomObject(breadth, depth) {
   assert.deepEqual(Array.from(new Uint8Array(b1)), [1,2,3,4,5,6,7,8]);
 }
 
+// Serializer-owned buffers remain transferable when the transfer resizes them.
+{
+  const serializer = new Serializer();
+  serializer.writeHeader();
+  serializer.writeValue({ answer: 42 });
+
+  const serialized = serializer.releaseBuffer();
+  const expected = Array.from(serialized);
+  const originalLength = serialized.byteLength;
+  const grown = serialized.buffer.transfer(originalLength + 7);
+
+  assert.equal(serialized.byteLength, 0);
+  assert.equal(grown.byteLength, originalLength + 7);
+  assert.deepEqual(Array.from(new Uint8Array(grown, 0, originalLength)), expected);
+  assert.deepEqual(Array.from(new Uint8Array(grown, originalLength)), Array(7).fill(0));
+
+  const shrunk = grown.transfer(originalLength - 1);
+  assert.equal(grown.byteLength, 0);
+  assert.equal(shrunk.byteLength, originalLength - 1);
+  assert.deepEqual(Array.from(new Uint8Array(shrunk)), expected.slice(0, -1));
+}
+
 // Nested Maps/Sets
 {
   const inner = new Map([[{k:1}, new Set([1,2])]]);
