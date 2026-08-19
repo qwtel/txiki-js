@@ -1,0 +1,8 @@
+.{
+    .name = .mimalloc,
+    .version = "3.2.7",
+    .fingerprint = 0x26391c3938bf56e1,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{""},
+}

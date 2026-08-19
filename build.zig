@@ -46,8 +46,6 @@ fn build2(
     sanitize_tjs_c_import_exe: *std.Build.Step.Compile,
 ) ![2]?*std.Build.Step.Compile {
     const target = b.resolveTargetQuery(query);
-    const wamr_config = if (opts.with_wasm) try loadWamrConfig(b) else null;
-    defer if (wamr_config) |config| freeWamrConfig(b, config);
 
     if (opts.with_wasm and target.result.abi == .gnueabihf) {
         return .{ null, null };
@@ -90,6 +88,21 @@ fn build2(
         .target = target,
         .optimize = optimize,
     }) else null;
+    const dep_libffi = if (opts.with_ffi) b.dependency("libffi", .{
+        .target = target,
+        .optimize = optimize,
+    }) else null;
+
+    const libuv = dep_libuv.artifact("uv_a");
+    const mimalloc = if (dep_mimalloc) |dep| dep.artifact("mimalloc-static") else null;
+    const mbedcrypto = dep_mbedtls.artifact("mbedcrypto");
+    const mbedx509 = dep_mbedtls.artifact("mbedx509");
+    const mbedtls = dep_mbedtls.artifact("mbedtls");
+    const libwebsockets = if (dep_libwebsockets) |dep| dep.artifact("websockets") else null;
+    const wamr = if (dep_wamr) |dep| dep.artifact("vmlib") else null;
+    const libffi = if (dep_libffi) |dep| dep.artifact("ffi") else null;
+    const wamr_config = if (dep_wamr) |dep| try loadWamrConfig(b, dep.namedLazyPath("config")) else null;
+    defer if (wamr_config) |config| freeWamrConfig(b, config);
 
     const tjs_platform = try std.fmt.allocPrint(
         b.allocator,
@@ -108,8 +121,8 @@ fn build2(
     if (opts.with_sqlite) {
         translate_c.addIncludePath(dep_sqlite3.?.artifact("sqlite3").getEmittedIncludeTree());
     }
-    translate_c.addIncludePath(dep_libuv.artifact("uv_a").getEmittedIncludeTree());
-    translate_c.addIncludePath(dep_mbedtls.artifact("mbedcrypto").getEmittedIncludeTree());
+    translate_c.addIncludePath(libuv.getEmittedIncludeTree());
+    translate_c.addIncludePath(mbedcrypto.getEmittedIncludeTree());
     translate_c.defineCMacro("TJS__PLATFORM", tjs_platform);
     if (opts.with_sqlite) {
         translate_c.defineCMacro("TJS_HAVE_SQLITE", "1");
@@ -121,17 +134,15 @@ fn build2(
         translate_c.defineCMacro("TJS_HAVE_FFI", "1");
     }
     if (opts.with_wasm) {
-        const wamr = dep_wamr.?;
         translate_c.defineCMacro("TJS_HAVE_WASM", "1");
-        translate_c.addIncludePath(b.path("deps/wamr/core/iwasm/include"));
-        translate_c.addIncludePath(wamr.artifact("vmlib").getEmittedIncludeTree());
+        translate_c.addIncludePath(dep_wamr.?.namedLazyPath("source").path(b, "core/iwasm/include"));
+        translate_c.addIncludePath(wamr.?.getEmittedIncludeTree());
     }
     if (opts.with_mimalloc) {
         translate_c.defineCMacro("TJS__HAS_MIMALLOC", "1");
     }
     if (opts.with_network) {
-        const dep_lws = dep_libwebsockets.?;
-        translate_c.addIncludePath(dep_lws.artifact("websockets").getEmittedIncludeTree());
+        translate_c.addIncludePath(libwebsockets.?.getEmittedIncludeTree());
     } else {
         translate_c.defineCMacro("TJS__OMIT_NETWORK", "1");
     }
@@ -167,21 +178,20 @@ fn build2(
     lib.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
     lib.installLibraryHeaders(dep_quickjs.artifact("qjs"));
 
-    lib.root_module.linkLibrary(dep_libuv.artifact("uv_a"));
-    lib.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+    lib.root_module.linkLibrary(libuv);
+    lib.installLibraryHeaders(libuv);
     lib.root_module.linkLibrary(dep_miniz.artifact("miniz"));
     lib.installLibraryHeaders(dep_miniz.artifact("miniz"));
     lib.root_module.linkLibrary(dep_ada.artifact("ada"));
     lib.installLibraryHeaders(dep_ada.artifact("ada"));
-    lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedtls"));
-    lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedx509"));
-    lib.root_module.linkLibrary(dep_mbedtls.artifact("mbedcrypto"));
-    lib.installLibraryHeaders(dep_mbedtls.artifact("mbedtls"));
+    lib.root_module.linkLibrary(mbedtls);
+    lib.root_module.linkLibrary(mbedx509);
+    lib.root_module.linkLibrary(mbedcrypto);
+    lib.installLibraryHeaders(mbedtls);
 
     if (opts.with_ffi) {
-        lib.root_module.linkSystemLibrary("libffi", .{
-            .use_pkg_config = .force,
-        });
+        lib.root_module.linkLibrary(libffi.?);
+        lib.installLibraryHeaders(libffi.?);
     }
 
     if (opts.with_sqlite) {
@@ -190,24 +200,21 @@ fn build2(
     }
 
     if (opts.with_wasm) {
-        const wamr = dep_wamr.?;
-        lib.root_module.linkLibrary(wamr.artifact("vmlib"));
-        lib.installLibraryHeaders(wamr.artifact("vmlib"));
-        lib.root_module.addIncludePath(wamr.artifact("vmlib").getEmittedIncludeTree());
-        addWamrSourceIncludePaths(lib.root_module, wamr, target);
+        lib.root_module.linkLibrary(wamr.?);
+        lib.installLibraryHeaders(wamr.?);
+        lib.root_module.addIncludePath(wamr.?.getEmittedIncludeTree());
+        addWamrSourceIncludePaths(b, lib.root_module, dep_wamr.?.namedLazyPath("source"), target);
         addWamrRuntimeCMacros(lib.root_module, wamr_config.?, target, optimize);
     }
 
     if (opts.with_mimalloc) {
-        const mimalloc = dep_mimalloc.?;
-        lib.root_module.linkLibrary(mimalloc.artifact("mimalloc-static"));
-        lib.installLibraryHeaders(mimalloc.artifact("mimalloc-static"));
+        lib.root_module.linkLibrary(mimalloc.?);
+        lib.installLibraryHeaders(mimalloc.?);
     }
 
     if (opts.with_network) {
-        const dep_lws = dep_libwebsockets.?;
-        lib.root_module.linkLibrary(dep_lws.artifact("websockets"));
-        lib.installLibraryHeaders(dep_lws.artifact("websockets"));
+        lib.root_module.linkLibrary(libwebsockets.?);
+        lib.installLibraryHeaders(libwebsockets.?);
     }
 
     if (target.result.os.tag != .windows and !target.result.abi.isAndroid()) {
@@ -401,10 +408,10 @@ fn build2(
             }),
         });
         exe.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
-        exe.root_module.linkLibrary(dep_libuv.artifact("uv_a"));
+        exe.root_module.linkLibrary(libuv);
         exe.root_module.linkLibrary(dep_miniz.artifact("miniz"));
         exe.root_module.linkLibrary(dep_ada.artifact("ada"));
-        exe.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+        exe.installLibraryHeaders(libuv);
         exe.installLibraryHeaders(dep_miniz.artifact("miniz"));
         exe.installLibraryHeaders(dep_ada.artifact("ada"));
         exe.root_module.addIncludePath(b.path("src"));
@@ -413,9 +420,8 @@ fn build2(
             exe.installLibraryHeaders(dep_sqlite3.?.artifact("sqlite3"));
         }
         if (opts.with_wasm) {
-            const wamr = dep_wamr.?;
-            exe.root_module.linkLibrary(wamr.artifact("vmlib"));
-            exe.installLibraryHeaders(wamr.artifact("vmlib"));
+            exe.root_module.linkLibrary(wamr.?);
+            exe.installLibraryHeaders(wamr.?);
         }
         b.installArtifact(exe);
 
@@ -440,10 +446,10 @@ fn build2(
         });
         // unit_tests.root_module.addCMacro("DUMP_LEAKS", "1");
         unit_tests.root_module.linkLibrary(dep_quickjs.artifact("qjs"));
-        unit_tests.root_module.linkLibrary(dep_libuv.artifact("uv_a"));
+        unit_tests.root_module.linkLibrary(libuv);
         unit_tests.root_module.linkLibrary(dep_miniz.artifact("miniz"));
         unit_tests.root_module.linkLibrary(dep_ada.artifact("ada"));
-        unit_tests.installLibraryHeaders(dep_libuv.artifact("uv_a"));
+        unit_tests.installLibraryHeaders(libuv);
         unit_tests.installLibraryHeaders(dep_miniz.artifact("miniz"));
         unit_tests.installLibraryHeaders(dep_ada.artifact("ada"));
         if (opts.with_sqlite) {
@@ -451,9 +457,8 @@ fn build2(
             unit_tests.installLibraryHeaders(dep_sqlite3.?.artifact("sqlite3"));
         }
         if (opts.with_wasm) {
-            const wamr = dep_wamr.?;
-            unit_tests.root_module.linkLibrary(wamr.artifact("vmlib"));
-            unit_tests.installLibraryHeaders(wamr.artifact("vmlib"));
+            unit_tests.root_module.linkLibrary(wamr.?);
+            unit_tests.installLibraryHeaders(wamr.?);
         }
         unit_tests.root_module.addIncludePath(b.path("src"));
 
@@ -464,13 +469,13 @@ fn build2(
     return .{ tjs, tjsc };
 }
 
-fn loadWamrConfig(b: *std.Build) !WamrConfig {
+fn loadWamrConfig(b: *std.Build, path: std.Build.LazyPath) !WamrConfig {
     const ac = b.allocator;
     const io = b.graph.io;
     const cwd = std.Io.Dir.cwd();
     const zon_buffer = try cwd.readFileAllocOptions(
         io,
-        b.path("deps/wamr/txiki_wamr_config.zon").getPath(b),
+        path.getPath(b),
         ac,
         std.Io.Limit.limited(1024 * 1024),
         std.mem.Alignment.@"1",
@@ -505,24 +510,25 @@ fn addWamrRuntimeCMacros(
 }
 
 fn addWamrSourceIncludePaths(
+    b: *std.Build,
     mod: *std.Build.Module,
-    dep_wamr: *std.Build.Dependency,
+    source: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
 ) void {
-    mod.addIncludePath(dep_wamr.path("core/iwasm/include"));
-    mod.addIncludePath(dep_wamr.path("core/iwasm/common"));
-    mod.addIncludePath(dep_wamr.path("core/iwasm/interpreter"));
-    mod.addIncludePath(dep_wamr.path("core/shared/utils"));
-    mod.addIncludePath(dep_wamr.path("core/shared/platform/include"));
-    mod.addIncludePath(dep_wamr.path("core/iwasm/libraries/libc-wasi/sandboxed-system-primitives/include"));
-    mod.addIncludePath(dep_wamr.path("core/iwasm/libraries/libc-wasi/sandboxed-system-primitives/src"));
+    mod.addIncludePath(source.path(b, "core/iwasm/include"));
+    mod.addIncludePath(source.path(b, "core/iwasm/common"));
+    mod.addIncludePath(source.path(b, "core/iwasm/interpreter"));
+    mod.addIncludePath(source.path(b, "core/shared/utils"));
+    mod.addIncludePath(source.path(b, "core/shared/platform/include"));
+    mod.addIncludePath(source.path(b, "core/iwasm/libraries/libc-wasi/sandboxed-system-primitives/include"));
+    mod.addIncludePath(source.path(b, "core/iwasm/libraries/libc-wasi/sandboxed-system-primitives/src"));
 
     if (target.result.os.tag.isDarwin()) {
-        mod.addIncludePath(dep_wamr.path("core/shared/platform/darwin"));
+        mod.addIncludePath(source.path(b, "core/shared/platform/darwin"));
     } else if (target.result.os.tag == .windows) {
-        mod.addIncludePath(dep_wamr.path("core/shared/platform/windows"));
+        mod.addIncludePath(source.path(b, "core/shared/platform/windows"));
     } else {
-        mod.addIncludePath(dep_wamr.path("core/shared/platform/linux"));
+        mod.addIncludePath(source.path(b, "core/shared/platform/linux"));
     }
 }
 
@@ -540,7 +546,7 @@ pub fn build(b: *std.Build) !void {
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build without sqlite3") orelse false;
     const opt_no_network = b.option(bool, "no-network", "If set, build without network support (IPC pipes remain)") orelse false;
     const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto and global crypto") orelse false;
-    const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support (FFI is always off for -Dmatrix and when -Dtarget is not the host)") orelse false;
+    const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support") orelse false;
     const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable tjs.spawn and tjs.exec (for sandbox/secure builds)") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
@@ -582,7 +588,7 @@ pub fn build(b: *std.Build) !void {
                 .with_sqlite = !opt_no_sqlite,
                 .with_network = !opt_no_network,
                 .with_crypto = !opt_no_crypto,
-                .with_ffi = false,
+                .with_ffi = !opt_no_ffi,
                 .with_subprocess = !opt_no_subprocess,
                 .matrix = true,
             }, sanitize_tjs_c_import_exe);
@@ -609,13 +615,6 @@ pub fn build(b: *std.Build) !void {
         return;
     }
 
-    const host_triple = try b.graph.host.result.zigTriple(b.allocator);
-    defer b.allocator.free(host_triple);
-
-    const chosen_triple = try b.resolveTargetQuery(std_query).result.zigTriple(b.allocator);
-    defer b.allocator.free(chosen_triple);
-
-    const with_ffi = std.mem.eql(u8, host_triple, chosen_triple) and !opt_no_ffi;
     const test_filter = b.option([]const u8, "test-filter", "Filter unit tests by name substring");
 
     const tjs, const tjsc = try build2(b, std_query, std_optimize, .{
@@ -624,7 +623,7 @@ pub fn build(b: *std.Build) !void {
         .with_sqlite = !opt_no_sqlite,
         .with_network = !opt_no_network,
         .with_crypto = !opt_no_crypto,
-        .with_ffi = with_ffi,
+        .with_ffi = !opt_no_ffi,
         .with_subprocess = !opt_no_subprocess,
         .matrix = false,
         .test_filter = test_filter,

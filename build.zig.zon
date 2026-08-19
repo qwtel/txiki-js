@@ -10,7 +10,7 @@
             .path = "deps/quickjs/",
         },
         .libuv = .{
-            .path = "deps/libuv/",
+            .path = "deps/build/libuv/",
         },
         .miniz = .{
             .path = "deps/miniz/",
@@ -19,16 +19,19 @@
             .path = "deps/ada/",
         },
         .mbedtls = .{
-            .path = "deps/mbedtls/",
+            .path = "deps/build/mbedtls/",
         },
         .libwebsockets = .{
-            .path = "deps/libwebsockets/",
+            .path = "deps/build/libwebsockets/",
         },
         .wamr = .{
-            .path = "deps/wamr/",
+            .path = "deps/build/wamr/",
         },
         .mimalloc = .{
-            .path = "deps/mimalloc/",
+            .path = "deps/build/mimalloc/",
+        },
+        .libffi = .{
+            .path = "deps/build/libffi/",
         },
     },
     .paths = .{""},

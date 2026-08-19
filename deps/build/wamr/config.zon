@@ -1,0 +1,30 @@
+.{
+    .wasm_macros = .{
+        .{ .name = "WASM_ENABLE_INTERP", .value = "1" },
+        .{ .name = "WASM_ENABLE_FAST_INTERP", .value = "1" },
+        .{ .name = "WASM_ENABLE_JIT", .value = "0" },
+        .{ .name = "WASM_ENABLE_LIBC_BUILTIN", .value = "1" },
+        .{ .name = "WASM_ENABLE_LIBC_WASI", .value = "1" },
+        .{ .name = "WASM_ENABLE_MULTI_MODULE", .value = "1" },
+        .{ .name = "WASM_ENABLE_BULK_MEMORY", .value = "1" },
+        .{ .name = "WASM_ENABLE_SHARED_MEMORY", .value = "0" },
+        .{ .name = "WASM_ENABLE_MINI_LOADER", .value = "0" },
+        .{ .name = "WASM_DISABLE_HW_BOUND_CHECK", .value = "1" },
+        .{ .name = "WASM_DISABLE_STACK_HW_BOUND_CHECK", .value = "1" },
+        .{ .name = "WASM_DISABLE_WAKEUP_BLOCKING_OP", .value = "0" },
+
+        // WAMR's CMake fetches SIMDe when fast-interp SIMD is enabled. The Zig
+        // build stays offline and dependency-free, so SIMD is deliberately off.
+        .{ .name = "WASM_ENABLE_SIMD", .value = "0" },
+        .{ .name = "WASM_ENABLE_SIMDE", .value = "0" },
+
+        .{ .name = "WASM_ENABLE_REF_TYPES", .value = "1" },
+        .{ .name = "WASM_ENABLE_GC", .value = "0" },
+        .{ .name = "WASM_ENABLE_MODULE_INST_CONTEXT", .value = "1" },
+        .{ .name = "WASM_ENABLE_QUICK_AOT_ENTRY", .value = "0" },
+        .{ .name = "WASM_ENABLE_AOT_INTRINSICS", .value = "0" },
+        .{ .name = "WASM_ENABLE_EXTENDED_CONST_EXPR", .value = "0" },
+        .{ .name = "WASM_ENABLE_SHRUNK_MEMORY", .value = "1" },
+        .{ .name = "WASM_GLOBAL_HEAP_SIZE", .value = "(10 * 1024 * 1024)" },
+    },
+}

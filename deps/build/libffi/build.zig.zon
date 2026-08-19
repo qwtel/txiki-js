@@ -1,0 +1,10 @@
+.{
+    .name = .libffi,
+    .version = "3.5.2",
+    .fingerprint = 0x806ae67907c28fe5,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .common = .{ .path = "../common" },
+    },
+    .paths = .{""},
+}

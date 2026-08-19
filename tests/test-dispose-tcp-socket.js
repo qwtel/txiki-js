@@ -60,3 +60,4 @@ assert.eq(desc.enumerable, false, 'Symbol.asyncDispose is non-enumerable');
 assert.eq(typeof desc.value, 'function', 'Symbol.asyncDispose is a function');
 
 server.close();
+

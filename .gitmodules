@@ -1,20 +1,26 @@
 [submodule "deps/libuv"]
 	path = deps/libuv
-	url = git@github.com:qwtel/zig-build-libuv.git
+	url = https://github.com/libuv/libuv
 	branch = v1.x
 [submodule "deps/quickjs"]
 	path = deps/quickjs
 	url = git@github.com:qwtel/zig-build-quickjs.git
 [submodule "deps/mimalloc"]
 	path = deps/mimalloc
-	url = git@github.com:qwtel/zig-build-mimalloc.git
+	url = https://github.com/microsoft/mimalloc
 [submodule "deps/wamr"]
 	path = deps/wamr
-	url = git@github.com:qwtel/zig-build-wamr.git
+	url = https://github.com/bytecodealliance/wasm-micro-runtime.git
+	ignore = dirty
 [submodule "deps/mbedtls"]
 	path = deps/mbedtls
-	url = git@github.com:qwtel/zig-build-mbedtls.git
+	url = https://github.com/Mbed-TLS/mbedtls
 	ignore = dirty
 [submodule "deps/libwebsockets"]
 	path = deps/libwebsockets
-	url = git@github.com:qwtel/zig-build-libwebsockets.git
+	url = https://github.com/warmcat/libwebsockets
+	ignore = dirty
+[submodule "deps/libffi"]
+	path = deps/libffi
+	url = https://github.com/libffi/libffi.git
+	ignore = dirty

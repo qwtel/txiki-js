@@ -1,0 +1,10 @@
+.{
+    .name = .wamr,
+    .version = "2.4.4",
+    .fingerprint = 0xf0e1e3d4bcf2cff8,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .common = .{ .path = "../common" },
+    },
+    .paths = .{""},
+}

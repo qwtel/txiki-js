@@ -1,0 +1,10 @@
+.{
+    .name = .mbedtls,
+    .version = "3.6.6",
+    .fingerprint = 0x841b00c2102b210c,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .common = .{ .path = "../common" },
+    },
+    .paths = .{""},
+}

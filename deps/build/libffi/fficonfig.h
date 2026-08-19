@@ -1,0 +1,71 @@
+/* Template used by build.zig. */
+
+#undef AC_APPLE_UNIVERSAL_BUILD
+#undef EH_FRAME_FLAGS
+#undef FFI_DEBUG
+#undef FFI_EXEC_STATIC_TRAMP
+#undef FFI_EXEC_TRAMPOLINE_TABLE
+#undef FFI_MMAP_EXEC_EMUTRAMP_PAX
+#undef FFI_MMAP_EXEC_WRIT
+#undef FFI_NO_RAW_API
+#undef FFI_NO_STRUCTS
+#undef HAVE_ALLOCA_H
+#undef HAVE_ARM64E_PTRAUTH
+#undef HAVE_AS_CFI_PSEUDO_OP
+#undef HAVE_AS_REGISTER_PSEUDO_OP
+#undef HAVE_AS_S390_ZARCH
+#undef HAVE_AS_SPARC_UA_PCREL
+#undef HAVE_AS_X86_64_UNWIND_SECTION_TYPE
+#undef HAVE_AS_X86_PCREL
+#undef HAVE_DLFCN_H
+#undef HAVE_HIDDEN_VISIBILITY_ATTRIBUTE
+#undef HAVE_INTTYPES_H
+#undef HAVE_LONG_DOUBLE
+#undef HAVE_LONG_DOUBLE_VARIANT
+#undef HAVE_MEMCPY
+#undef HAVE_MEMFD_CREATE
+#undef HAVE_RO_EH_FRAME
+#undef HAVE_STDINT_H
+#undef HAVE_STDIO_H
+#undef HAVE_STDLIB_H
+#undef HAVE_STRINGS_H
+#undef HAVE_STRING_H
+#undef HAVE_SYS_MEMFD_H
+#undef HAVE_SYS_STAT_H
+#undef HAVE_SYS_TYPES_H
+#undef HAVE_UNISTD_H
+#undef LIBFFI_GNU_SYMBOL_VERSIONING
+#undef LT_OBJDIR
+#undef PACKAGE
+#undef PACKAGE_BUGREPORT
+#undef PACKAGE_NAME
+#undef PACKAGE_STRING
+#undef PACKAGE_TARNAME
+#undef PACKAGE_URL
+#undef PACKAGE_VERSION
+#undef SIZEOF_DOUBLE
+#undef SIZEOF_LONG_DOUBLE
+#undef SIZEOF_SIZE_T
+#undef STDC_HEADERS
+#undef SYMBOL_UNDERSCORE
+#undef USING_PURIFY
+#undef VERSION
+#undef WORDS_BIGENDIAN
+
+#ifdef HAVE_HIDDEN_VISIBILITY_ATTRIBUTE
+#ifdef LIBFFI_ASM
+#ifdef __APPLE__
+#define FFI_HIDDEN(name) .private_extern name
+#else
+#define FFI_HIDDEN(name) .hidden name
+#endif
+#else
+#define FFI_HIDDEN __attribute__ ((visibility ("hidden")))
+#endif
+#else
+#ifdef LIBFFI_ASM
+#define FFI_HIDDEN(name)
+#else
+#define FFI_HIDDEN
+#endif
+#endif

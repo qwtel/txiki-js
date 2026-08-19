@@ -10,6 +10,14 @@ Native build (host target, default options):
 zig build
 ```
 
+The Zig build logic for dependencies lives in this repository under `deps/build/`,
+while the dependency directories themselves remain upstream submodules. A
+dependency can also be built on its own, for example:
+
+```sh
+zig build --build-file deps/build/libffi/build.zig -Dtarget=aarch64-windows-gnu
+```
+
 ### Cross-compilation
 
 Pick a target with Zig’s usual triple syntax (see `zig build -h` and `zig targets`). Examples:
@@ -38,10 +46,10 @@ All of these are **opt-in disables**: omit the flag to keep the feature; pass `-
 | `-Dno-sqlite` | Build without SQLite |
 | `-Dno-network` | Build without HTTP/WebSocket (libwebsockets stack) |
 | `-Dno-crypto` | Build without Web Crypto and global `crypto` |
-| `-Dno-ffi` | Build without native FFI (`libffi` via pkg-config). **Only applies to native builds** whose triple matches the host; ignored for cross-compiles and `-Dmatrix`. |
+| `-Dno-ffi` | Build without native FFI (the official `libffi` submodule) |
 | `-Dno-subprocess` | Disable `tjs.spawn` / `tjs.exec`
 
-Native build with several features disabled (FFI matters only when the build triple is the host’s):
+Build with several features disabled:
 
 ```sh
 zig build -Dno-ffi -Dno-network -Doptimize=ReleaseSmall
@@ -50,5 +58,3 @@ zig build -Dno-ffi -Dno-network -Doptimize=ReleaseSmall
 ## Caveats
 
 - Building for macOS with mimalloc expects header files for `CommonCrypto` under `deps/mimalloc/include`. Those headers are not redistributable and are omitted from this repository; supply them locally where required.
-- Cross-compiled binaries never link `libffi`. The build compares the resolved Zig triple to the host triple; if they differ, FFI is off regardless of flags. The same applies to `**-Dmatrix**` (every matrix artifact is built without FFI). Only a **native** build whose triple matches the host can use FFI, and only when you do **not** pass `-Dno-ffi`.
-
