@@ -297,6 +297,16 @@ function generateRandomObject(breadth, depth) {
   assert.deepEqual([...pair[1].values()], [1,2]);
 }
 
+// DOMException uses V8's generic Error representation. The Error wire format
+// has no tag for DOMException or arbitrary error names.
+{
+  const cloned = structuredClone(new DOMException('foobar', 'AbortError'));
+  assert.equal(cloned instanceof Error, true);
+  assert.equal(cloned instanceof DOMException, false);
+  assert.equal(cloned.name, 'Error');
+  assert.equal(typeof cloned.stack, 'string');
+}
+
 // Delegate-provided DataCloneError (DOMException)
 {
   class DataCloneError extends DOMException {

@@ -639,7 +639,7 @@ pub fn Serializer(comptime Delegate: type) type {
                 .big_int64_array, .big_uint64_array, .float16_array, .float32_array, .float64_array, .dataview => {
                     try self.writeJSArrayBufferView(obj, class_id);
                 },
-                .@"error" => {
+                .@"error", .dom_exception => {
                     try self.writeJSError(obj);
                 },
                 else => {
@@ -657,7 +657,7 @@ pub fn Serializer(comptime Delegate: type) type {
                     .array_buffer, .shared_array_buffer,
                     .map, .set,
                     .number, .string, .boolean, .big_int,
-                    .@"error" => false,
+                    .@"error", .dom_exception => false,
                     else => true,
                 },
             };
