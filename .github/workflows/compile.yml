@@ -29,7 +29,7 @@ jobs:
           key: ${{ runner.os }}-zig-cache-v2-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-zig-cache-v2-
-      - run: zig build -Dno-ffi -Doptimize=ReleaseSmall --summary all
+      - run: zig build -Doptimize=ReleaseSmall --summary all
       - run: zig-out/bin/tjs test tests
   build:
     runs-on: ubuntu-latest
@@ -54,7 +54,7 @@ jobs:
           openssl enc -aes-256-cbc -d -in _include.tar.gz.enc -out _include.tar.gz -pass pass:"${{ secrets.PASS }}"
           tar -xzf _include.tar.gz
           cp -r _include/* deps/mimalloc/include
-      - run: zig build -Dmatrix -Dno-ffi -Doptimize=ReleaseSmall --summary all
+      - run: zig build -Dmatrix -Doptimize=ReleaseSmall --summary all
       - uses: actions/upload-artifact@v7
         with:
           name: zig-out
