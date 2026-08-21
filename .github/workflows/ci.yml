@@ -82,6 +82,10 @@ jobs:
     - name: Build it
       run: make VERBOSE=1
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: ./build/tjs bundle tests/helpers/bundle-input.js /tmp/warm.js && rm -f /tmp/warm.js
     - name: Test it
       run: make test
@@ -109,6 +113,10 @@ jobs:
     - name: Build it
       run: make VERBOSE=1
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: ./build/tjs bundle tests/helpers/bundle-input.js /tmp/warm.js && rm -f /tmp/warm.js
     - name: Test it
       run: make test
@@ -138,6 +146,10 @@ jobs:
     - name: Build it
       run: make VERBOSE=1
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: ./build/tjs bundle tests/helpers/bundle-input.js /tmp/warm.js && rm -f /tmp/warm.js
     - name: Test it
       run: make test
@@ -151,16 +163,32 @@ jobs:
         mimalloc: [ON, OFF]
     env:
       VCPKG_DEFAULT_TRIPLET: x64-windows
-      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: recursive
+    # Cache vcpkg's prebuilt libffi archive. run-vcpkg's default `x-gha` binary
+    # source relies on GitHub's retired cache protocol and silently rebuilt
+    # libffi (~4 min) every run; a plain actions/cache over a files-provider dir
+    # actually persists it. Keyed on the vcpkg commit + triplet + package, so
+    # bumping any busts it.
+    - name: Cache vcpkg binaries
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}\vcpkg-bincache
+        key: vcpkg-${{ runner.os }}-libffi-x64-windows-static-66c0373dc7-v2
+    - name: Create vcpkg binary cache dir
+      run: New-Item -ItemType Directory -Force -Path ${{ github.workspace }}\vcpkg-bincache
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
+    # run-vcpkg exports VCPKG_BINARY_SOURCES=clear;x-gha (dead) plus its own temp
+    # VCPKG_DEFAULT_BINARY_CACHE, shadowing job env. Override at step scope (step
+    # env wins) so the files provider writes into the dir we actually cache.
     - name: Install dependencies
+      env:
+        VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}\vcpkg-bincache,readwrite'
       run: vcpkg install libffi:x64-windows-static
     - name: Configure
       run: |
@@ -168,6 +196,10 @@ jobs:
     - name: Build
       run: cmake --build build --config ${{ matrix.buildType }}
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: |
         $env:PATH = "${{ github.workspace }}\build\${{ matrix.buildType }};${{ github.workspace }}\vcpkg\installed\x64-windows\bin;$env:PATH"
         .\build\${{ matrix.buildType }}\tjs.exe bundle tests\helpers\bundle-input.js $env:TEMP\warm.js
@@ -226,6 +258,10 @@ jobs:
         cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_WITH_MIMALLOC=OFF -DBUILD_WITH_ASAN=ON
         cmake --build build -j $(getconf _NPROCESSORS_ONLN)
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: ./build/tjs bundle tests/helpers/bundle-input.js /tmp/warm.js && rm -f /tmp/warm.js
     - name: Test
       run: ./build/tjs --stack-size 8388608 --wasm-stack-size 2097152 test tests/
@@ -246,6 +282,10 @@ jobs:
         cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_WITH_MIMALLOC=OFF -DBUILD_WITH_ASAN=ON
         cmake --build build -j $(sysctl -n hw.ncpu)
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: ./build/tjs bundle tests/helpers/bundle-input.js /tmp/warm.js && rm -f /tmp/warm.js
     - name: Test
       run: ./build/tjs --stack-size 8388608 --wasm-stack-size 2097152 test tests/
@@ -254,16 +294,27 @@ jobs:
     runs-on: windows-latest
     env:
       VCPKG_DEFAULT_TRIPLET: x64-windows
-      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
     steps:
     - uses: actions/checkout@v7
       with:
         submodules: recursive
+    # See the note on build-windows: actions/cache + a step-scoped files provider
+    # persist the prebuilt libffi archive that the retired `x-gha` source no
+    # longer did. Same key as build-windows so both jobs share the one libffi.
+    - name: Cache vcpkg binaries
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}\vcpkg-bincache
+        key: vcpkg-${{ runner.os }}-libffi-x64-windows-static-66c0373dc7-v2
+    - name: Create vcpkg binary cache dir
+      run: New-Item -ItemType Directory -Force -Path ${{ github.workspace }}\vcpkg-bincache
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: '66c0373dc7fca549e5803087b9487edfe3aca0a1'
     - name: Install dependencies
+      env:
+        VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}\vcpkg-bincache,readwrite'
       run: vcpkg install libffi:x64-windows-static
     - name: Configure
       run: |
@@ -271,6 +322,10 @@ jobs:
     - name: Build
       run: cmake --build build --config RelWithDebInfo
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: |
         $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
         $clangDir = Get-ChildItem "$vsPath\VC\Tools\MSVC\*\bin\Hostx64\x64" -Directory | Select-Object -Last 1
@@ -308,6 +363,10 @@ jobs:
         cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_WITH_UBSAN=ON
         cmake --build build -j $(getconf _NPROCESSORS_ONLN)
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: ./build/tjs bundle tests/helpers/bundle-input.js /tmp/warm.js && rm -f /tmp/warm.js
     - name: Test
       env:
@@ -328,6 +387,10 @@ jobs:
         cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_WITH_UBSAN=ON
         cmake --build build -j $(sysctl -n hw.ncpu)
     - name: Download esbuild
+      # The download is normally 1-9s; cap it so a hung or misbehaving fetch
+      # (e.g. the intermittent lws pollfd assertion on Windows) fails fast
+      # instead of stalling the job.
+      timeout-minutes: 0.5
       run: ./build/tjs bundle tests/helpers/bundle-input.js /tmp/warm.js && rm -f /tmp/warm.js
     - name: Test
       env:
