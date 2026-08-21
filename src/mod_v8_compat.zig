@@ -57,20 +57,16 @@ const NodeDelegate = struct {
         return false;
     }
     pub fn throwDataCloneError(self: Self, ctx: ?*c.JSContext, msg: []const u8) !void {
-        const get_ctor = c.JS_GetPropertyStr(ctx, self.this_obj, "_getDataCloneError");
-        if (c.JS_IsException(get_ctor)) return error.JSException;
-        defer c.JS_FreeValue(ctx, get_ctor);
-        if (c.JS_IsFunction(ctx, get_ctor)) {
-            const ctor = c.JS_Call(ctx, get_ctor, self.this_obj, 0, null);
-            if (c.JS_IsException(ctor)) return error.JSException;
-            defer c.JS_FreeValue(ctx, ctor);
-            // new ctor(String(msg))
+        const get_error = c.JS_GetPropertyStr(ctx, self.this_obj, "_getDataCloneError");
+        if (c.JS_IsException(get_error)) return error.JSException;
+        defer c.JS_FreeValue(ctx, get_error);
+        if (c.JS_IsFunction(ctx, get_error)) {
             const s = c.JS_NewStringLen(ctx, msg.ptr, @intCast(msg.len));
             defer c.JS_FreeValue(ctx, s);
             var argv = [1]c.JSValue{s};
-            const err = c.JS_CallConstructor(ctx, ctor, 1, &argv);
+            const err = c.JS_Call(ctx, get_error, self.this_obj, 1, &argv);
             if (c.JS_IsException(err)) return error.JSException;
-            // Throw the constructed error
+            // Node throws the value returned by _getDataCloneError(message).
             _ = c.JS_Throw(ctx, err);
             return error.JSException;
         }

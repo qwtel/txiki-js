@@ -308,7 +308,7 @@ function generateRandomObject(breadth, depth) {
   // Delegate-provided DataCloneError (DOMException) during serialization
   {
     const s = new Serializer();
-    s._getDataCloneError = () => DataCloneError;
+    s._getDataCloneError = (message) => new DataCloneError(message);
     s.writeHeader();
     let thrown = false;
     try {
@@ -317,6 +317,7 @@ function generateRandomObject(breadth, depth) {
       thrown = true;
       assert.equal(err instanceof DOMException, true);
       assert.equal(err.name, 'DataCloneError');
+      assert.equal(err.message, 'Data clone error');
     }
     assert.equal(thrown, true);
   }
@@ -325,7 +326,7 @@ function generateRandomObject(breadth, depth) {
   {
     const bad = new Uint8Array(0);
     const d = new Deserializer(bad);
-    d._getDataCloneError = () => DataCloneError;
+    d._getDataCloneError = (message) => new DataCloneError(message);
     let thrown = false;
     try {
       d.readValue();
@@ -333,6 +334,7 @@ function generateRandomObject(breadth, depth) {
       thrown = true;
       assert.equal(err instanceof DOMException, true);
       assert.equal(err.name, 'DataCloneError');
+      assert.equal(err.message, 'Data clone deserialization error');
     }
     assert.equal(thrown, true);
   }
