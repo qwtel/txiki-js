@@ -403,6 +403,7 @@ static JSValue tjs_stream_fileno(JSContext *ctx, JSValue this_val, int argc, JSV
     return JS_NewInt32(ctx, rfd);
 }
 
+#if !defined(TJS__OMIT_NETWORK) || !defined(TJS__OMIT_IPC)
 static void uv__stream_connect_cb(uv_connect_t *req, int status) {
     TJSStream *s = req->handle->data;
     CHECK_NOT_NULL(s);
@@ -426,6 +427,7 @@ static void uv__stream_connect_cb(uv_connect_t *req, int status) {
 
     js_free(ctx, req);
 }
+#endif
 
 static void uv__stream_connection_cb(uv_stream_t *handle, int status) {
     TJSStream *s = handle->data;
@@ -894,6 +896,7 @@ uv_stream_t *tjs_pipe_get_stream(JSContext *ctx, JSValue obj) {
     return NULL;
 }
 
+#ifndef TJS__OMIT_IPC
 static JSValue tjs_pipe_getsockpeername(JSContext *ctx, JSValue this_val, int argc, JSValue *argv, int magic) {
     TJSStream *t = tjs_pipe_get(ctx, this_val);
     if (!t) {
@@ -974,6 +977,7 @@ static JSValue tjs_pipe_bind(JSContext *ctx, JSValue this_val, int argc, JSValue
 
     return JS_UNDEFINED;
 }
+#endif
 
 static JSValue tjs_pipe_open(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSStream *t = tjs_pipe_get(ctx, this_val);
@@ -1032,10 +1036,12 @@ static const JSCFunctionListEntry tjs_tty_proto_funcs[] = {
 
 static const JSCFunctionListEntry tjs_pipe_proto_funcs[] = {
     TJS_CFUNC_DEF("open", 1, tjs_pipe_open),
+#ifndef TJS__OMIT_IPC
     JS_CFUNC_MAGIC_DEF("getsockname", 0, tjs_pipe_getsockpeername, 0),
     JS_CFUNC_MAGIC_DEF("getpeername", 0, tjs_pipe_getsockpeername, 1),
     TJS_CFUNC_DEF("connect", 1, tjs_pipe_connect),
     TJS_CFUNC_DEF("bind", 1, tjs_pipe_bind),
+#endif
 };
 
 static const JSCFunctionListEntry tjs_streams_funcs[] = {

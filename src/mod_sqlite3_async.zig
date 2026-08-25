@@ -4,6 +4,8 @@ const QuickJSAllocator = @import("tjs_qjs_allocator.zig").QJSAllocator;
 pub const z = @import("tjs_structs.zig");
 pub const c = z.c;
 
+const has_load_extension = !@hasDecl(c, "TJS__OMIT_SQLITE_LOAD_EXTENSION");
+
 extern fn tjs_sqlite3_bind_params_public(ctx: ?*c.JSContext, stmt: ?*c.sqlite3_stmt, params: c.JSValue) callconv(.c) c.JSValue;
 
 var handle_class_id: c.JSClassID = 0;
@@ -68,11 +70,13 @@ fn jsOpenImpl(ctx: ?*c.JSContext, name: [*:0]const u8, flags: c_int, ec: *ErrCtx
     const db = odb.?;
     _ = c.sqlite3_extended_result_codes(db, 1);
 
-    var old_enable_ext: c_int = 0;
-    const rc2 = c.sqlite3_db_config(db, c.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, @as(c_int, 1), &old_enable_ext);
-    if (rc2 != c.SQLITE_OK) {
-        ec.* = .{ .rc = rc2, .db = db };
-        return error.SQLiteError;
+    if (has_load_extension) {
+        var old_enable_ext: c_int = 0;
+        const rc2 = c.sqlite3_db_config(db, c.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, @as(c_int, 1), &old_enable_ext);
+        if (rc2 != c.SQLITE_OK) {
+            ec.* = .{ .rc = rc2, .db = db };
+            return error.SQLiteError;
+        }
     }
 
     const obj = c.JS_NewObjectClass(ctx, @intCast(handle_class_id));
@@ -555,7 +559,9 @@ fn jsAllAsync(ctx: ?*c.JSContext, _: c.JSValueConst, argc: c_int, argv: [*c]c.JS
 
 const sqlite_funcs = [_]c.JSCFunctionListEntry{
     z.JS_CFUNC_DEF("open", 2, jsOpen),
+} ++ (if (has_load_extension) [_]c.JSCFunctionListEntry{
     z.JS_CFUNC_DEF("load_extension", 3, jsLoadExtension),
+} else [_]c.JSCFunctionListEntry{}) ++ [_]c.JSCFunctionListEntry{
     z.JS_CFUNC_DEF("close", 1, jsClose),
     z.JS_CFUNC_DEF("exec_async", 2, jsExecAsync),
     z.JS_CFUNC_DEF("set_abort", 1, jsSetAbort),

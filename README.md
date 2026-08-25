@@ -44,10 +44,12 @@ All of these are **opt-in disables**: omit the flag to keep the feature; pass `-
 | `-Dno-mimalloc` | Build without mimalloc |
 | `-Dno-wasm` | Build without WAMR (WebAssembly) |
 | `-Dno-sqlite` | Build without SQLite |
+| `-Dno-sqlite-extensions` | Disable loading dynamic SQLite extensions |
 | `-Dno-network` | Build without HTTP/WebSocket (libwebsockets stack) |
+| `-Dno-ipc` | Disable path-based IPC connections/listeners while retaining stdio pipes |
 | `-Dno-crypto` | Build without Web Crypto and global `crypto` |
 | `-Dno-ffi` | Build without native FFI (the official `libffi` submodule) |
-| `-Dno-subprocess` | Disable `tjs.spawn` / `tjs.exec`
+| `-Dno-subprocess` | Disable `tjs.spawn`, `tjs.exec`, and `tjs.kill` |
 
 Build with several features disabled:
 

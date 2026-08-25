@@ -9,6 +9,10 @@
     "test-dispose-ffi-dlopen.js",
     "test-ffi-*.js"
   ],
+  "ipc": [
+    "test-dispose-pipe.js",
+    "test-pipe*.js"
+  ],
   "network": [
     "test-dispose-http-server.js",
     "test-dispose-posix-socket.js",

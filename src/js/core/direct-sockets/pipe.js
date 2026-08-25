@@ -16,12 +16,19 @@ function formatPipeAddress(localAddr, remoteAddr) {
     };
 }
 
+function assertIpcAvailable() {
+    if (!core.features.ipc) {
+        throw new Error('Path-based IPC support is not enabled');
+    }
+}
+
 
 export class PipeSocket extends BaseStreamSocket {
     constructor(path, options = {}) {
         if (typeof path !== 'string') {
             throw new TypeError('path must be a string');
         }
+        assertIpcAvailable();
 
         super(new core.Pipe());
 
@@ -55,6 +62,7 @@ export class PipeServerSocket extends BaseStreamServerSocket {
         if (typeof path !== 'string') {
             throw new TypeError('path must be a string');
         }
+        assertIpcAvailable();
 
         super(new core.Pipe());
 

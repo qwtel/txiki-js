@@ -172,6 +172,7 @@ static JSValue tjs_sqlite3_open(JSContext *ctx, JSValue this_val, int argc, JSVa
         return tjs_throw_sqlite3_errno(ctx, r, handle);
     }
 
+#ifndef TJS__OMIT_SQLITE_LOAD_EXTENSION
     // Enable sqlite extensions (but only via C calls)
     r = sqlite3_db_config(handle, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
     if (r != SQLITE_OK) {
@@ -179,6 +180,7 @@ static JSValue tjs_sqlite3_open(JSContext *ctx, JSValue this_val, int argc, JSVa
         sqlite3_close_v2(handle);
         return ret;
     }
+#endif
 
     JSValue obj = tjs_new_sqlite3(ctx, handle);
     if (JS_IsException(obj)) {
@@ -209,6 +211,7 @@ static JSValue tjs_sqlite3_close(JSContext *ctx, JSValue this_val, int argc, JSV
     return JS_UNDEFINED;
 }
 
+#ifndef TJS__OMIT_SQLITE_LOAD_EXTENSION
 static JSValue tjs_sqlite3_load_extension(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
 
@@ -238,6 +241,7 @@ static JSValue tjs_sqlite3_load_extension(JSContext *ctx, JSValue this_val, int 
 
     return JS_UNDEFINED;
 }
+#endif
 
 static JSValue tjs_sqlite3_exec(JSContext *ctx, JSValue this_val, int argc, JSValue *argv) {
     TJSSqlite3Handle *h = tjs_sqlite3_get(ctx, argv[0]);
@@ -614,7 +618,9 @@ static JSValue tjs_sqlite3_stmt_run(JSContext *ctx, JSValue this_val, int argc, 
 
 static const JSCFunctionListEntry tjs_sqlite3_funcs[] = {
     TJS_CFUNC_DEF("open", 2, tjs_sqlite3_open),
+#ifndef TJS__OMIT_SQLITE_LOAD_EXTENSION
     TJS_CFUNC_DEF("load_extension", 3, tjs_sqlite3_load_extension),
+#endif
     TJS_CFUNC_DEF("close", 1, tjs_sqlite3_close),
     TJS_CFUNC_DEF("exec", 2, tjs_sqlite3_exec),
     TJS_CFUNC_DEF("prepare", 2, tjs_sqlite3_prepare),

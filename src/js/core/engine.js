@@ -7,6 +7,7 @@ const features = Object.freeze({
     ffi: 'ffi_load_native' in core,
     network: 'TCP' in core,
     sqliteAsync: 'sqlite3_async' in core,
+    sqliteLoadExtension: typeof core.sqlite3?.load_extension === 'function',
     subprocess: 'spawn' in core,
     v8: 'Serializer' in core && 'Deserializer' in core
 });

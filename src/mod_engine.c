@@ -197,6 +197,11 @@ void tjs__mod_engine_init(JSContext *ctx, JSValue ns) {
 #endif
 
     JSValue features = JS_NewObjectProto(ctx, JS_NULL);
+#ifdef TJS__OMIT_IPC
+    JS_DefinePropertyValueStr(ctx, features, "ipc", JS_FALSE, JS_PROP_C_W_E);
+#else
+    JS_DefinePropertyValueStr(ctx, features, "ipc", JS_TRUE, JS_PROP_C_W_E);
+#endif
 #ifdef TJS_HAVE_WASM
     JS_DefinePropertyValueStr(ctx, features, "wasm", JS_TRUE, JS_PROP_C_W_E);
 #else

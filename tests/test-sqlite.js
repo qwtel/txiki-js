@@ -206,29 +206,38 @@ function testTransactionsNested() {
     assert.eq(data1.length, 2);
 }
 
-function testExtensions(){
-	let sopath = './build/libsqlite-test.so';
-	switch(navigator.userAgentData.platform){
-		case 'Linux':
-			sopath = './build/libsqlite-test.so';
-			break;
-		case 'macOS':
-			sopath = './build/libsqlite-test.dylib';
-			break;
-		case 'Windows':
-			sopath = './build/libsqlite-test.dll';
-		break;
-	}
+function sqliteExtensionPath() {
+    let sopath = './build/libsqlite-test.so';
+    switch (navigator.userAgentData.platform) {
+        case 'macOS':
+            sopath = './build/libsqlite-test.dylib';
+            break;
+        case 'Windows':
+            sopath = './build/libsqlite-test.dll';
+            break;
+    }
 
+    return sopath;
+}
+
+function testExtensions() {
     const db = new Database();
-    db.loadExtension(sopath, 'sqlite_test_ext_init')
-    assert.eq(db.prepare("SELECT testfn();").all()[0]["testfn()"], 43)
+
+    if (!tjs.engine.features.sqliteLoadExtension) {
+        assert.throws(() => db.loadExtension('unused'), Error, 'extension loading is unavailable');
+        db.close();
+        return;
+    }
+
+    db.loadExtension(sqliteExtensionPath(), 'sqlite_test_ext_init');
+    assert.eq(db.prepare('SELECT testfn();').all()[0]['testfn()'], 43);
+    db.close();
 }
 
 testTransactions();
 testTransactionsError();
 testTransactionsNested();
-// testExtensions();
+testExtensions();
 
 async function testExistingDBAll() {
     const dbPath = path.join(import.meta.dirname, 'fixtures', 'test.sqlite');
@@ -362,6 +371,20 @@ async function testConcurrentExec() {
     db.close();
 }
 
+async function testExtensionsAsync() {
+    const db = new AsyncDatabase();
+
+    if (!tjs.engine.features.sqliteLoadExtension) {
+        assert.throws(() => db.loadExtension('unused'), Error, 'extension loading is unavailable');
+        db.close();
+        return;
+    }
+
+    db.loadExtension(sqliteExtensionPath(), 'sqlite_test_ext_init');
+    assert.eq((await db.all('SELECT testfn();'))[0]['testfn()'], 43);
+    db.close();
+}
+
 function hasAsyncSqlite() {
     try {
         const db = new AsyncDatabase();
@@ -385,4 +408,5 @@ if (runAsyncSqliteTests) {
     await testAbortAll(10);
     await testAbortAll(100);
     await testConcurrentExec();
+    await testExtensionsAsync();
 }

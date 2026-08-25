@@ -161,10 +161,12 @@ declare global {
             readonly features: {
                 readonly crypto: boolean;
                 readonly ffi: boolean;
+                readonly ipc: boolean;
                 readonly network: boolean;
                 readonly wasm: boolean;
                 readonly sqlite: boolean;
                 readonly sqliteAsync: boolean;
+                readonly sqliteLoadExtension: boolean;
                 readonly subprocess: boolean;
                 readonly v8: boolean;
             };

@@ -68,8 +68,10 @@ xoption(BUILD_WITH_GC_SECTIONS "If ON, compile with per-function/data sections a
 
 # Fork-specific optional capabilities not yet modeled upstream.
 xoption(BUILD_NO_NETWORK "If ON, build without network support, while IPC pipes remain available" OFF)
+xoption(BUILD_NO_IPC "If ON, build without path-based IPC connections and listeners, while stdio pipes remain available" OFF)
 xoption(BUILD_NO_CRYPTO "If ON, build without WebCrypto and global crypto" OFF)
 xoption(BUILD_NO_SUBPROCESS "If ON, build without tjs.spawn, tjs.exec, and process helpers" OFF)
+xoption(BUILD_NO_SQLITE_LOAD_EXTENSION "If ON, build SQLite without dynamic extension loading" OFF)
 
 if(BUILD_WITH_GC_STRESS)
     message(STATUS "GC stress mode enabled (FORCE_GC_AT_MALLOC)")
@@ -184,7 +186,9 @@ endif()
 
 target_compile_definitions(tjs PRIVATE
     $<$<BOOL:${BUILD_NO_CRYPTO}>:TJS__OMIT_CRYPTO>
+    $<$<BOOL:${BUILD_NO_IPC}>:TJS__OMIT_IPC>
     $<$<BOOL:${BUILD_NO_NETWORK}>:TJS__OMIT_NETWORK>
+    $<$<BOOL:${BUILD_NO_SQLITE_LOAD_EXTENSION}>:TJS__OMIT_SQLITE_LOAD_EXTENSION>
     $<$<BOOL:${BUILD_NO_SUBPROCESS}>:TJS__OMIT_SUBPROCESS>
 )
 
@@ -266,11 +270,16 @@ target_link_libraries(tjs PUBLIC uv_a)
 
 if(BUILD_WITH_SQLITE)
     add_subdirectory(deps/sqlite3 EXCLUDE_FROM_ALL)
+    if(BUILD_NO_SQLITE_LOAD_EXTENSION)
+        target_compile_definitions(sqlite3 PRIVATE SQLITE_OMIT_LOAD_EXTENSION)
+    endif()
     target_link_libraries(tjs PUBLIC sqlite3)
-    add_library(sqlite-test SHARED
-        tests/fixtures/sqlite-test-ext.c
-    )
-    target_link_libraries(sqlite-test sqlite3)
+    if(NOT BUILD_NO_SQLITE_LOAD_EXTENSION)
+        add_library(sqlite-test SHARED
+            tests/fixtures/sqlite-test-ext.c
+        )
+        target_link_libraries(sqlite-test sqlite3)
+    endif()
 endif()
 
 if(BUILD_WITH_FFI)
@@ -293,7 +302,7 @@ add_library(ffi-test SHARED
 
 # Set consistent output for test libraries across all platforms (including MSVC multi-config)
 set(_tjs_test_libs ffi-test)
-if(BUILD_WITH_SQLITE)
+if(BUILD_WITH_SQLITE AND NOT BUILD_NO_SQLITE_LOAD_EXTENSION)
     list(APPEND _tjs_test_libs sqlite-test)
 endif()
 set_target_properties(${_tjs_test_libs} PROPERTIES

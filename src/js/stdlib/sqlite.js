@@ -10,6 +10,12 @@ function assertAsyncSqliteAvailable() {
     }
 }
 
+function assertLoadExtensionAvailable(api) {
+    if (typeof api?.load_extension !== 'function') {
+        throw new Error('SQLite extension loading is not enabled');
+    }
+}
+
 class Database {
     #handle;
 
@@ -94,6 +100,7 @@ class Database {
     }
 
     loadExtension(file, entrypoint=undefined) {
+        assertLoadExtensionAvailable(sqlite3);
         return sqlite3.load_extension(this.#handle,file,entrypoint);
     }
 }
@@ -243,6 +250,7 @@ class AsyncDatabase {
     }
 
     loadExtension(file, entrypoint=undefined) {
+        assertLoadExtensionAvailable(sqlite3_async);
         return sqlite3_async.load_extension(this.#handle, file, entrypoint);
     }
 

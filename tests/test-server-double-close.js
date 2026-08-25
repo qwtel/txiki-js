@@ -15,7 +15,7 @@ import assert from 'tjs:assert';
 }
 
 // 2) PipeServerSocket
-{
+if (tjs.engine.features.ipc) {
     let pipeName;
 
     if (navigator.userAgentData.platform === 'Windows') {

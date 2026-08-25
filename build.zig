@@ -30,7 +30,9 @@ const BuildOpts = struct {
     with_mimalloc: bool,
     with_wasm: bool,
     with_sqlite: bool,
+    with_sqlite_load_extensions: bool,
     with_network: bool,
+    with_ipc: bool,
     with_crypto: bool,
     with_ffi: bool,
     with_subprocess: bool,
@@ -54,6 +56,7 @@ fn build2(
     const dep_sqlite3 = if (opts.with_sqlite) b.dependency("sqlite3", .{
         .target = target,
         .optimize = optimize,
+        .omit_load_extension = !opts.with_sqlite_load_extensions,
     }) else null;
     const dep_quickjs = b.dependency("quickjs", .{
         .target = target,
@@ -127,6 +130,9 @@ fn build2(
     if (opts.with_sqlite) {
         translate_c.defineCMacro("TJS_HAVE_SQLITE", "1");
     }
+    if (!opts.with_sqlite_load_extensions) {
+        translate_c.defineCMacro("TJS__OMIT_SQLITE_LOAD_EXTENSION", "1");
+    }
     if (!opts.with_crypto) {
         translate_c.defineCMacro("TJS__OMIT_CRYPTO", "1");
     }
@@ -148,6 +154,9 @@ fn build2(
     }
     if (!opts.with_subprocess) {
         translate_c.defineCMacro("TJS__OMIT_SUBPROCESS", "1");
+    }
+    if (!opts.with_ipc) {
+        translate_c.defineCMacro("TJS__OMIT_IPC", "1");
     }
 
     const run_sanitize_tjs_c_import = b.addRunArtifact(sanitize_tjs_c_import_exe);
@@ -307,6 +316,9 @@ fn build2(
     if (opts.with_sqlite) {
         lib.root_module.addCMacro("TJS_HAVE_SQLITE", "1");
     }
+    if (!opts.with_sqlite_load_extensions) {
+        lib.root_module.addCMacro("TJS__OMIT_SQLITE_LOAD_EXTENSION", "1");
+    }
     if (!opts.with_crypto) {
         lib.root_module.addCMacro("TJS__OMIT_CRYPTO", "1");
     }
@@ -324,6 +336,9 @@ fn build2(
     }
     if (!opts.with_subprocess) {
         lib.root_module.addCMacro("TJS__OMIT_SUBPROCESS", "1");
+    }
+    if (!opts.with_ipc) {
+        lib.root_module.addCMacro("TJS__OMIT_IPC", "1");
     }
 
     const tjs = b.addExecutable(.{
@@ -354,7 +369,7 @@ fn build2(
         .flags = cflags.items,
     });
 
-    if (opts.with_sqlite and !opts.matrix) {
+    if (opts.with_sqlite and opts.with_sqlite_load_extensions and !opts.matrix) {
         const sqlite_ext_test = b.addLibrary(.{
             .linkage = .dynamic,
             .name = "sqlite-test",
@@ -544,10 +559,12 @@ pub fn build(b: *std.Build) !void {
     const opt_no_mimalloc = b.option(bool, "no-mimalloc", "If set, build without mimalloc") orelse false;
     const opt_no_wasm = b.option(bool, "no-wasm", "If set, build without WAMR (WASM)") orelse false;
     const opt_no_sqlite = b.option(bool, "no-sqlite", "If set, build without sqlite3") orelse false;
+    const opt_no_sqlite_extensions = b.option(bool, "no-sqlite-extensions", "If set, disable loading dynamic SQLite extensions") orelse false;
     const opt_no_network = b.option(bool, "no-network", "If set, build without network support (IPC pipes remain)") orelse false;
+    const opt_no_ipc = b.option(bool, "no-ipc", "If set, disable path-based IPC connections and listeners (stdio pipes remain)") orelse false;
     const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto and global crypto") orelse false;
     const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support") orelse false;
-    const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable tjs.spawn and tjs.exec (for sandbox/secure builds)") orelse false;
+    const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable process creation and control (tjs.spawn, tjs.exec, tjs.kill)") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;
 
     {
@@ -586,7 +603,9 @@ pub fn build(b: *std.Build) !void {
                 .with_mimalloc = !opt_no_mimalloc,
                 .with_wasm = !opt_no_wasm,
                 .with_sqlite = !opt_no_sqlite,
+                .with_sqlite_load_extensions = !opt_no_sqlite_extensions,
                 .with_network = !opt_no_network,
+                .with_ipc = !opt_no_ipc,
                 .with_crypto = !opt_no_crypto,
                 .with_ffi = !opt_no_ffi,
                 .with_subprocess = !opt_no_subprocess,
@@ -621,7 +640,9 @@ pub fn build(b: *std.Build) !void {
         .with_mimalloc = !opt_no_mimalloc,
         .with_wasm = !opt_no_wasm,
         .with_sqlite = !opt_no_sqlite,
+        .with_sqlite_load_extensions = !opt_no_sqlite_extensions,
         .with_network = !opt_no_network,
+        .with_ipc = !opt_no_ipc,
         .with_crypto = !opt_no_crypto,
         .with_ffi = !opt_no_ffi,
         .with_subprocess = !opt_no_subprocess,

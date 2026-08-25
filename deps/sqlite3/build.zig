@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardOptimizeOption(.{});
+    const omit_load_extension = b.option(bool, "omit_load_extension", "Compile without dynamic extension loading") orelse false;
 
     const lib = b.addLibrary(.{
         .linkage = .static,
@@ -15,6 +16,9 @@ pub fn build(b: *std.Build) !void {
     });
 
     lib.root_module.addIncludePath(b.path("."));
+    if (omit_load_extension) {
+        lib.root_module.addCMacro("SQLITE_OMIT_LOAD_EXTENSION", "1");
+    }
 
     const common_flags: []const []const u8 = &.{
         "-std=c99",
