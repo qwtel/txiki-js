@@ -34,7 +34,7 @@ function randomUUID() {
     return core.randomUUID();
 }
 
-export function installCrypto(subtle) {
+export function installCrypto(subtle, CryptoKey) {
     const crypto = {
         getRandomValues,
         randomUUID,
@@ -52,4 +52,12 @@ export function installCrypto(subtle) {
         writable: true,
         value: crypto
     });
+
+    if (CryptoKey) {
+        Object.defineProperty(globalThis, 'CryptoKey', {
+            configurable: true,
+            writable: true,
+            value: CryptoKey
+        });
+    }
 }

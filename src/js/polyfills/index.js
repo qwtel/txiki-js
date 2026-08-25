@@ -24,8 +24,11 @@ import './abort-controller.js';
 import './console.js';
 import { installCrypto } from './crypto/crypto.js';
 if ('webcrypto' in core) {
-    const { SubtleCrypto } = await import('./crypto/subtle.js');
-    installCrypto(new SubtleCrypto());
+    const [{ SubtleCrypto }, { CryptoKey }] = await Promise.all([
+        import('./crypto/subtle.js'),
+        import('./crypto/crypto-key.js'),
+    ]);
+    installCrypto(new SubtleCrypto(), CryptoKey);
 } else {
     installCrypto();
 }

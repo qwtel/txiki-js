@@ -10,6 +10,8 @@ import assert from 'tjs:assert';
 
     assert.ok(keyPair.publicKey, 'has publicKey');
     assert.ok(keyPair.privateKey, 'has privateKey');
+    assert.ok(keyPair.publicKey instanceof CryptoKey, 'publicKey is a CryptoKey');
+    assert.ok(keyPair.privateKey instanceof CryptoKey, 'privateKey is a CryptoKey');
     assert.eq(keyPair.publicKey.type, 'public', 'publicKey type');
     assert.eq(keyPair.privateKey.type, 'private', 'privateKey type');
     assert.eq(keyPair.publicKey.algorithm.name, 'ECDSA', 'publicKey algorithm');
