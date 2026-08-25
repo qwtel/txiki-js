@@ -69,7 +69,7 @@ xoption(BUILD_WITH_GC_SECTIONS "If ON, compile with per-function/data sections a
 # Fork-specific optional capabilities not yet modeled upstream.
 xoption(BUILD_NO_NETWORK "If ON, build without network support, while IPC pipes remain available" OFF)
 xoption(BUILD_NO_IPC "If ON, build without path-based IPC connections and listeners, while stdio pipes remain available" OFF)
-xoption(BUILD_NO_CRYPTO "If ON, build without WebCrypto and global crypto" OFF)
+xoption(BUILD_NO_CRYPTO "If ON, build without WebCrypto algorithms while secure random APIs remain" OFF)
 xoption(BUILD_NO_SUBPROCESS "If ON, build without tjs.spawn, tjs.exec, and process helpers" OFF)
 xoption(BUILD_NO_SQLITE_LOAD_EXTENSION "If ON, build SQLite without dynamic extension loading" OFF)
 

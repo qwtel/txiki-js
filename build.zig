@@ -562,7 +562,7 @@ pub fn build(b: *std.Build) !void {
     const opt_no_sqlite_extensions = b.option(bool, "no-sqlite-extensions", "If set, disable loading dynamic SQLite extensions") orelse false;
     const opt_no_network = b.option(bool, "no-network", "If set, build without network support (IPC pipes remain)") orelse false;
     const opt_no_ipc = b.option(bool, "no-ipc", "If set, disable path-based IPC connections and listeners (stdio pipes remain)") orelse false;
-    const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto and global crypto") orelse false;
+    const opt_no_crypto = b.option(bool, "no-crypto", "If set, build without WebCrypto algorithms (secure random APIs remain)") orelse false;
     const opt_no_ffi = b.option(bool, "no-ffi", "If set, build without native FFI support") orelse false;
     const opt_no_subprocess = b.option(bool, "no-subprocess", "If set, disable process creation and control (tjs.spawn, tjs.exec, tjs.kill)") orelse false;
     // const opt_external_ffi = b.option(bool, "external-ffi", "Specify to use external ffi dependency") orelse false;

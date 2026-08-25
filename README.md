@@ -47,7 +47,7 @@ All of these are **opt-in disables**: omit the flag to keep the feature; pass `-
 | `-Dno-sqlite-extensions` | Disable loading dynamic SQLite extensions |
 | `-Dno-network` | Build without HTTP/WebSocket (libwebsockets stack) |
 | `-Dno-ipc` | Disable path-based IPC connections/listeners while retaining stdio pipes |
-| `-Dno-crypto` | Build without Web Crypto and global `crypto` |
+| `-Dno-crypto` | Build without Web Crypto algorithms; secure random APIs remain |
 | `-Dno-ffi` | Build without native FFI (the official `libffi` submodule) |
 | `-Dno-subprocess` | Disable `tjs.spawn`, `tjs.exec`, and `tjs.kill` |
 

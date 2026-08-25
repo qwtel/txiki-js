@@ -1,8 +1,6 @@
 {
   "crypto": [
     "test-app-compile.js",
-    "test-random.js",
-    "test-uuid.js",
     "test-webcrypto-*.js"
   ],
   "ffi": [

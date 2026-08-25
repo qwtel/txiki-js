@@ -104,7 +104,7 @@ function printResult(result) {
 
 export async function runTests(d) {
     const dir = await tjs.realPath(d || tjs.cwd);
-    const shouldSkipByBuild = await buildSkipFilter(dir);
+    const shouldSkip = await buildSkipFilter(dir);
     const dirIter = await tjs.readDir(dir);
     const tests = [];
 
@@ -115,7 +115,7 @@ export async function runTests(d) {
             continue;
         }
 
-        if (shouldSkipByBuild(name)) {
+        if (shouldSkip(name)) {
             console.log(`${name.padEnd(40, ' ')} ${colors.grey}SKIP${colors.none}`);
             continue;
         }

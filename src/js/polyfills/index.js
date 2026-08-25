@@ -22,8 +22,12 @@ import './form-data.js';
 import './abort-controller.js';
 
 import './console.js';
+import { installCrypto } from './crypto/crypto.js';
 if ('webcrypto' in core) {
-    await import('./crypto/crypto.js');
+    const { SubtleCrypto } = await import('./crypto/subtle.js');
+    installCrypto(new SubtleCrypto());
+} else {
+    installCrypto();
 }
 import './performance.js';
 import './worker.js';
