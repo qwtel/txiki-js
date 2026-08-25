@@ -94,6 +94,7 @@ const common_sources = &.{
     "lib/roles/raw-skt/ops-raw-skt.c",
     "lib/roles/listen/ops-listen.c",
     "lib/roles/http/client/client-http.c",
+    "lib/roles/http/client/altsvc.c",
     "lib/event-libs/poll/poll.c",
 };
 
@@ -125,14 +126,17 @@ const windows_sources = &.{
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const patcher = b.lazyImport(@This(), "common") orelse return;
+    const source = b.path("../../libwebsockets");
     const mbedtls = b.dependency("mbedtls", .{
         .target = target,
         .optimize = optimize,
     });
 
+    try patcher.ensureApplied(b, source, b.path("../../../patches/lws-mbedtls-client-alpn-uaf.patch"));
     b.installArtifact(try add(
         b,
-        b.path("../../libwebsockets"),
+        source,
         mbedtls.namedLazyPath("source"),
         mbedtls.artifact("mbedtls"),
         mbedtls.artifact("mbedx509"),

@@ -9,10 +9,18 @@ function getWasiHooks(ns) {
     return ns && typeof ns === 'object' ? ns[kWasiHooks] : undefined;
 }
 
-// Track the WAMR function index for callable wrappers returned from exports /
-// table reads. We cannot add a `#private` field to a plain function, so a
-// WeakMap keyed by the wrapper function is used instead.
+// funcref plumbing. WAMR (non-GC mode) represents a funcref as a plain function
+// index that is only meaningful within its own module instance. We cannot hang a
+// `#private` field off a bare function wrapper, so two module-scoped maps track
+// the association between wrappers and their (instance, index):
+//   funcIndexMap: wrapper  -> { instance, index }
+//   funcWrappers: instance -> Map(index -> wrapper)
+// funcWrappers gives a funcref a stable JS identity (the same funcref always
+// reads back as the same wrapper, and a funcref to an exported function is the
+// very object on `instance.exports`); funcIndexMap resolves a wrapper back to
+// its index on writes and rejects funcrefs that belong to another instance.
 const funcIndexMap = new WeakMap();
+const funcWrappers = new WeakMap();
 
 // Module-private invokers, captured from inside each class so Instance can
 // reach the corresponding `#private` method without exposing it.
@@ -81,6 +89,77 @@ function callWasmFuncByIndex(instance, funcIndex, ...args) {
             throw e;
         }
     }
+}
+
+function funcWrappersFor(instance) {
+    let byIndex = funcWrappers.get(instance);
+
+    if (!byIndex) {
+        byIndex = new Map();
+        funcWrappers.set(instance, byIndex);
+    }
+
+    return byIndex;
+}
+
+// Record an already-built wrapper (an export) as the canonical wrapper for its
+// func index, so a funcref read of that function returns the same object.
+function cacheFuncWrapper(instance, funcIndex, fn) {
+    funcIndexMap.set(fn, { instance, index: funcIndex });
+
+    const byIndex = funcWrappersFor(instance);
+
+    if (!byIndex.has(funcIndex)) {
+        byIndex.set(funcIndex, fn);
+    }
+}
+
+// Convert a funcref (an instance-local function index) to its stable callable
+// wrapper, creating and caching one for functions not reachable as exports.
+function funcrefToJS(instance, funcIndex) {
+    const byIndex = funcWrappersFor(instance);
+    let fn = byIndex.get(funcIndex);
+
+    if (!fn) {
+        fn = (...args) => callWasmFuncByIndex(instance, funcIndex, ...args);
+        funcIndexMap.set(fn, { instance, index: funcIndex });
+        byIndex.set(funcIndex, fn);
+    }
+
+    return fn;
+}
+
+// Resolve a funcref JS value (null or a WebAssembly function) to the func index
+// to store in `instance`. Throws if the value is not a funcref, or belongs to a
+// different instance — WAMR funcref indices are instance-local, so a reference
+// from another instance cannot be represented here.
+function funcrefToIndex(instance, value, where) {
+    if (value === null) {
+        return null;
+    }
+
+    const ref = typeof value === 'function' ? funcIndexMap.get(value) : undefined;
+
+    if (!ref) {
+        throw new TypeError(`${where}: value must be null or a WebAssembly function`);
+    }
+
+    if (ref.instance !== instance) {
+        throw new TypeError(`${where}: cannot store a funcref from a different WebAssembly.Instance`);
+    }
+
+    return ref.index;
+}
+
+// Validate a funcref value for a standalone (non-instance-backed) Global: it must
+// be null or a WebAssembly function. Instance-backed globals resolve to an index
+// via funcrefToIndex instead. Returns the value so it can be stored inline.
+function validateFuncref(value, where) {
+    if (value !== null && !(typeof value === 'function' && funcIndexMap.has(value))) {
+        throw new TypeError(`${where}: value must be null or a WebAssembly function`);
+    }
+
+    return value;
 }
 
 function buildInstance(mod) {
@@ -253,11 +332,19 @@ class Instance {
 
         for (const item of _exports) {
             if (item.kind === 'function') {
-                const fn = callWasmFunction.bind(instance, item.name);
                 const funcIdx = wasm.getFuncIndex(instance, item.name);
 
-                if (funcIdx >= 0) {
-                    funcIndexMap.set(fn, funcIdx);
+                // Reuse the cached wrapper when a function is exported under more
+                // than one name, so every export of one function (and a funcref
+                // pointing at it) shares a single identity, as the JS-API requires.
+                let fn = funcIdx >= 0 ? funcWrappersFor(instance).get(funcIdx) : undefined;
+
+                if (!fn) {
+                    fn = callWasmFunction.bind(instance, item.name);
+
+                    if (funcIdx >= 0) {
+                        cacheFuncWrapper(instance, funcIdx, fn);
+                    }
                 }
 
                 exports[item.name] = fn;
@@ -429,7 +516,9 @@ class Global {
             initialValue = 0;
         }
 
-        this.#value = coerceGlobalValue(type, initialValue);
+        this.#value = type === 'funcref'
+            ? validateFuncref(initialValue, 'WebAssembly.Global()')
+            : coerceGlobalValue(type, initialValue);
     }
 
     static {
@@ -444,7 +533,13 @@ class Global {
 
     get value() {
         if (this.#instance) {
-            return wasm.getGlobal(this.#instance, this.#name);
+            const raw = wasm.getGlobal(this.#instance, this.#name);
+
+            if (this.#type === 'funcref') {
+                return raw === null ? null : funcrefToJS(this.#instance, raw);
+            }
+
+            return raw;
         }
 
         return this.#value;
@@ -456,9 +551,16 @@ class Global {
         }
 
         if (this.#instance) {
-            wasm.setGlobal(this.#instance, this.#name, v);
+            if (this.#type === 'funcref') {
+                wasm.setGlobal(this.#instance, this.#name,
+                    funcrefToIndex(this.#instance, v, 'WebAssembly.Global.set()'));
+            } else {
+                wasm.setGlobal(this.#instance, this.#name, v);
+            }
         } else {
-            this.#value = coerceGlobalValue(this.#type, v);
+            this.#value = this.#type === 'funcref'
+                ? validateFuncref(v, 'WebAssembly.Global.set()')
+                : coerceGlobalValue(this.#type, v);
         }
     }
 
@@ -538,18 +640,7 @@ class Table {
         const raw = wasm.tableGet(this.#instance, this.#name, index);
 
         if (this.#element === 'funcref') {
-            if (raw === null) {
-                return null;
-            }
-
-            // raw is a function index; create a callable wrapper
-            const instance = this.#instance;
-            const funcIdx = raw;
-            const fn = (...args) => callWasmFuncByIndex(instance, funcIdx, ...args);
-
-            funcIndexMap.set(fn, funcIdx);
-
-            return fn;
+            return raw === null ? null : funcrefToJS(this.#instance, raw);
         }
 
         // externref: raw is already the JS value or null
@@ -562,13 +653,8 @@ class Table {
         }
 
         if (this.#element === 'funcref') {
-            if (value === null) {
-                wasm.tableSet(this.#instance, this.#name, index, null);
-            } else if (typeof value === 'function' && funcIndexMap.has(value)) {
-                wasm.tableSet(this.#instance, this.#name, index, funcIndexMap.get(value));
-            } else {
-                throw new TypeError('WebAssembly.Table.set(): Argument 1 must be null or a WebAssembly function');
-            }
+            wasm.tableSet(this.#instance, this.#name, index,
+                funcrefToIndex(this.#instance, value, 'WebAssembly.Table.set()'));
         } else {
             wasm.tableSet(this.#instance, this.#name, index, value);
         }

@@ -87,13 +87,14 @@ JSModuleDef *tjs__load_builtin(JSContext *ctx, const char *name) {
     tjs_builtin_t *item = NULL;
 
     for (tjs_builtin_t *p = builtins; p->name != NULL; ++p) {
-        if (strncmp(p->name, name, strlen(p->name)) == 0) {
+        if (strcmp(p->name, name) == 0) {
             item = p;
             break;
         }
     }
 
     if (item == NULL) {
+        JS_ThrowReferenceError(ctx, "could not load '%s'", name);
         return NULL;
     }
 

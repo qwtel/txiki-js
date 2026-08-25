@@ -6,7 +6,7 @@
     "test-webcrypto-*.js"
   ],
   "ffi": [
-    "test-dispose-ffi-lib.js",
+    "test-dispose-ffi-dlopen.js",
     "test-ffi-*.js"
   ],
   "network": [
