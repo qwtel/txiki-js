@@ -252,6 +252,18 @@ function generateRandomObject(breadth, depth) {
   assert.equal(dvc.byteLength, 8);
 }
 
+// Float16Array uses Node's host-object type 13.
+{
+  const expected = new Float16Array([1, 2.5]);
+  const nodeSerialized = new Uint8Array([255, 15, 92, 13, 4, 0, 60, 0, 65]);
+
+  assert.deepEqual(Array.from(serialize(expected)), Array.from(nodeSerialized));
+
+  const actual = deserialize(nodeSerialized);
+  assert.equal(actual instanceof Float16Array, true);
+  assert.deepEqual(Array.from(actual), Array.from(expected));
+}
+
 // ArrayBuffer empty and non-empty
 {
   const a0 = new ArrayBuffer(0);

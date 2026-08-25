@@ -46,6 +46,7 @@ function arrayBufferViewTypeToIndex(abView) {
   // Index 10 is node:Buffer, not supported
   if (type === '[object BigInt64Array]') return 11;
   if (type === '[object BigUint64Array]') return 12;
+  if (type === '[object Float16Array]') return 13;
   return -1;
 }
 
@@ -67,6 +68,7 @@ function arrayBufferViewIndexToType(index) {
   if (index === 10) return Uint8Array;
   if (index === 11) return BigInt64Array;
   if (index === 12) return BigUint64Array;
+  if (index === 13) return globalThis.Float16Array;
   // @ts-expect-error
   return undefined;
 }
