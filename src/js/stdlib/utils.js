@@ -368,16 +368,16 @@ function formatError(value, depth = 0) {
         return 'Caused by: <error chain too deep>';
     }
 
-    let out = (depth > 0 ? 'Caused by: ' : '') + String(value);
+    let out = depth > 0 ? 'Caused by: ' : '';
 
     if (isError(value)) {
-        if (value.stack) {
-            out += '\n' + value.stack;
-        }
+        out += value.stack || String(value);
 
         if (value.cause !== undefined) {
             out += '\n' + formatError(value.cause, depth + 1);
         }
+    } else {
+        out += String(value);
     }
 
     return out;

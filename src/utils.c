@@ -160,19 +160,26 @@ static void tjs_dump_error_chain(JSContext *ctx, JSValue exception_val, int dept
         fprintf(stderr, "Caused by: ");
     }
     int is_error = JS_IsError(exception_val);
-    tjs_dump_obj(ctx, stderr, exception_val);
+    bool printed_stack = false;
     if (is_error) {
         JSValue stack = JS_GetPropertyStr(ctx, exception_val, "stack");
-        if (!JS_IsUndefined(stack)) {
+        if (JS_IsString(stack)) {
             tjs_dump_obj(ctx, stderr, stack);
+            printed_stack = true;
         }
         JS_FreeValue(ctx, stack);
+
+        if (!printed_stack) {
+            tjs_dump_obj(ctx, stderr, exception_val);
+        }
 
         JSValue cause = JS_GetPropertyStr(ctx, exception_val, "cause");
         if (!JS_IsUndefined(cause)) {
             tjs_dump_error_chain(ctx, cause, depth + 1);
         }
         JS_FreeValue(ctx, cause);
+    } else {
+        tjs_dump_obj(ctx, stderr, exception_val);
     }
 }
 

@@ -1,5 +1,10 @@
 import { runTest, checkResult } from './helpers.js';
 
+const stack = new TypeError('Something went wrong!').stack;
+if (!stack.startsWith('TypeError: Something went wrong!\n    at ')) {
+	throw new Error(`Unexpected Error.stack format: ${JSON.stringify(stack)}`);
+}
+
 const tests = [
 
 	// Test console.error()

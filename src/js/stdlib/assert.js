@@ -51,7 +51,7 @@ class AssertionError extends Error {
             .split('\n')
             .map(l => l.trim())
             .filter(l => l && !/tjs:assert/.test(l));
-        const stackLine = stack[0].replace(/^at/, '').trim();
+        const stackLine = stack.find(l => /^at\b/.test(l))?.replace(/^at/, '').trim() || '';
         this.stack = [
             `at: ${stackLine}`,
             `wanted: ${result.expected}`,

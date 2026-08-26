@@ -110,5 +110,5 @@ Error.prepareStackTrace = (error, callSites) => {
         return `    at ${fn} (${file}:${line}:${col})`;
     });
 
-    return lines.join('\n') + '\n';
+    return [ String(error), ...lines ].join('\n');
 };

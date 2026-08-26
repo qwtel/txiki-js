@@ -21,6 +21,7 @@ w.onerror = ev => {
     try {
         assert.ok(ev.message.includes('boom at runtime'), 'message propagated');
         assert.eq(ev.error?.name, 'RangeError', 'error name propagated');
+        assert.ok(ev.error?.stack?.startsWith('RangeError: boom at runtime\n    at '), 'stack header propagated');
         resolve();
     } catch (e) {
         reject(e);

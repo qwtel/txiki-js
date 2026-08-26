@@ -497,12 +497,12 @@ async function evalAndPrint(expr) {
         }
 
         if (error instanceof Error) {
-            puts(error);
-            puts('\n');
-
             if (error.stack) {
                 puts(error.stack);
+            } else {
+                puts(error);
             }
+            puts('\n');
         } else {
             puts('Throw: ');
             puts(error);
