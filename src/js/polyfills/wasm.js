@@ -30,27 +30,25 @@ let bindGlobal;
 let bindTable;
 
 
-class CompileError extends Error {
-    constructor(...args) {
-        super(...args);
-        this.name = 'CompileError';
-    }
-}
+class CompileError extends Error {}
+class LinkError extends Error {}
+class RuntimeError extends Error {}
 
-class LinkError extends Error {
-    constructor(...args) {
-        super(...args);
-        this.name = 'LinkError';
-    }
-}
-
-class RuntimeError extends Error {
-    constructor(...args) {
-        super(...args);
-        this.name = 'RuntimeError';
-    }
-}
-
+Object.defineProperty(CompileError.prototype, 'name', {
+    value: 'CompileError',
+    writable: true,
+    configurable: true,
+});
+Object.defineProperty(LinkError.prototype, 'name', {
+    value: 'LinkError',
+    writable: true,
+    configurable: true,
+});
+Object.defineProperty(RuntimeError.prototype, 'name', {
+    value: 'RuntimeError',
+    writable: true,
+    configurable: true,
+});
 
 function getWasmError(e) {
     switch (e.wasmError) {
