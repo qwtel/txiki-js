@@ -137,6 +137,36 @@ fn testDeserialize(buf: []const u8, expected: []const u8) !void {
     try testing.expect(c.JS_VALUE_GET_BOOL(res) == 1);
 }
 
+test "deserializer format 16 object and buffer views" {
+    try testDeserialize(
+        &.{ 255, 16, 111, 34, 5, 104, 101, 108, 108, 111, 34, 5, 119, 111, 114, 108, 100, 123, 1 },
+        "({ hello: 'world' })",
+    );
+    try testDeserialize(
+        &.{ 255, 16, 66, 4, 1, 2, 3, 4, 86, 87, 2, 2, 0 },
+        "new Uint16Array(new Uint8Array([1,2,3,4]).buffer, 2, 1)",
+    );
+}
+
+test "deserializer format 16 rejects unsupported resizable buffers" {
+    // This decoder does not support resizable buffers, including wide maxima.
+    try testing.expectError(error.DataCloneDeserializationError, testDeserialize(
+        &.{ 255, 16, 126, 0, 144, 128, 128, 128, 16 },
+        "null",
+    ));
+}
+
+test "deserializer format 16 rejects buffer size overflow" {
+    try testing.expectError(error.DataCloneDeserializationError, testDeserialize(
+        &.{ 255, 16, 66, 128, 128, 128, 128, 16 }, // 2 ** 32, no data.
+        "null",
+    ));
+    try testing.expectError(error.DataCloneDeserializationError, testDeserialize(
+        &.{ 255, 16, 66, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 0 },
+        "null",
+    ));
+}
+
 test "tjs_structs layouts match QuickJS" {
     const js_value_size = @sizeOf(c.JSValue);
 

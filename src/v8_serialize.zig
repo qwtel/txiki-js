@@ -36,7 +36,9 @@ extern fn _js_get_object_data(ctx: ?*c.JSContext, obj: c.JSValue, pval: *c.JSVal
 extern fn _js_typed_array_get_byte_length(p: *c.JSObject) u32;
 extern fn _js_typed_array_get_byte_offset(p: *c.JSObject) u32;
 
-const kLatestVersion = 15;
+const kLatestVersion = 16;
+// Keep outgoing data readable by older V8 runtimes (including VS Code).
+const kWriteVersion = 15;
 
 const cTRUE = 1;
 const cFALSE = 0;
@@ -308,7 +310,7 @@ pub fn Serializer(comptime Delegate: type) type {
 
         pub fn writeHeader(self: *Self) !void {
             try self.writeTag(.version);
-            try self.writeVarint(u32, kLatestVersion);
+            try self.writeVarint(u32, kWriteVersion);
         }
 
         pub fn setTreatArrayBufferViewsAsHostObjects(self: *Self, mode: bool) void {
@@ -1275,6 +1277,18 @@ pub fn Deserializer(comptime Delegate: type) type {
             return try self.readVarint(u64);
         }
 
+        fn readBufferSize(self: *Self) !usize {
+            // Format 16 uses uint64_t even when the receiver is 32-bit.
+            const start = self.position;
+            const max_bytes: usize = if (self.version.? >= 16) 10 else 5;
+            const size = if (self.version.? >= 16)
+                try self.readVarint(u64)
+            else
+                @as(u64, try self.readVarint(u32));
+            if (self.position - start > max_bytes) try self.throwDataCloneDeserializationError();
+            return std.math.cast(usize, size) orelse try self.throwDataCloneDeserializationError();
+        }
+
         pub fn readObject(self: *Self) Error!c.JSValue {
             // If we are at the end of the stack, abort. This function may recurse.
             try stackCheck(self.ctx);
@@ -1289,8 +1303,9 @@ pub fn Deserializer(comptime Delegate: type) type {
                 const tag = try self.peekTag();
                 if (tag == .array_buffer_view) {
                     try self.consumeTag(.array_buffer_view);
-                    defer c.JS_FreeValue(self.ctx, result); // XXX: chance of double free here?
-                    return try self.readJSArrayBufferView(result);
+                    const view = try self.readJSArrayBufferView(result);
+                    c.JS_FreeValue(self.ctx, result);
+                    return view;
                 }
             }
 
@@ -1748,9 +1763,9 @@ pub fn Deserializer(comptime Delegate: type) type {
                 // return array_buffer;
             }
 
-            const byte_length = try self.readVarint(u32);
+            const byte_length = try self.readBufferSize();
             if (is_resizable) {
-                const max_byte_length = try self.readVarint(u32);
+                const max_byte_length = try self.readBufferSize();
                 if (byte_length > max_byte_length) try self.throwDataCloneDeserializationError();
             }
 
@@ -1768,8 +1783,8 @@ pub fn Deserializer(comptime Delegate: type) type {
             _ = c.JS_GetArrayBuffer(self.ctx, &buffer_byte_length, ab_val);
 
             const tag = try self.readVarint(u8);
-            const byte_offset = try self.readVarint(u32);
-            const byte_length = try self.readVarint(u32);
+            const byte_offset = try self.readBufferSize();
+            const byte_length = try self.readBufferSize();
             if (byte_offset > buffer_byte_length or byte_length > buffer_byte_length - byte_offset) {
                 try self.throwDataCloneDeserializationError();
             }
@@ -1809,8 +1824,8 @@ pub fn Deserializer(comptime Delegate: type) type {
 
             var argv: [3]c.JSValue = undefined;
             argv[0] = ab_val;
-            argv[1] = c.JS_NewUint32(self.ctx, byte_offset);
-            argv[2] = c.JS_NewUint32(self.ctx, byte_length / element_size);
+            argv[1] = c.JS_NewInt64(self.ctx, @intCast(byte_offset));
+            argv[2] = c.JS_NewInt64(self.ctx, @intCast(byte_length / element_size));
             defer c.JS_FreeValue(self.ctx, argv[1]);
             defer c.JS_FreeValue(self.ctx, argv[2]);
             const obj = if (tag_enum == .data_view)

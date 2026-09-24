@@ -3,6 +3,62 @@ import { serialize, deserialize, Serializer, Deserializer } from 'tjs:v8';
 
 const structuredClone = (x) => deserialize(serialize(x));
 
+// Fixtures from VS Code 1.139.0 / Electron 43.6.0 / V8 15.0.245.31.
+// Both versions must remain readable, and outgoing data stays at version 15.
+{
+  const object = [255, 16, 111, 34, 5, 104, 101, 108, 108, 111, 34, 5, 119, 111, 114, 108, 100, 123, 1];
+  const buffer = [255, 16, 66, 4, 1, 2, 3, 4];
+  for (const version of [15, 16]) {
+    const decode = (bytes) => deserialize(Uint8Array.from([255, version, ...bytes.slice(2)]));
+    assert.deepEqual(decode(object), { hello: 'world' });
+    assert.deepEqual(Array.from(new Uint8Array(decode(buffer))), [1, 2, 3, 4]);
+    const typed = decode([...buffer, 86, 87, 2, 2, 0]);
+    assert.equal(typed instanceof Uint16Array, true);
+    assert.equal(typed.byteOffset, 2);
+    assert.deepEqual(Array.from(new Uint8Array(typed.buffer, typed.byteOffset, typed.byteLength)), [3, 4]);
+    const view = decode([...buffer, 86, 63, 1, 2, 0]);
+    assert.equal(view instanceof DataView, true);
+    assert.equal(view.byteOffset, 1);
+    assert.equal(view.byteLength, 2);
+    assert.equal(view.getUint16(0), 0x0203);
+    const reader = new Deserializer(Uint8Array.from([255, version, 48]));
+    reader.readHeader();
+    assert.equal(reader.getWireFormatVersion(), version);
+    assert.equal(reader.readValue(), null);
+  }
+  const frame = Uint8Array.from([
+    255, 16, 65, 5, 34, 7, 109, 101, 115, 115, 97, 103, 101, 48, 92, 10, 19,
+    ...object, 65, 0, 36, 0, 0, 48, 36, 0, 5,
+  ]);
+  const [type, target, payload, ports, move] = deserialize(frame);
+  assert.equal(type, 'message');
+  assert.equal(target, null);
+  assert.equal(payload instanceof Uint8Array, true);
+  assert.deepEqual(deserialize(payload), { hello: 'world' });
+  assert.deepEqual(ports, []);
+  assert.equal(move, null);
+  assert.deepEqual(Array.from(serialize({ hello: 'world' }).subarray(0, 2)), [255, 15]);
+
+  const resizable = [255, 16, 126, 0, 144, 128, 128, 128, 16];
+  const decode = (bytes) => deserialize(Uint8Array.from(bytes));
+  assert.throws(() => decode([255, 15, ...resizable.slice(2)]));
+
+  for (const size of [
+    [0x80],
+    [0x80, 0x80, 0x80, 0x80, 0x10], // 2 ** 32
+    [0x80, 0x80, 0x80, 0x80, 0x80, 0x01], // 2 ** 35
+    [...Array(9).fill(0x80), 0x02], // uint64 overflow
+    [...Array(10).fill(0x80), 0x00], // Overlong varint
+  ]) {
+    assert.throws(() => decode([255, 16, 66, ...size]));
+    for (const tag of [63, 66]) {
+      assert.throws(() => decode([255, 16, 66, 0, 86, tag, ...size, 0, 0]));
+      assert.throws(() => decode([255, 16, 66, 0, 86, tag, 0, ...size, 0]));
+    }
+  }
+  assert.throws(() => decode([255, 17, 48]));
+}
+
 let randomState = 0x9e3779b9;
 
 function randomUint32() {
